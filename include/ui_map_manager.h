@@ -20,9 +20,9 @@ class Configuration;
 class TFT_eSprite;
 
 // External data sources from lvgl_ui.cpp and other global variables
-extern TinyGPSPlus& gps;
-extern Configuration& Config;
-extern uint8_t& myBeaconsIndex;
+extern TinyGPSPlus gps;
+extern Configuration Config;
+extern uint8_t myBeaconsIndex;
 
 // Dimensions de l'affichage
 #define SCREEN_WIDTH  320
