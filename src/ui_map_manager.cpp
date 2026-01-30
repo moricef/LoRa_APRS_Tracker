@@ -543,41 +543,6 @@ namespace UIMapManager {
         Serial.printf("[CACHE] Added tile: %s\n", filePath);
     }
 
-    // =========================================================================
-    // =                     VECTOR TILE RENDERING ENGINE                      =
-    // =========================================================================
-
-    enum DrawCommand : uint8_t 
-    {
-        DRAW_LINE = 1,               /**< Draw a simple line segment */
-        DRAW_POLYLINE = 2,           /**< Draw a series of connected line segments */
-        DRAW_STROKE_POLYGON = 3,     /**< Draw only the stroke (outline) of a single polygon */
-        DRAW_STROKE_POLYGONS = 4,    /**< Draw only the strokes (outlines) of multiple polygons */
-        DRAW_HORIZONTAL_LINE = 5,    /**< Draw a horizontal line */
-        DRAW_VERTICAL_LINE = 6,      /**< Draw a vertical line */
-        SET_COLOR = 0x80,            /**< Set current drawing color (RGB332) */
-        SET_COLOR_INDEX = 0x81,      /**< Set current color using palette index */
-        RECTANGLE = 0x82,            /**< Optimized rectangle command */
-        STRAIGHT_LINE = 0x83,        /**< Optimized straight line command */
-        HIGHWAY_SEGMENT = 0x84,      /**< Highway segment with continuity */
-        GRID_PATTERN = 0x85,         /**< Urban grid pattern */
-        BLOCK_PATTERN = 0x86,        /**< City block pattern */
-        CIRCLE = 0x87,               /**< Optimized circle command */
-        SET_LAYER = 0x88,            /**< Layer indicator command */
-        RELATIVE_MOVE = 0x89,        /**< Relative coordinate movement */
-        PREDICTED_LINE = 0x8A,       /**< Predictive line based on pattern */
-        COMPRESSED_POLYLINE = 0x8B,  /**< Huffman-compressed polyline */
-        OPTIMIZED_POLYGON = 0x8C,    /**< Optimized polygon (contour only, fill decided by viewer) */
-        HOLLOW_POLYGON = 0x8D,       /**< Polygon outline only (optimized for boundaries) */
-        OPTIMIZED_TRIANGLE = 0x8E,   /**< Optimized triangle (contour only, fill decided by viewer) */
-        OPTIMIZED_RECTANGLE = 0x8F,  /**< Optimized rectangle (contour only, fill decided by viewer) */
-        OPTIMIZED_CIRCLE = 0x90,     /**< Optimized circle (contour only, fill decided by viewer) */
-        SIMPLE_RECTANGLE = 0x96,     /**< Simple rectangle (x, y, width, height) */
-        SIMPLE_CIRCLE = 0x97,        /**< Simple circle (center_x, center_y, radius) */
-        SIMPLE_TRIANGLE = 0x98,      /**< Simple triangle (x1, y1, x2, y2, x3, y3) */
-        DASHED_LINE = 0x99,          /**< Dashed line with pattern */
-        DOTTED_LINE = 0x9A,          /**< Dotted line with pattern */
-    };
 
     // --- Constants and State Variables for Vector Rendering ---
     static constexpr int VTILE_SIZE = 256;
@@ -958,45 +923,33 @@ namespace UIMapManager {
     // JPEG decoder for map tiles
     static JPEGDEC jpeg;
 
-    // Context for JPEG decoding to cache
-    struct JPEGCacheContext {
-        uint16_t* cacheBuffer;  // Target cache buffer
-        int tileWidth;
-    };
-
-    static JPEGCacheContext jpegCacheContext;
-
-    // JPEGDEC callback for decoding to cache - called for each MCU block
-    static int jpegCacheCallback(JPEGDRAW* pDraw) {
-        uint16_t* src = pDraw->pPixels;
-        for (int y = 0; y < pDraw->iHeight; y++) {
-            int destY = pDraw->y + y;
-            if (destY >= MAP_TILE_SIZE) break;
-            for (int x = 0; x < pDraw->iWidth; x++) {
-                int destX = pDraw->x + x;
-                if (destX >= MAP_TILE_SIZE) break;
-                jpegCacheContext.cacheBuffer[destY * jpegCacheContext.tileWidth + destX] = src[y * pDraw->iWidth + x];
-            }
-        }
-        return 1;
-    }
-
     // PNG decoder for map tiles
     static PNG png;
 
-    // Context for PNG decoding to cache
-    struct PNGCacheContext {
-        uint16_t* cacheBuffer;  // Target cache buffer
-        int tileWidth;
+    // Context for decoding JPEG/PNG to a TFT_eSprite
+    struct SpriteDecodeContext {
+        TFT_eSprite* sprite;
     };
+    static SpriteDecodeContext spriteDecodeContext;
 
-    static PNGCacheContext pngCacheContext;
+    // JPEGDEC callback to draw MCU blocks directly to the sprite
+    static int jpegSpriteCallback(JPEGDRAW* pDraw) {
+        if (!spriteDecodeContext.sprite) return 0; // Stop if sprite is not set
+        // pushImage is the fastest way to draw the decoded block to the sprite
+        spriteDecodeContext.sprite->pushImage(pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight, pDraw->pPixels);
+        return 1; // Continue decoding
+    }
 
-    // PNGdec callback for decoding to cache
-    static int pngCacheCallback(PNGDRAW* pDraw) {
-        png.getLineAsRGB565(pDraw, &pngCacheContext.cacheBuffer[pDraw->y * pngCacheContext.tileWidth],
-                            PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
-        return 1;
+    // PNGdec callback to draw scanlines directly into the sprite's framebuffer
+    static int pngSpriteCallback(PNGDRAW* pDraw) {
+        if (!spriteDecodeContext.sprite) return 0; // Stop if sprite is not set
+        // Get a pointer to the sprite's framebuffer
+        uint16_t* pfb = (uint16_t*)spriteDecodeContext.sprite->frameBuffer(0);
+        // Calculate the start of the current line in the framebuffer
+        uint16_t* pLine = pfb + (pDraw->y * MAP_TILE_SIZE);
+        // Decode the line directly into the sprite's framebuffer
+        png.getLineAsRGB565(pDraw, pLine, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+        return 1; // Continue decoding
     }
 
     // PNG file callbacks
@@ -1750,16 +1703,24 @@ namespace UIMapManager {
             // Fallback to raster tiles (.png, .jpg)
             snprintf(path, sizeof(path), "/sdcard/MAP/%d/%d/%d.png", zoom, tileX, tileY);
             if (SD.exists(path)) {
-                // PNG found: decode to temp sprite using TFT_eSPI's function
-                if (tempSprite.drawPngFile(path, 0, 0)) {
-                    tileRendered = true;
+                // PNG found: decode to temp sprite using PNGdec
+                spriteDecodeContext.sprite = &tempSprite;
+                if (png.open(path, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngSpriteCallback) == PNG_SUCCESS) {
+                    if (png.decode(NULL, 0) == PNG_SUCCESS) {
+                        tileRendered = true;
+                    }
+                    png.close();
                 }
             } else {
                 snprintf(path, sizeof(path), "/sdcard/MAP/%d/%d/%d.jpg", zoom, tileX, tileY);
                 if (SD.exists(path)) {
-                    // JPEG found: decode to temp sprite using TFT_eSPI's function
-                    if (tempSprite.drawJpgFile(path, 0, 0)) {
-                        tileRendered = true;
+                    // JPEG found: decode to temp sprite using JPEGDEC
+                    spriteDecodeContext.sprite = &tempSprite;
+                    if (jpeg.open(path, jpegOpenFile, jpegCloseFile, jpegReadFile, jpegSeekFile, jpegSpriteCallback) == 1) {
+                         if (jpeg.decode(0, 0, 0) == 1) {
+                             tileRendered = true;
+                         }
+                         jpeg.close();
                     }
                 }
             }
