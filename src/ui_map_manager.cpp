@@ -459,24 +459,72 @@ namespace UIMapManager {
 
     // Initialize tile cache
     void initTileCache() {
+        for (auto& cachedTile : tileCache) {
+            if (cachedTile.sprite) {
+                cachedTile.sprite->deleteSprite();
+                delete cachedTile.sprite;
+            }
+        }
         tileCache.clear();
         tileCache.reserve(maxCachedTiles);
         cacheAccessCounter = 0;
         Serial.printf("[MAP] Tile cache initialized with %d tiles capacity\n", maxCachedTiles);
     }
 
-    // Find a tile in cache, returns index or -1
-    int findCachedTile(int zoom, int tileX, int tileY) {
-        // TODO: Re-implement for new cache logic based on file path/hash.
-        // The old implementation is incompatible with the new CachedTile struct.
-        return -1;
+    // Find a tile in cache by its path, returns index or -1
+    int findCachedTile(const char* filePath) {
+        for (int i = 0; i < tileCache.size(); ++i) {
+            if (tileCache[i].isValid && strcmp(tileCache[i].filePath, filePath) == 0) {
+                tileCache[i].lastAccess = ++cacheAccessCounter;
+                return i;
+            }
+        }
+        return -1; // Not found
     }
 
-    // Find a slot for a new tile (empty or LRU)
-    int findCacheSlot() {
-        // TODO: Re-implement for new cache logic.
-        // The old implementation is incompatible with the new std::vector-based cache.
-        return 0;
+    // Remove least recently used tile from cache
+    void evictLRUTile() {
+        if (tileCache.empty()) return;
+
+        auto lruIt = tileCache.begin();
+        for (auto it = tileCache.begin(); it != tileCache.end(); ++it) {
+            if (it->lastAccess < lruIt->lastAccess) {
+                lruIt = it;
+            }
+        }
+
+        Serial.printf("[CACHE] Evicting tile: %s\n", lruIt->filePath);
+        if (lruIt->sprite) {
+            lruIt->sprite->deleteSprite();
+            delete lruIt->sprite;
+        }
+        tileCache.erase(lruIt);
+    }
+
+    // Add a rendered tile sprite to the cache
+    void addToCache(const char* filePath, TFT_eSprite& source) {
+        if (maxCachedTiles == 0) return; // Cache disabled
+
+        // If cache is full, evict the least recently used tile
+        if (tileCache.size() >= maxCachedTiles) {
+            evictLRUTile();
+        }
+
+        // Create new cache entry
+        CachedTile newEntry;
+        newEntry.sprite = new TFT_eSprite(&tft);
+        newEntry.sprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE);
+        
+        // Copy the rendered tile to the cache sprite
+        newEntry.sprite->pushImage(0, 0, MAP_TILE_SIZE, MAP_TILE_SIZE, (uint16_t*)source.frameBuffer(0));
+        
+        strncpy(newEntry.filePath, filePath, sizeof(newEntry.filePath) - 1);
+        newEntry.filePath[sizeof(newEntry.filePath) - 1] = '\0';
+        newEntry.lastAccess = ++cacheAccessCounter;
+        newEntry.isValid = true;
+        
+        tileCache.push_back(newEntry);
+        Serial.printf("[CACHE] Added tile: %s\n", filePath);
     }
 
     // JPEG decoder for map tiles
@@ -1249,9 +1297,66 @@ namespace UIMapManager {
 
     // Load a tile from SD card (with caching) and copy it to canvas
     bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY) {
-        // TODO: Re-implement for new vector tile rendering logic.
-        // The old implementation is for raster tiles and is incompatible with the new cache.
-        return false;
+        char path[128];
+        bool tileRendered = false;
+
+        // --- 1. Check for vector tile (.bin) first ---
+        snprintf(path, sizeof(path), "/sdcard/VECTMAP/%d/%d/%d.bin", zoom, tileX, tileY);
+
+        int cacheIdx = findCachedTile(path);
+        if (cacheIdx >= 0) {
+            // Cache Hit: Copy from sprite cache to LVGL canvas
+            TFT_eSprite* cachedSprite = tileCache[cacheIdx].sprite;
+            lv_canvas_copy_buf(canvas, cachedSprite->frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
+            return true;
+        }
+
+        // --- 2. Cache Miss: Check files on SD and render ---
+        TFT_eSprite tempSprite(&tft);
+        tempSprite.createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE);
+        
+        if (SD.exists(path)) {
+            // Vector tile found: render it to the temporary sprite
+            // Note: This requires renderTile and its dependencies to be available in this file.
+            // We will add them in a future step. For now, this branch won't be fully functional.
+            // tileRendered = renderTile(path, 0, 0, tempSprite);
+        } else {
+            // --- 3. Check for raster tiles (.png, .jpg) ---
+            snprintf(path, sizeof(path), "%s/%s/%d/%d/%d.png", STORAGE_Utils::getRootPath().c_str(), "Maps", zoom, tileX, tileY);
+            if (SD.exists(path)) {
+                // PNG found: decode to temporary sprite
+                pngCacheContext.cacheBuffer = (uint16_t*)tempSprite.frameBuffer(0);
+                pngCacheContext.tileWidth = MAP_TILE_SIZE;
+                if (png.open(path, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngCacheCallback) == PNG_SUCCESS) {
+                    if (png.decode(nullptr, 0) == PNG_SUCCESS) {
+                        tileRendered = true;
+                    }
+                    png.close();
+                }
+            } else {
+                snprintf(path, sizeof(path), "%s/%s/%d/%d/%d.jpg", STORAGE_Utils::getRootPath().c_str(), "Maps", zoom, tileX, tileY);
+                if (SD.exists(path)) {
+                    // JPEG found: decode to temporary sprite
+                    jpegCacheContext.cacheBuffer = (uint16_t*)tempSprite.frameBuffer(0);
+                    jpegCacheContext.tileWidth = MAP_TILE_SIZE;
+                    if (jpeg.open(path, jpegOpenFile, jpegCloseFile, jpegReadFile, jpegSeekFile, jpegCacheCallback) == JPEG_SUCCESS) {
+                        if (jpeg.decode(0, 0, 0) == JPEG_SUCCESS) {
+                            tileRendered = true;
+                        }
+                        jpeg.close();
+                    }
+                }
+            }
+        }
+        
+        if (tileRendered) {
+            // --- 4. Add to cache and draw on canvas ---
+            addToCache(path, tempSprite);
+            lv_canvas_copy_buf(canvas, tempSprite.frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
+        }
+
+        tempSprite.deleteSprite();
+        return tileRendered;
     }
 
     // Create map screen
