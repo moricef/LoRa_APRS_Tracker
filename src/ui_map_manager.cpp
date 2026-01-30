@@ -54,7 +54,6 @@ namespace UIMapManager {
     float map_center_lon = 0.0f;
     String map_current_region = "";
     static String cachedMapsPath = "";      // Cached maps path (avoid repeated SD access)
-    static bool mapsPathCached = false;     // Flag to check if path is cached
     bool map_follow_gps = true;  // Follow GPS or free panning mode
 
     // Touch pan state
@@ -549,17 +548,6 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 
 
     // --- Batch Rendering System ---
-    struct LineSegment {
-        int x0, y0, x1, y1;
-        uint16_t color;
-    };
-
-    struct RenderBatch {
-        LineSegment* segments;
-        size_t count;
-        size_t capacity;
-        uint16_t color;
-    };
 
     static RenderBatch* activeBatch = nullptr;
     static size_t maxBatchSize = 0;
@@ -568,7 +556,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         return maxBatchSize;
     }
 
-    static void initBatchRendering() {
+    void initBatchRendering() {
         #ifdef BOARD_HAS_PSRAM
             size_t psramFree = ESP.getFreePsram();
             if (psramFree >= 4 * 1024 * 1024) 
@@ -639,37 +627,6 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     static uint32_t PALETTE_SIZE = 0;
     static bool fillPolygons = true;
 
-    enum DrawCommand : uint8_t 
-    {
-        DRAW_LINE = 1,               /**< Draw a simple line segment */
-        DRAW_POLYLINE = 2,           /**< Draw a series of connected line segments */
-        DRAW_STROKE_POLYGON = 3,     /**< Draw only the stroke (outline) of a single polygon */
-        DRAW_STROKE_POLYGONS = 4,    /**< Draw only the strokes (outlines) of multiple polygons */
-        DRAW_HORIZONTAL_LINE = 5,    /**< Draw a horizontal line */
-        DRAW_VERTICAL_LINE = 6,      /**< Draw a vertical line */
-        SET_COLOR = 0x80,            /**< Set current drawing color (RGB332) */
-        SET_COLOR_INDEX = 0x81,      /**< Set current color using palette index */
-        RECTANGLE = 0x82,            /**< Optimized rectangle command */
-        STRAIGHT_LINE = 0x83,        /**< Optimized straight line command */
-        HIGHWAY_SEGMENT = 0x84,      /**< Highway segment with continuity */
-        GRID_PATTERN = 0x85,         /**< Urban grid pattern */
-        BLOCK_PATTERN = 0x86,        /**< City block pattern */
-        CIRCLE = 0x87,               /**< Optimized circle command */
-        SET_LAYER = 0x88,            /**< Layer indicator command */
-        RELATIVE_MOVE = 0x89,        /**< Relative coordinate movement */
-        PREDICTED_LINE = 0x8A,       /**< Predictive line based on pattern */
-        COMPRESSED_POLYLINE = 0x8B,  /**< Huffman-compressed polyline */
-        OPTIMIZED_POLYGON = 0x8C,    /**< Optimized polygon (contour only, fill decided by viewer) */
-        HOLLOW_POLYGON = 0x8D,       /**< Polygon outline only (optimized for boundaries) */
-        OPTIMIZED_TRIANGLE = 0x8E,   /**< Optimized triangle (contour only, fill decided by viewer) */
-        OPTIMIZED_RECTANGLE = 0x8F,  /**< Optimized rectangle (contour only, fill decided by viewer) */
-        OPTIMIZED_CIRCLE = 0x90,     /**< Optimized circle (contour only, fill decided by viewer) */
-        SIMPLE_RECTANGLE = 0x96,     /**< Simple rectangle (x, y, width, height) */
-        SIMPLE_CIRCLE = 0x97,        /**< Simple circle (center_x, center_y, radius) */
-        SIMPLE_TRIANGLE = 0x98,      /**< Simple triangle (x1, y1, x2, y2, x3, y3) */
-        DASHED_LINE = 0x99,          /**< Dashed line with pattern */
-        DOTTED_LINE = 0x9A,          /**< Dotted line with pattern */
-    };
 
     // --- Color Management Utilities ---
 
@@ -956,7 +913,8 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
                         int* py = (int*)ps_malloc(numPoints * sizeof(int));
                         if (!px || !py) {
                            for (uint32_t i = 0; i < numPoints * 2; ++i) readZigzag(data, offset, dataSize);
-                           if(px) free(px); if(py) free(py);
+                           if(px) { free(px); }
+                           if(py) { free(py); }
                            break;
                         }
 
@@ -994,7 +952,8 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
                         int* py = (int*)ps_malloc(numPoints * sizeof(int));
                          if (!px || !py) {
                            for (uint32_t i = 0; i < numPoints * 2; ++i) readZigzag(data, offset, dataSize);
-                           if(px) free(px); if(py) free(py);
+                           if(px) { free(px); }
+                           if(py) { free(py); }
                            break;
                         }
 
@@ -1032,7 +991,8 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
                         int* py = (int*)ps_malloc(numPoints * sizeof(int));
                          if (!px || !py) {
                            for (uint32_t i = 0; i < numPoints * 2; ++i) readZigzag(data, offset, dataSize);
-                           if(px) free(px); if(py) free(py);
+                           if(px) { free(px); }
+                           if(py) { free(py); }
                            break;
                         }
                         
