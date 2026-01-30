@@ -1693,7 +1693,7 @@ namespace UIMapManager {
         // --- 2. Cache Miss: Create a temporary sprite for rendering ---
         TFT_eSprite tempSprite(&tft);
         tempSprite.createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE);
-        
+    
         // --- 3. Try to find and render a tile from SD card ---
         // Check for vector tile (.bin) first
         snprintf(path, sizeof(path), "/sdcard/VECTMAP/%d/%d/%d.bin", zoom, tileX, tileY);
@@ -1705,7 +1705,8 @@ namespace UIMapManager {
             if (SD.exists(path)) {
                 // PNG found: decode to temp sprite using PNGdec
                 spriteDecodeContext.sprite = &tempSprite;
-                if (png.open(path, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngSpriteCallback) == PNG_SUCCESS) {
+                // The pngFileOpened flag is set by the pngOpenFile callback
+                if (png.open(path, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngSpriteCallback) == PNG_SUCCESS && pngFileOpened) {
                     if (png.decode(NULL, 0) == PNG_SUCCESS) {
                         tileRendered = true;
                     }
@@ -1725,7 +1726,7 @@ namespace UIMapManager {
                 }
             }
         }
-        
+    
         // --- 4. If rendering was successful, update cache and draw on canvas ---
         if (tileRendered) {
             addToCache(path, zoom, tileX, tileY, tempSprite);
