@@ -1076,6 +1076,9 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     initBatchRendering();
     createRenderBatch(getOptimalBatchSize());
 
+    // Clear the sprite with a land color before drawing
+    map.fillSprite(lv_color_to_u16(lv_color_hex(0xefede6)));
+
     size_t offset = 0;
 
     // --- NAV1 Header (22 bytes) ---
@@ -1098,6 +1101,8 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     memcpy(&max_lon_header, data + offset, 4); offset += 4;
     memcpy(&max_lat_header, data + offset, 4); offset += 4;
     
+    const size_t features_start_offset = offset;
+    
     // --- Calculate precise tile boundaries for scaling ---
     double tile_min_lon_deg, tile_max_lat_deg;
     double tile_max_lon_deg, tile_min_lat_deg;
@@ -1118,69 +1123,107 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
 
     int executed = 0;
 
-    // --- Feature Loop ---
+    // --- Pass 1: Polygons ---
+    offset = features_start_offset;
     for (uint16_t i = 0; i < feature_count; ++i) {
-        if (offset + 6 > fileSize) break; // Check for feature header size
+        if (offset + 6 > fileSize) break;
 
         uint8_t geometry_type = data[offset++];
         uint16_t color;
         memcpy(&color, data + offset, 2); offset += 2;
         uint8_t zoom_priority = data[offset++];
-        (void)zoom_priority; // Silence unused variable warning
+        (void)zoom_priority;
         uint8_t width = data[offset++];
         uint16_t coord_count;
         memcpy(&coord_count, data + offset, 2); offset += 2;
 
-        if (coord_count == 0) continue;
-        if (offset + coord_count * 8 > fileSize) break; // Check for coordinates data size
-
-        int* px = (int*)ps_malloc(coord_count * sizeof(int));
-        int* py = (int*)ps_malloc(coord_count * sizeof(int));
-        if (!px || !py) {
-            if (px) free(px);
-            if (py) free(py);
-            offset += coord_count * 8;
+        size_t coords_size = coord_count * 8;
+        if (coord_count == 0 || offset + coords_size > fileSize) {
             continue;
         }
 
-        // --- Coordinate Transformation ---
-        for (uint16_t j = 0; j < coord_count; ++j) {
-            int32_t lon, lat;
-            memcpy(&lon, data + offset, 4); offset += 4;
-            memcpy(&lat, data + offset, 4); offset += 4;
-
-            px[j] = (int)(((int64_t)(lon - tile_min_lon_e7) * (VTILE_SIZE - 1)) / delta_lon);
-            py[j] = VTILE_SIZE - 1 - (int)(((int64_t)(lat - tile_min_lat_e7) * (VTILE_SIZE - 1)) / delta_lat);
-        }
-        
-        // Add debug logs for the first 10 features
-        if (i < 10) {
-            Serial.printf("[MAP] Feature %d: Type=%s, Color=0x%04X, Points=%d, FirstPx=(%d, %d)\n",
-                i,
-                (geometry_type == 1) ? "Point" : ((geometry_type == 2) ? "Line" : "Polygon"),
-                color,
-                coord_count,
-                (coord_count > 0) ? px[0] : -1,
-                (coord_count > 0) ? py[0] : -1
-            );
-        }
-        
-        // --- Rendering ---
-        if (geometry_type == 2 && coord_count >= 2) { // Line
-            for (uint16_t j = 1; j < coord_count; ++j) {
-                addToBatch(px[j-1] + xOffset, py[j-1] + yOffset, px[j] + xOffset, py[j] + yOffset, color);
+        if (geometry_type == 3 && coord_count >= 3) { // Polygon
+            int* px = (int*)ps_malloc(coord_count * sizeof(int));
+            int* py = (int*)ps_malloc(coord_count * sizeof(int));
+            if (!px || !py) {
+                if (px) free(px);
+                if (py) free(py);
+                offset += coords_size;
+                continue;
             }
-            executed++;
-        } else if (geometry_type == 3 && coord_count >= 3) { // Polygon
-            // Temporarily disable polygon fill to see if lines appear
-            // fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset);
+
+            for (uint16_t j = 0; j < coord_count; ++j) {
+                int32_t lon, lat;
+                memcpy(&lon, data + offset, 4); offset += 4;
+                memcpy(&lat, data + offset, 4); offset += 4;
+                px[j] = (int)(((int64_t)(lon - tile_min_lon_e7) * (VTILE_SIZE - 1)) / delta_lon);
+                py[j] = VTILE_SIZE - 1 - (int)(((int64_t)(lat - tile_min_lat_e7) * (VTILE_SIZE - 1)) / delta_lat);
+            }
+            
+            fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset);
             const uint16_t borderColor = darkenRGB565(color);
             drawPolygonBorder(map, px, py, coord_count, borderColor, color, xOffset, yOffset);
             executed++;
+            
+            free(px);
+            free(py);
+        } else {
+            offset += coords_size; // Skip non-polygon features
         }
-        
-        free(px);
-        free(py);
+    }
+
+    // --- Pass 2: Lines and Points ---
+    offset = features_start_offset;
+    for (uint16_t i = 0; i < feature_count; ++i) {
+        if (offset + 6 > fileSize) break;
+
+        uint8_t geometry_type = data[offset++];
+        uint16_t color;
+        memcpy(&color, data + offset, 2); offset += 2;
+        uint8_t zoom_priority = data[offset++];
+        (void)zoom_priority;
+        uint8_t width = data[offset++];
+        uint16_t coord_count;
+        memcpy(&coord_count, data + offset, 2); offset += 2;
+
+        size_t coords_size = coord_count * 8;
+        if (coord_count == 0 || offset + coords_size > fileSize) {
+            continue;
+        }
+
+        if ((geometry_type == 2 && coord_count >= 2) || (geometry_type == 1)) { // Lines and Points
+            int* px = (int*)ps_malloc(coord_count * sizeof(int));
+            int* py = (int*)ps_malloc(coord_count * sizeof(int));
+            if (!px || !py) {
+                if (px) free(px);
+                if (py) free(py);
+                offset += coords_size;
+                continue;
+            }
+
+            for (uint16_t j = 0; j < coord_count; ++j) {
+                int32_t lon, lat;
+                memcpy(&lon, data + offset, 4); offset += 4;
+                memcpy(&lat, data + offset, 4); offset += 4;
+                px[j] = (int)(((int64_t)(lon - tile_min_lon_e7) * (VTILE_SIZE - 1)) / delta_lon);
+                py[j] = VTILE_SIZE - 1 - (int)(((int64_t)(lat - tile_min_lat_e7) * (VTILE_SIZE - 1)) / delta_lat);
+            }
+            
+            if (geometry_type == 2) { // Line
+                for (uint16_t j = 1; j < coord_count; ++j) {
+                    addToBatch(px[j-1] + xOffset, py[j-1] + yOffset, px[j] + xOffset, py[j] + yOffset, color);
+                }
+                executed++;
+            } else if (geometry_type == 1) { // Point
+                // Point rendering can be added here if needed, e.g., map.drawPixel(...)
+                executed++;
+            }
+            
+            free(px);
+            free(py);
+        } else {
+            offset += coords_size; // Skip polygon features
+        }
     }
 
     flushBatch(map); // Flush any remaining lines in the batch
