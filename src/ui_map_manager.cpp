@@ -1077,7 +1077,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     createRenderBatch(getOptimalBatchSize());
 
     // Clear the sprite with a land color before drawing
-    map.fillSprite(lv_color_to_u16(lv_color_hex(0xefede6)));
+    map.fillSprite(lv_color_to16(lv_color_hex(0xefede6)));
 
     size_t offset = 0;
 
@@ -1134,6 +1134,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         uint8_t zoom_priority = data[offset++];
         (void)zoom_priority;
         uint8_t width = data[offset++];
+        (void)width; // Silence unused variable warning
         uint16_t coord_count;
         memcpy(&coord_count, data + offset, 2); offset += 2;
 
@@ -1183,6 +1184,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         uint8_t zoom_priority = data[offset++];
         (void)zoom_priority;
         uint8_t width = data[offset++];
+        (void)width; // Silence unused variable warning (addToBatch does not use it)
         uint16_t coord_count;
         memcpy(&coord_count, data + offset, 2); offset += 2;
 
