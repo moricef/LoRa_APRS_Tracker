@@ -512,6 +512,7 @@ namespace UIMapManager {
         if (lruIt->sprite) {
             lruIt->sprite->deleteSprite();
             delete lruIt->sprite;
+            lruIt->sprite = nullptr;
         }
         tileCache.erase(lruIt);
     }
@@ -1766,6 +1767,10 @@ static void copySpriteToCanvasWithClip(lv_obj_t* canvas, TFT_eSprite* sprite, in
 }
 
 bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY) {
+    if (spiMutex == NULL) {
+        Serial.println("[MAP] ERROR: spiMutex is NULL. Skipping SD access.");
+        return false;
+    }
     char path[128];
     char found_path[128] = {0};
     enum { TILE_NONE, TILE_VEC, TILE_PNG, TILE_JPG } found_type = TILE_NONE;
@@ -1786,10 +1791,6 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     }
 
     // --- 3. Find a valid tile file on SD card (with SPI Mutex) ---
-    if (spiMutex == NULL) {
-        Serial.println("[MAP] ERROR: spiMutex is NULL!");
-        return false;
-    }
     if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         if (STORAGE_Utils::isSDAvailable()) {
             const char* region = map_current_region.c_str();
@@ -1850,7 +1851,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         } else {
             Serial.println("[MAP] ERROR: Sprite creation failed (Out of PSRAM?)");
             delete newSprite;
-            newSprite = nullptr;
+            return false;
         }
     }
 
