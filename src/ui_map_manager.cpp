@@ -1126,7 +1126,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     // --- Pass 1: Polygons ---
     offset = features_start_offset;
     for (uint16_t i = 0; i < feature_count; ++i) {
-        if (i > 0 && i % 50 == 0) vTaskDelay(0); // Feed watchdog
+        if (i > 0 && i % 20 == 0) yield(); // Feed watchdog
 
         if (offset + 6 > fileSize) break;
 
@@ -1181,7 +1181,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     // --- Pass 2: Lines and Points ---
     offset = features_start_offset;
     for (uint16_t i = 0; i < feature_count; ++i) {
-        if (i > 0 && i % 50 == 0) vTaskDelay(0); // Feed watchdog
+        if (i > 0 && i % 20 == 0) yield(); // Feed watchdog
 
         if (offset + 6 > fileSize) break;
 
