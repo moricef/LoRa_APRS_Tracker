@@ -19,6 +19,11 @@
 class Configuration;
 class TFT_eSprite;
 
+// External data sources from lvgl_ui.cpp and other global variables
+extern TinyGPSPlus& gps;
+extern Configuration& Config;
+extern uint8_t& myBeaconsIndex;
+
 // Dimensions de l'affichage
 #define SCREEN_WIDTH  320
 #define SCREEN_HEIGHT 240
@@ -75,10 +80,7 @@ namespace UIMapManager {
         float lon_min; float lon_max;
     };
 
-    // External data sources from lvgl_ui.cpp and other global variables
-    extern TinyGPSPlus& gps;
-    extern Configuration& Config;
-    extern uint8_t& myBeaconsIndex;
+    // Map-specific data sources
     extern int& mapStationsCount;
     extern SemaphoreHandle_t& spiMutex; // Declared extern for SPI bus mutex access
 
