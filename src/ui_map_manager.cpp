@@ -1728,10 +1728,8 @@ namespace UIMapManager {
         char path[128];
         bool tileRendered = false;
 
-        // --- 1. Check for vector tile (.bin) first ---
-        snprintf(path, sizeof(path), "/sdcard/VECTMAP/%d/%d/%d.bin", zoom, tileX, tileY);
-
-        int cacheIdx = findCachedTile(path);
+        // --- 1. Check cache first using coordinates (works for any tile type) ---
+        int cacheIdx = findCachedTile(zoom, tileX, tileY);
         if (cacheIdx >= 0) {
             // Cache Hit: Copy from sprite cache to LVGL canvas
             TFT_eSprite* cachedSprite = tileCache[cacheIdx].sprite;
@@ -1739,46 +1737,36 @@ namespace UIMapManager {
             return true;
         }
 
-        // --- 2. Cache Miss: Check files on SD and render ---
+        // --- 2. Cache Miss: Create a temporary sprite for rendering ---
         TFT_eSprite tempSprite(&tft);
         tempSprite.createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE);
         
+        // --- 3. Try to find and render a tile from SD card ---
+        // Check for vector tile (.bin) first
+        snprintf(path, sizeof(path), "/sdcard/VECTMAP/%d/%d/%d.bin", zoom, tileX, tileY);
         if (SD.exists(path)) {
-            // Vector tile found: render it to the temporary sprite
-            // Note: This requires renderTile and its dependencies to be available in this file.
-            // We will add them in a future step. For now, this branch won't be fully functional.
-            // tileRendered = renderTile(path, 0, 0, tempSprite);
+            tileRendered = renderTile(path, 0, 0, tempSprite);
         } else {
-            // --- 3. Check for raster tiles (.png, .jpg) ---
-            snprintf(path, sizeof(path), "%s/%s/%d/%d/%d.png", STORAGE_Utils::getRootPath().c_str(), "Maps", zoom, tileX, tileY);
+            // Fallback to raster tiles (.png, .jpg)
+            snprintf(path, sizeof(path), "/sdcard/MAP/%d/%d/%d.png", zoom, tileX, tileY);
             if (SD.exists(path)) {
-                // PNG found: decode to temporary sprite
-                pngCacheContext.cacheBuffer = (uint16_t*)tempSprite.frameBuffer(0);
-                pngCacheContext.tileWidth = MAP_TILE_SIZE;
-                if (png.open(path, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngCacheCallback) == PNG_SUCCESS) {
-                    if (png.decode(nullptr, 0) == PNG_SUCCESS) {
-                        tileRendered = true;
-                    }
-                    png.close();
+                // PNG found: decode to temp sprite using TFT_eSPI's function
+                if (tempSprite.drawPngFile(path, 0, 0)) {
+                    tileRendered = true;
                 }
             } else {
-                snprintf(path, sizeof(path), "%s/%s/%d/%d/%d.jpg", STORAGE_Utils::getRootPath().c_str(), "Maps", zoom, tileX, tileY);
+                snprintf(path, sizeof(path), "/sdcard/MAP/%d/%d/%d.jpg", zoom, tileX, tileY);
                 if (SD.exists(path)) {
-                    // JPEG found: decode to temporary sprite
-                    jpegCacheContext.cacheBuffer = (uint16_t*)tempSprite.frameBuffer(0);
-                    jpegCacheContext.tileWidth = MAP_TILE_SIZE;
-                    if (jpeg.open(path, jpegOpenFile, jpegCloseFile, jpegReadFile, jpegSeekFile, jpegCacheCallback) == JPEG_SUCCESS) {
-                        if (jpeg.decode(0, 0, 0) == JPEG_SUCCESS) {
-                            tileRendered = true;
-                        }
-                        jpeg.close();
+                    // JPEG found: decode to temp sprite using TFT_eSPI's function
+                    if (tempSprite.drawJpgFile(path, 0, 0)) {
+                        tileRendered = true;
                     }
                 }
             }
         }
         
+        // --- 4. If rendering was successful, update cache and draw on canvas ---
         if (tileRendered) {
-            // --- 4. Add to cache and draw on canvas ---
             addToCache(path, zoom, tileX, tileY, tempSprite);
             lv_canvas_copy_buf(canvas, tempSprite.frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
         }
