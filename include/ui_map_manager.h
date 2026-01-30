@@ -40,6 +40,16 @@ namespace UIMapManager {
         SIMPLE_TRIANGLE = 0x98, DASHED_LINE = 0x99, DOTTED_LINE = 0x9A,
     };
     
+    struct MapTile
+    {
+        char file[255];
+        uint32_t tilex;
+        uint32_t tiley;
+        uint8_t zoom;
+        float lat;
+        float lon;
+    };
+    
     struct CachedTile
     {
         TFT_eSprite* sprite;
