@@ -1676,10 +1676,49 @@ namespace UIMapManager {
         }
     }
 
+    // Discover the first available map region from the SD card
+    static void discoverAndSetMapRegion() {
+        if (!map_current_region.isEmpty()) {
+            return; // Region is already set
+        }
+
+        Serial.println("[MAP] Map region not set, attempting to discover...");
+        if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+            if (STORAGE_Utils::isSDAvailable()) {
+                File mapsDir = SD.open("/LoRa_Tracker/Maps");
+                if (mapsDir && mapsDir.isDirectory()) {
+                    File entry = mapsDir.openNextFile();
+                    while(entry) {
+                        if (entry.isDirectory()) {
+                            String dirName = String(entry.name());
+                            // Extract just the directory name from the full path
+                            map_current_region = dirName.substring(dirName.lastIndexOf('/') + 1);
+                            Serial.printf("[MAP] Discovered and set map region: %s\n", map_current_region.c_str());
+                            entry.close();
+                            break; // Use the first one we find
+                        }
+                        entry.close();
+                        entry = mapsDir.openNextFile();
+                    }
+                } else {
+                    Serial.println("[MAP] ERROR: Could not open /LoRa_Tracker/Maps directory.");
+                }
+                mapsDir.close();
+            }
+            xSemaphoreGive(spiMutex);
+        } else {
+            Serial.println("[MAP] ERROR: Could not get SPI Mutex for region discovery.");
+        }
+
+        if (map_current_region.isEmpty()) {
+            Serial.println("[MAP] WARNING: No map region found on SD card.");
+        }
+    }
+
 // Load a tile from SD card (with caching) and copy it to canvas
 bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY) {
     char path[128];
-    char found_path[128] = {0}; // Store the path of the first file found
+    char found_path[128] = {0};
     enum { TILE_NONE, TILE_VEC, TILE_PNG, TILE_JPG } found_type = TILE_NONE;
     bool tileRendered = false;
     TFT_eSprite tempSprite(&tft);
@@ -1693,50 +1732,46 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         return true;
     }
 
-    // --- 2. Find a valid tile file on SD card (with SPI Mutex) ---
+    // --- 2. Check for a valid region before proceeding ---
+    if (map_current_region.isEmpty()) {
+        // No region is set, and discovery failed. Cannot load tiles.
+        return false;
+    }
+
+    // --- 3. Find a valid tile file on SD card (with SPI Mutex) ---
     if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
         if (STORAGE_Utils::isSDAvailable()) {
+            const char* region = map_current_region.c_str();
+
             // Check for vector tile
-            snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%d/%d/%d.bin", zoom, tileX, tileY);
-            Serial.printf("[MAP] Probing: %s\n", path);
+            snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.bin", region, zoom, tileX, tileY);
+            Serial.printf("[MAP] Region: %s, Probing: %s\n", region, path);
             File f = SD.open(path);
-            if (f) {
-                f.close();
-                strcpy(found_path, path);
-                found_type = TILE_VEC;
-            } else {
+            if (f) { f.close(); strcpy(found_path, path); found_type = TILE_VEC; }
+            else {
                 // Check for PNG
-                snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%d/%d/%d.png", zoom, tileX, tileY);
-                Serial.printf("[MAP] Probing: %s\n", path);
+                snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
+                Serial.printf("[MAP] Region: %s, Probing: %s\n", region, path);
                 f = SD.open(path);
-                if (f) {
-                    f.close();
-                    strcpy(found_path, path);
-                    found_type = TILE_PNG;
-                } else {
+                if (f) { f.close(); strcpy(found_path, path); found_type = TILE_PNG; }
+                else {
                     // Check for JPG
-                    snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%d/%d/%d.jpg", zoom, tileX, tileY);
-                    Serial.printf("[MAP] Probing: %s\n", path);
+                    snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
+                    Serial.printf("[MAP] Region: %s, Probing: %s\n", region, path);
                     f = SD.open(path);
-                    if (f) {
-                        f.close();
-                        strcpy(found_path, path);
-                        found_type = TILE_JPG;
-                    }
+                    if (f) { f.close(); strcpy(found_path, path); found_type = TILE_JPG; }
                 }
             }
-        } else {
-            Serial.println("[MAP] SD Card not mounted!");
         }
         xSemaphoreGive(spiMutex);
     } else {
         Serial.println("[MAP] ERROR: Could not get SPI Mutex for SD access");
     }
 
-    // --- 3. If a file was found, create sprite and render it ---
+    // --- 4. If a file was found, create sprite and render it ---
     if (found_type != TILE_NONE) {
         Serial.printf("[MAP] Found file: %s\n", found_path);
-        tempSprite.setAttribute(PSRAM_ENABLE, true); // Ensure PSRAM is used for the sprite
+        tempSprite.setAttribute(PSRAM_ENABLE, true);
         if (tempSprite.createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr) {
             spriteCreated = true;
             
@@ -1770,13 +1805,12 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         }
     }
 
-    // --- 4. If rendering was successful, update cache and draw on canvas ---
+    // --- 5. If rendering successful, update cache and draw on canvas ---
     if (tileRendered && spriteCreated) {
         addToCache(found_path, zoom, tileX, tileY, tempSprite);
         lv_canvas_copy_buf(canvas, tempSprite.frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
     }
 
-    // --- 5. Clean up sprite if it was created ---
     if (spriteCreated) {
         tempSprite.deleteSprite();
     }
@@ -1789,6 +1823,9 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         // Boost CPU to 240 MHz for smooth map rendering
         setCpuFrequencyMhz(240);
         Serial.printf("[MAP] CPU boosted to %d MHz\n", getCpuFrequencyMhz());
+
+        // Discover and set the map region if it's not already defined
+        discoverAndSetMapRegion();
 
         // Clean up old station buttons if screen is being recreated
         cleanup_station_buttons();
