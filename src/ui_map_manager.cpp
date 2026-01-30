@@ -543,6 +543,418 @@ namespace UIMapManager {
         Serial.printf("[CACHE] Added tile: %s\n", filePath);
     }
 
+    // =========================================================================
+    // =                     VECTOR TILE RENDERING ENGINE                      =
+    // =========================================================================
+
+    enum DrawCommand : uint8_t 
+    {
+        DRAW_LINE = 1,               /**< Draw a simple line segment */
+        DRAW_POLYLINE = 2,           /**< Draw a series of connected line segments */
+        DRAW_STROKE_POLYGON = 3,     /**< Draw only the stroke (outline) of a single polygon */
+        DRAW_STROKE_POLYGONS = 4,    /**< Draw only the strokes (outlines) of multiple polygons */
+        DRAW_HORIZONTAL_LINE = 5,    /**< Draw a horizontal line */
+        DRAW_VERTICAL_LINE = 6,      /**< Draw a vertical line */
+        SET_COLOR = 0x80,            /**< Set current drawing color (RGB332) */
+        SET_COLOR_INDEX = 0x81,      /**< Set current color using palette index */
+        RECTANGLE = 0x82,            /**< Optimized rectangle command */
+        STRAIGHT_LINE = 0x83,        /**< Optimized straight line command */
+        HIGHWAY_SEGMENT = 0x84,      /**< Highway segment with continuity */
+        GRID_PATTERN = 0x85,         /**< Urban grid pattern */
+        BLOCK_PATTERN = 0x86,        /**< City block pattern */
+        CIRCLE = 0x87,               /**< Optimized circle command */
+        SET_LAYER = 0x88,            /**< Layer indicator command */
+        RELATIVE_MOVE = 0x89,        /**< Relative coordinate movement */
+        PREDICTED_LINE = 0x8A,       /**< Predictive line based on pattern */
+        COMPRESSED_POLYLINE = 0x8B,  /**< Huffman-compressed polyline */
+        OPTIMIZED_POLYGON = 0x8C,    /**< Optimized polygon (contour only, fill decided by viewer) */
+        HOLLOW_POLYGON = 0x8D,       /**< Polygon outline only (optimized for boundaries) */
+        OPTIMIZED_TRIANGLE = 0x8E,   /**< Optimized triangle (contour only, fill decided by viewer) */
+        OPTIMIZED_RECTANGLE = 0x8F,  /**< Optimized rectangle (contour only, fill decided by viewer) */
+        OPTIMIZED_CIRCLE = 0x90,     /**< Optimized circle (contour only, fill decided by viewer) */
+        SIMPLE_RECTANGLE = 0x96,     /**< Simple rectangle (x, y, width, height) */
+        SIMPLE_CIRCLE = 0x97,        /**< Simple circle (center_x, center_y, radius) */
+        SIMPLE_TRIANGLE = 0x98,      /**< Simple triangle (x1, y1, x2, y2, x3, y3) */
+        DASHED_LINE = 0x99,          /**< Dashed line with pattern */
+        DOTTED_LINE = 0x9A,          /**< Dotted line with pattern */
+    };
+
+    // --- Constants and State Variables for Vector Rendering ---
+    static constexpr int VTILE_SIZE = 256;
+    static constexpr int MARGIN_PIXELS = 1;
+    static uint8_t PALETTE[256] = {0};
+    static uint32_t PALETTE_SIZE = 0;
+    static bool fillPolygons = true;
+
+    // --- Color Management Utilities ---
+
+    bool loadPalette(const char* palettePath) {
+        FILE* f = fopen(palettePath, "rb");
+        if (!f) return false;
+        
+        uint32_t numColors;
+        if (fread(&numColors, 4, 1, f) != 1) {
+            fclose(f);
+            return false;
+        }
+        
+        uint8_t rgb888[3];
+        PALETTE_SIZE = 0;
+        for (uint32_t i = 0; i < numColors && i < 256; i++) {
+            if (fread(rgb888, 3, 1, f) == 1) {
+                uint8_t r332 = rgb888[0] & 0xE0;
+                uint8_t g332 = (rgb888[1] & 0xE0) >> 3;
+                uint8_t b332 = rgb888[2] >> 6;
+                PALETTE[i] = r332 | g332 | b332;
+                PALETTE_SIZE++;
+            }
+        }
+        
+        fclose(f);
+        Serial.printf("[MAP] Loaded palette: %u colors\n", PALETTE_SIZE);
+        return PALETTE_SIZE > 0;
+    }
+
+    uint8_t paletteToRGB332(const uint32_t idx) {
+        if (idx < PALETTE_SIZE) return PALETTE[idx];
+        return 0xFF; // White
+    }
+
+    uint16_t RGB332ToRGB565(const uint8_t color) {
+        uint8_t r = (color & 0xE0);
+        uint8_t g = (color & 0x1C) << 3;
+        uint8_t b = (color & 0x03) << 6;
+        
+        uint16_t r565 = (r >> 3) & 0x1F;
+        uint16_t g565 = (g >> 2) & 0x3F;
+        uint16_t b565 = (b >> 3) & 0x1F;
+        
+        return (r565 << 11) | (g565 << 5) | b565;
+    }
+
+    uint8_t darkenRGB332(const uint8_t color, const float amount = 0.4f) {
+        uint8_t r = (color & 0xE0) >> 5;
+        uint8_t g = (color & 0x1C) >> 2;
+        uint8_t b = (color & 0x03);
+
+        r = static_cast<uint8_t>(r * (1.0f - amount));
+        g = static_cast<uint8_t>(g * (1.0f - amount));
+        b = static_cast<uint8_t>(b * (1.0f - amount));
+
+        return ((r << 5) | (g << 2) | b);
+    }
+
+    // --- Data Decoding Utilities ---
+
+    uint32_t readVarint(const uint8_t* data, size_t& offset, const size_t dataSize) {
+        uint32_t value = 0;
+        uint8_t shift = 0;
+        while (offset < dataSize && shift < 32) {
+            uint8_t byte = data[offset++];
+            value |= ((uint32_t)(byte & 0x7F)) << shift;
+            if ((byte & 0x80) == 0) break;
+            shift += 7;
+        }
+        if (offset > dataSize) {
+            offset = dataSize;
+            return 0;
+        }
+        return value;
+    }
+
+    int32_t readZigzag(const uint8_t* data, size_t& offset, const size_t dataSize) {
+        if (offset >= dataSize) return 0;
+        const uint32_t encoded = readVarint(data, offset, dataSize);
+        return static_cast<int32_t>((encoded >> 1) ^ (-(int32_t)(encoded & 1)));
+    }
+
+    // --- Geometric and Drawing Primitives ---
+
+    int uint16ToPixel(const int32_t val) {
+        int p = static_cast<int>((val * (long long)VTILE_SIZE) / 65536);
+        if (p < 0) p = 0;
+        if (p >= VTILE_SIZE) p = VTILE_SIZE - 1;
+        return p;
+    }
+
+    bool isPointOnMargin(const int px, const int py) {
+        return (px <= MARGIN_PIXELS || px >= VTILE_SIZE - 1 - MARGIN_PIXELS || 
+                py <= MARGIN_PIXELS || py >= VTILE_SIZE - 1 - MARGIN_PIXELS);
+    }
+
+    bool isNear(int val, int target, int tol = 2) {
+        return abs(val - target) <= tol;
+    }
+
+    bool shouldDrawLine(const int px1, const int py1, const int px2, const int py2) {
+        if ((isNear(px1, 0) && isNear(px2, VTILE_SIZE - 1)) || (isNear(px1, VTILE_SIZE - 1) && isNear(px2, 0))) {
+            if ((isNear(py1, 0) && isNear(py2, VTILE_SIZE - 1)) || (isNear(py1, VTILE_SIZE - 1) && isNear(py2, 0))) return false;
+            if (isNear(py1, py2)) return false;
+        }
+        if ((isNear(py1, 0) && isNear(py2, VTILE_SIZE - 1)) || (isNear(py1, VTILE_SIZE - 1) && isNear(py2, 0))) {
+            if (isNear(px1, px2)) return false;
+        }
+
+        int dx = px2 - px1;
+        int dy = py2 - py1;
+        long len2 = (long)dx*dx + (long)dy*dy;
+        if (len2 > (VTILE_SIZE * VTILE_SIZE * 3)) return false;
+
+        if (isPointOnMargin(px1, py1) && isPointOnMargin(px2, py2)) return false;
+        if ((px1 == px2) && (px1 <= MARGIN_PIXELS || px1 >= VTILE_SIZE - 1 - MARGIN_PIXELS)) return false;
+        if ((py1 == py2) && (py1 <= MARGIN_PIXELS || py1 >= VTILE_SIZE - 1 - MARGIN_PIXELS)) return false;
+        
+        return true;
+    }
+
+    void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
+        int miny = py[0], maxy = py[0];
+        for (int i = 1; i < numPoints; ++i) {
+            if (py[i] < miny) miny = py[i];
+            if (py[i] > maxy) maxy = py[i];
+        }
+
+        int* xints = (int*)ps_malloc(numPoints * sizeof(int));
+        if (!xints) {
+            Serial.println("[MAP] fillPolygonGeneral: ps_malloc failed");
+            return;
+        }
+
+        for (int y = miny; y <= maxy; ++y) {
+            int nodes = 0;
+            for (int i = 0, j = numPoints - 1; i < numPoints; j = i++) {
+                if ((py[i] < y && py[j] >= y) || (py[j] < y && py[i] >= y)) {
+                    if (py[j] - py[i] != 0) {
+                       xints[nodes++] = static_cast<int>(px[i] + (float)(y - py[i]) * (px[j] - px[i]) / (py[j] - py[i]));
+                    }
+                }
+            }
+            if (nodes > 1) {
+                std::sort(xints, xints + nodes);
+                for (int i = 0; i < nodes; i += 2) {
+                    if (i + 1 < nodes) {
+                        int x0 = xints[i] + xOffset;
+                        int x1 = xints[i + 1] + xOffset;
+                        int yy = y + yOffset;
+                        if (yy >= 0 && yy < VTILE_SIZE + yOffset) {
+                            if (x0 < 0) x0 = 0;
+                            if (x1 >= VTILE_SIZE + xOffset) x1 = VTILE_SIZE - 1 + xOffset;
+                            map.drawLine(x0, yy, x1, yy, color);
+                        }
+                    }
+                }
+            }
+        }
+        free(xints);
+    }
+
+    void drawPolygonBorder(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t borderColor, const uint16_t fillColor, const int xOffset, const int yOffset) {
+        if (numPoints < 2) return;
+
+        for (int i = 0; i < numPoints; ++i) {
+            int j = (i + 1) % numPoints;
+            const bool marginA = isPointOnMargin(px[i], py[i]);
+            const bool marginB = isPointOnMargin(px[j], py[j]);
+            const uint16_t color = (marginA && marginB) ? fillColor : borderColor;
+
+            const int x0 = px[i] + xOffset;
+            const int y0 = py[i] + yOffset;
+            const int x1 = px[j] + xOffset;
+            const int y1 = py[j] + yOffset;
+            
+            if (!(marginA && marginB)) {
+                map.drawLine(x0, y0, x1, y1, color);
+            }
+        }
+    }
+
+    // --- Main Rendering Function ---
+
+    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
+        static bool isPaletteLoaded = false;
+        if (!isPaletteLoaded) {
+            isPaletteLoaded = loadPalette("/sdcard/VECTMAP/palette.bin");
+        }
+
+        if (!path || path[0] == '\0') return false;
+
+        FILE* file = fopen(path, "rb");
+        if (!file) return false;
+        
+        fseek(file, 0, SEEK_END);
+        const long fileSize = ftell(file);
+        fseek(file, 0, SEEK_SET);
+
+        uint8_t* data = (uint8_t*)ps_malloc(fileSize);
+        if (!data) {
+            fclose(file);
+            Serial.printf("[MAP] Failed to allocate %ld bytes for tile %s\n", fileSize, path);
+            return false;
+        }
+
+        const size_t bytesRead = fread(data, 1, fileSize, file);
+        fclose(file);
+        if (bytesRead != fileSize) {
+            free(data);
+            return false;
+        }
+
+        size_t offset = 0;
+        const size_t dataSize = fileSize;
+        uint8_t current_color = 0xFF;
+        uint16_t currentDrawColor = RGB332ToRGB565(current_color);
+
+        const uint32_t num_cmds = readVarint(data, offset, dataSize);
+        if (num_cmds == 0) {
+            free(data);
+            return false;
+        }
+
+        int executed = 0;
+
+        for (uint32_t cmd_idx = 0; cmd_idx < num_cmds; cmd_idx++) {
+            if (offset >= dataSize) break;
+            const size_t cmdStartOffset = offset;
+            const uint32_t cmdType = readVarint(data, offset, dataSize);
+
+            switch (cmdType) {
+                case SET_LAYER:
+                    readVarint(data, offset, dataSize);
+                    break;
+                case SET_COLOR:
+                    if (offset < dataSize) {
+                        current_color = data[offset++];
+                        currentDrawColor = RGB332ToRGB565(current_color);
+                        executed++;
+                    }
+                    break;
+                case SET_COLOR_INDEX: {
+                    const uint32_t color_index = readVarint(data, offset, dataSize);
+                    current_color = paletteToRGB332(color_index);
+                    currentDrawColor = RGB332ToRGB565(current_color);
+                    executed++;
+                    break;
+                }
+                case DRAW_LINE:
+                case STRAIGHT_LINE: {
+                    const int32_t x1 = readZigzag(data, offset, dataSize);
+                    const int32_t y1 = readZigzag(data, offset, dataSize);
+                    const int32_t dx = readZigzag(data, offset, dataSize);
+                    const int32_t dy = readZigzag(data, offset, dataSize);
+                    const int px1 = uint16ToPixel(x1);
+                    const int py1 = uint16ToPixel(y1);
+                    const int px2 = uint16ToPixel(x1 + dx);
+                    const int py2 = uint16ToPixel(y1 + dy);
+                    if (shouldDrawLine(px1, py1, px2, py2)) {
+                        map.drawLine(px1 + xOffset, py1 + yOffset, px2 + xOffset, py2 + yOffset, currentDrawColor);
+                        executed++;
+                    }
+                    break;
+                }
+                case DRAW_POLYLINE: {
+                    const uint32_t lineWidth = readVarint(data, offset, dataSize);
+                    const uint32_t numPoints = readVarint(data, offset, dataSize);
+                    if (numPoints >= 2) {
+                        int* px = (int*)ps_malloc(numPoints * sizeof(int));
+                        int* py = (int*)ps_malloc(numPoints * sizeof(int));
+
+                        if (!px || !py) {
+                            if (px) free(px);
+                            if (py) free(py);
+                            // Skip reading points
+                            for (uint32_t i = 0; i < numPoints * 2; ++i) readZigzag(data, offset, dataSize);
+                            break;
+                        }
+
+                        int32_t prevX_raw = readZigzag(data, offset, dataSize);
+                        int32_t prevY_raw = readZigzag(data, offset, dataSize);
+                        px[0] = uint16ToPixel(prevX_raw);
+                        py[0] = uint16ToPixel(prevY_raw);
+
+                        for (uint32_t i = 1; i < numPoints; ++i) {
+                            prevX_raw += readZigzag(data, offset, dataSize);
+                            prevY_raw += readZigzag(data, offset, dataSize);
+                            px[i] = uint16ToPixel(prevX_raw);
+                            py[i] = uint16ToPixel(prevY_raw);
+                        }
+
+                        for (uint32_t i = 1; i < numPoints; ++i) {
+                            if (shouldDrawLine(px[i-1], py[i-1], px[i], py[i])) {
+                                map.drawWideLine(px[i-1] + xOffset, py[i-1] + yOffset, px[i] + xOffset, py[i] + yOffset, lineWidth, currentDrawColor);
+                            }
+                        }
+                        free(px);
+                        free(py);
+                        executed++;
+                    } else {
+                        for (uint32_t i = 0; i < numPoints * 2; ++i) readZigzag(data, offset, dataSize);
+                    }
+                    break;
+                }
+                case DRAW_STROKE_POLYGON:
+                case OPTIMIZED_POLYGON:
+                case HOLLOW_POLYGON:
+                case DRAW_STROKE_POLYGONS: { // Simplified to handle one polygon
+                    readVarint(data, offset, dataSize); // lineWidth or unused
+                    const uint32_t numPoints = readVarint(data, offset, dataSize);
+                    if (numPoints >= 3) {
+                        int* px = (int*)ps_malloc(numPoints * sizeof(int));
+                        int* py = (int*)ps_malloc(numPoints * sizeof(int));
+
+                        if (!px || !py) {
+                            if (px) free(px);
+                            if (py) free(py);
+                            for (uint32_t i = 0; i < numPoints * 2; ++i) readZigzag(data, offset, dataSize);
+                            break;
+                        }
+
+                        int32_t prevX_raw = readZigzag(data, offset, dataSize);
+                        int32_t prevY_raw = readZigzag(data, offset, dataSize);
+                        px[0] = uint16ToPixel(prevX_raw);
+                        py[0] = uint16ToPixel(prevY_raw);
+
+                        for (uint32_t i = 1; i < numPoints; ++i) {
+                            prevX_raw += readZigzag(data, offset, dataSize);
+                            prevY_raw += readZigzag(data, offset, dataSize);
+                            px[i] = uint16ToPixel(prevX_raw);
+                            py[i] = uint16ToPixel(prevY_raw);
+                        }
+
+                        if (fillPolygons && cmdType != HOLLOW_POLYGON) {
+                            fillPolygonGeneral(map, px, py, numPoints, currentDrawColor, xOffset, yOffset);
+                        }
+                        const uint16_t borderColor = RGB332ToRGB565(darkenRGB332(current_color));
+                        drawPolygonBorder(map, px, py, numPoints, borderColor, currentDrawColor, xOffset, yOffset);
+                        
+                        free(px);
+                        free(py);
+                        executed++;
+                    } else {
+                        for (uint32_t i = 0; i < numPoints * 2; ++i) readZigzag(data, offset, dataSize);
+                    }
+                    break;
+                }
+                // Other cases can be added here if needed
+                default:
+                    // Skip unknown commands. A simple heuristic is to assume they are small.
+                    // This part is risky without full spec.
+                    break;
+            }
+
+            if (offset <= cmdStartOffset && cmd_idx > 0) { // Failsafe for parsing errors
+                break;
+            }
+        }
+
+        free(data);
+
+        return executed > 0;
+    }
+
+    // =========================================================================
+    // =                  END OF VECTOR TILE RENDERING ENGINE                  =
+    // =========================================================================
+
     // JPEG decoder for map tiles
     static JPEGDEC jpeg;
 
