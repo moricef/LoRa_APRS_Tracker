@@ -1083,6 +1083,8 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     memcpy(&feature_count, data + offset, 2);
     offset += 2;
 
+    Serial.printf("[MAP] NAV1: %d features in %s\n", feature_count, path);
+
     // Read bounding box from header, but IGNORE it for scaling. We calculate precise tile boundaries.
     int32_t min_lon_header, min_lat_header, max_lon_header, max_lat_header;
     memcpy(&min_lon_header, data + offset, 4); offset += 4;
@@ -1100,6 +1102,8 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     const int32_t tile_min_lat_e7 = static_cast<int32_t>(tile_min_lat_deg * 10000000.0);
     const int32_t tile_max_lon_e7 = static_cast<int32_t>(tile_max_lon_deg * 10000000.0);
     const int32_t tile_max_lat_e7 = static_cast<int32_t>(tile_max_lat_deg * 10000000.0);
+
+    Serial.printf("[MAP] Tile Bounds E7: Lon %d to %d, Lat %d to %d\n", tile_min_lon_e7, tile_max_lon_e7, tile_min_lat_e7, tile_max_lat_e7);
 
     int64_t delta_lon = tile_max_lon_e7 - tile_min_lon_e7;
     int64_t delta_lat = tile_max_lat_e7 - tile_min_lat_e7;
@@ -1142,6 +1146,18 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
             py[j] = VTILE_SIZE - 1 - (int)(((int64_t)(lat - tile_min_lat_e7) * VTILE_SIZE) / delta_lat);
         }
         
+        // Add debug logs for the first 10 features
+        if (i < 10) {
+            Serial.printf("[MAP] Feature %d: Type=%s, Color=0x%04X, Points=%d, FirstPx=(%d, %d)\n",
+                i,
+                (geometry_type == 2) ? "Line" : (geometry_type == 3) ? "Polygon" : "Point",
+                color,
+                coord_count,
+                (coord_count > 0) ? px[0] : -1,
+                (coord_count > 0) ? py[0] : -1
+            );
+        }
+        
         // --- Rendering ---
         if (geometry_type == 2 && coord_count >= 2) { // Line
             for (uint16_t j = 1; j < coord_count; ++j) {
@@ -1149,7 +1165,8 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
             }
             executed++;
         } else if (geometry_type == 3 && coord_count >= 3) { // Polygon
-            fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset);
+            // Temporarily disable polygon fill to see if lines appear
+            // fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset);
             const uint16_t borderColor = darkenRGB565(color);
             drawPolygonBorder(map, px, py, coord_count, borderColor, color, xOffset, yOffset);
             executed++;
