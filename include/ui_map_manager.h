@@ -186,7 +186,6 @@ namespace UIMapManager {
     void latLonToTile(float lat, float lon, int zoom, int* tileX, int* tileY);
     void latLonToPixel(float lat, float lon, float centerLat, float centerLon, int zoom, int* pixelX, int* pixelY);
     CachedSymbol* getSymbolCacheEntry(char table, char symbol);
-    void map_station_clicked(lv_event_t* e);
     void btn_map_back_clicked(lv_event_t* e);
     void btn_map_recenter_clicked(lv_event_t* e);
     bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY);

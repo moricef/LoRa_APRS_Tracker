@@ -80,15 +80,6 @@ namespace UIMapManager {
     #define SYMBOL_SIZE 24        // 24x24 pixels
     #define SYMBOL_DATA_SIZE (SYMBOL_SIZE * SYMBOL_SIZE * sizeof(lv_color_t))
 
-    struct CachedSymbol {
-        char table;              // '/' for primary, '\' for alternate
-        char symbol;             // ASCII character
-        lv_img_dsc_t img_dsc;   // LVGL image descriptor (RGB565A8 format)
-        uint8_t* data;           // Combined RGB565+Alpha buffer in PSRAM
-        uint32_t lastAccess;     // For LRU eviction
-        bool valid;
-    };
-
     static CachedSymbol symbolCache[SYMBOL_CACHE_SIZE];
     static uint32_t symbolCacheAccessCounter = 0;
     static bool symbolCacheInitialized = false;
