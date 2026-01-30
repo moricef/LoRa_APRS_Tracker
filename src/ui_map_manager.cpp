@@ -1580,8 +1580,8 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
             // Draw PNG image pixel by pixel with alpha transparency
             lv_color_t* imgData = cache->data;
             uint8_t* alphaData = cache->alpha;
-            int startX = x - SYMBOL_SIZE / 2;
-            int startY = y - SYMBOL_SIZE / 2;
+            int startX = x - (SYMBOL_SIZE / 2) - 1;
+            int startY = y - (SYMBOL_SIZE / 2) - 1;
 
             for (int sy = 0; sy < SYMBOL_SIZE; sy++) {
                 for (int sx = 0; sx < SYMBOL_SIZE; sx++) {
