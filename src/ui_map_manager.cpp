@@ -517,28 +517,30 @@ namespace UIMapManager {
     }
 
     // Add a rendered tile sprite to the cache
-    void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprite& source) {
-        if (maxCachedTiles == 0) return; // Cache disabled
+    void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprite* sourceSprite) {
+        if (maxCachedTiles == 0 || !sourceSprite) {
+            if(sourceSprite) { // Don't leak memory if cache is disabled
+                sourceSprite->deleteSprite();
+                delete sourceSprite;
+            }
+            return;
+        }
 
         // If cache is full, evict the least recently used tile
         if (tileCache.size() >= maxCachedTiles) {
             evictLRUTile();
         }
 
-        // Create new cache entry
+        // Create new cache entry and take ownership of the sprite pointer
         CachedTile newEntry;
-        newEntry.sprite = new TFT_eSprite(&tft);
-        newEntry.sprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE);
-        
-        // Copy the rendered tile to the cache sprite
-        newEntry.sprite->pushImage(0, 0, MAP_TILE_SIZE, MAP_TILE_SIZE, (uint16_t*)source.frameBuffer(0));
-        
+        newEntry.sprite = sourceSprite;
+    
         strncpy(newEntry.filePath, filePath, sizeof(newEntry.filePath) - 1);
         newEntry.filePath[sizeof(newEntry.filePath) - 1] = '\0';
         newEntry.lastAccess = ++cacheAccessCounter;
         newEntry.isValid = true;
         newEntry.tileHash = (static_cast<uint32_t>(zoom) << 28) | (static_cast<uint32_t>(tileX) << 14) | static_cast<uint32_t>(tileY);
-        
+    
         tileCache.push_back(newEntry);
         Serial.printf("[CACHE] Added tile: %s\n", filePath);
     }
@@ -1683,7 +1685,7 @@ namespace UIMapManager {
         }
 
         Serial.println("[MAP] Map region not set, attempting to discover...");
-        if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 File mapsDir = SD.open("/LoRa_Tracker/Maps");
                 if (mapsDir && mapsDir.isDirectory()) {
@@ -1721,8 +1723,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     char found_path[128] = {0};
     enum { TILE_NONE, TILE_VEC, TILE_PNG, TILE_JPG } found_type = TILE_NONE;
     bool tileRendered = false;
-    TFT_eSprite tempSprite(&tft);
-    bool spriteCreated = false;
+    TFT_eSprite* newSprite = nullptr; // Sprite will be allocated on the heap
 
     // --- 1. Check cache first ---
     int cacheIdx = findCachedTile(zoom, tileX, tileY);
@@ -1734,28 +1735,24 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
 
     // --- 2. Check for a valid region before proceeding ---
     if (map_current_region.isEmpty()) {
-        // No region is set, and discovery failed. Cannot load tiles.
         return false;
     }
 
     // --- 3. Find a valid tile file on SD card (with SPI Mutex) ---
-    if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+    if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         if (STORAGE_Utils::isSDAvailable()) {
             const char* region = map_current_region.c_str();
 
-            // Check for vector tile
             snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.bin", region, zoom, tileX, tileY);
             Serial.printf("[MAP] Region: %s, Probing: %s\n", region, path);
             File f = SD.open(path);
             if (f) { f.close(); strcpy(found_path, path); found_type = TILE_VEC; }
             else {
-                // Check for PNG
                 snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
                 Serial.printf("[MAP] Region: %s, Probing: %s\n", region, path);
                 f = SD.open(path);
                 if (f) { f.close(); strcpy(found_path, path); found_type = TILE_PNG; }
                 else {
-                    // Check for JPG
                     snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
                     Serial.printf("[MAP] Region: %s, Probing: %s\n", region, path);
                     f = SD.open(path);
@@ -1771,24 +1768,23 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     // --- 4. If a file was found, create sprite and render it ---
     if (found_type != TILE_NONE) {
         Serial.printf("[MAP] Found file: %s\n", found_path);
-        tempSprite.setAttribute(PSRAM_ENABLE, true);
-        if (tempSprite.createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr) {
-            spriteCreated = true;
-            
-            if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        newSprite = new TFT_eSprite(&tft);
+        newSprite->setAttribute(PSRAM_ENABLE, true);
+        if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr) {
+            if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 switch (found_type) {
                     case TILE_VEC:
-                        tileRendered = renderTile(found_path, 0, 0, tempSprite);
+                        tileRendered = renderTile(found_path, 0, 0, *newSprite);
                         break;
                     case TILE_PNG:
-                        spriteDecodeContext.sprite = &tempSprite;
+                        spriteDecodeContext.sprite = newSprite;
                         if (png.open(found_path, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngSpriteCallback) == PNG_SUCCESS && pngFileOpened) {
                             if (png.decode(NULL, 0) == PNG_SUCCESS) tileRendered = true;
                             png.close();
                         }
                         break;
                     case TILE_JPG:
-                        spriteDecodeContext.sprite = &tempSprite;
+                        spriteDecodeContext.sprite = newSprite;
                         if (jpeg.open(found_path, jpegOpenFile, jpegCloseFile, jpegReadFile, jpegSeekFile, jpegSpriteCallback) == 1) {
                             if (jpeg.decode(0, 0, 0) == 1) tileRendered = true;
                             jpeg.close();
@@ -1802,17 +1798,19 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
             }
         } else {
             Serial.println("[MAP] ERROR: Sprite creation failed (Out of PSRAM?)");
+            delete newSprite;
+            newSprite = nullptr;
         }
     }
 
     // --- 5. If rendering successful, update cache and draw on canvas ---
-    if (tileRendered && spriteCreated) {
-        addToCache(found_path, zoom, tileX, tileY, tempSprite);
-        lv_canvas_copy_buf(canvas, tempSprite.frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
-    }
-
-    if (spriteCreated) {
-        tempSprite.deleteSprite();
+    if (tileRendered && newSprite) {
+        lv_canvas_copy_buf(canvas, newSprite->frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
+        addToCache(found_path, zoom, tileX, tileY, newSprite); // Cache takes ownership
+    } else if (newSprite) {
+        // Cleanup if rendering failed or sprite wasn't added to cache
+        newSprite->deleteSprite();
+        delete newSprite;
     }
     
     return tileRendered;
