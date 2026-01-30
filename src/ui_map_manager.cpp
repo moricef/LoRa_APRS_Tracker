@@ -1073,11 +1073,11 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         return false;
     }
 
-    initBatchRendering();
-    createRenderBatch(getOptimalBatchSize());
+    // initBatchRendering(); // <-- Commentez cette ligne
+    // createRenderBatch(getOptimalBatchSize()); // <-- Commentez cette ligne
 
     // Clear the sprite with a land color before drawing
-    map.fillSprite(0xDEFB); // Correct Little-Endian Beige
+    map.fillSprite(0xFFFF); // Pure White for high-contrast test
 
     size_t offset = 0;
 
@@ -1103,21 +1103,13 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     
     const size_t features_start_offset = offset;
     
-    // --- Calculate precise tile boundaries for scaling ---
-    double tile_min_lon_deg, tile_max_lat_deg;
-    double tile_max_lon_deg, tile_min_lat_deg;
-    tileToLonLat(tileX, tileY, zoom, tile_min_lon_deg, tile_max_lat_deg);
-    tileToLonLat(tileX + 1, tileY + 1, zoom, tile_max_lon_deg, tile_min_lat_deg);
-
-    const int32_t tile_min_lon_e7 = static_cast<int32_t>(tile_min_lon_deg * 10000000.0);
-    const int32_t tile_min_lat_e7 = static_cast<int32_t>(tile_min_lat_deg * 10000000.0);
-    const int32_t tile_max_lon_e7 = static_cast<int32_t>(tile_max_lon_deg * 10000000.0);
-    const int32_t tile_max_lat_e7 = static_cast<int32_t>(tile_max_lat_deg * 10000000.0);
-
-    int64_t delta_lon = tile_max_lon_e7 - tile_min_lon_e7;
-    int64_t delta_lat = tile_max_lat_e7 - tile_min_lat_e7;
-    if (delta_lon == 0) delta_lon = 1;
-    if (delta_lat == 0) delta_lat = 1;
+    // --- BYPASS tile boundary calculation and use HEADER values for scaling ---
+    // Supprimez ou commentez toute la section de calcul de tile_min_lon_deg, etc.
+    // REMPLACEZ-LA par ceci :
+    int64_t d_lon = (int64_t)max_lon_header - min_lon_header;
+    int64_t d_lat = (int64_t)max_lat_header - min_lat_header;
+    if (d_lon == 0) d_lon = 1;
+    if (d_lat == 0) d_lat = 1;
 
     int executed = 0;
 
@@ -1131,7 +1123,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         uint8_t geometry_type = data[offset++];
         uint16_t color;
         memcpy(&color, data + offset, 2); offset += 2;
-        color = (color << 8) | (color >> 8); // Swap bytes for correct ESP32 RGB565
+        // color = (color << 8) | (color >> 8); // <-- Supprimez cette ligne
         
         uint8_t zoom_priority = data[offset++];
         (void)zoom_priority;
@@ -1160,15 +1152,14 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                 int32_t lon, lat;
                 memcpy(&lon, data + offset, 4); offset += 4;
                 memcpy(&lat, data + offset, 4); offset += 4;
-                double lon_val = lon / 10000000.0;
-                double lat_val = lat / 10000000.0;
-                px[j] = (int)((lon_val - tile_min_lon_deg) / (tile_max_lon_deg - tile_min_lon_deg) * 255.0);
-                py[j] = (int)(255.0 - ((lat_val - tile_min_lat_deg) / (tile_max_lat_deg - tile_min_lat_deg) * 255.0));
+                // REMPLACEZ les anciennes lignes de conversion de pixels par celles-ci :
+                px[j] = (int)(((int64_t)(lon - min_lon_header) * 255) / d_lon);
+                py[j] = 255 - (int)(((int64_t)(lat - min_lat_header) * 255) / d_lat);
             }
             
-            fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset);
-            const uint16_t borderColor = darkenRGB565(color);
-            drawPolygonBorder(map, px, py, coord_count, borderColor, color, xOffset, yOffset);
+            // fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset); // <-- Assurez-vous que c'est commenté
+            // const uint16_t borderColor = darkenRGB565(color); // <-- Supprimez ou commentez
+            drawPolygonBorder(map, px, py, coord_count, 0x0000, 0x0000, xOffset, yOffset); // <-- Forcez le noir
             executed++;
             
             free(px);
@@ -1188,7 +1179,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         uint8_t geometry_type = data[offset++];
         uint16_t color;
         memcpy(&color, data + offset, 2); offset += 2;
-        color = (color << 8) | (color >> 8); // Swap bytes for correct ESP32 RGB565
+        // color = (color << 8) | (color >> 8); // <-- Supprimez cette ligne
         
         uint8_t zoom_priority = data[offset++];
         (void)zoom_priority;
@@ -1216,15 +1207,15 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                 int32_t lon, lat;
                 memcpy(&lon, data + offset, 4); offset += 4;
                 memcpy(&lat, data + offset, 4); offset += 4;
-                double lon_val = lon / 10000000.0;
-                double lat_val = lat / 10000000.0;
-                px[j] = (int)((lon_val - tile_min_lon_deg) / (tile_max_lon_deg - tile_min_lon_deg) * 255.0);
-                py[j] = (int)(255.0 - ((lat_val - tile_min_lat_deg) / (tile_max_lat_deg - tile_min_lat_deg) * 255.0));
+                // REMPLACEZ les anciennes lignes de conversion de pixels par celles-ci :
+                px[j] = (int)(((int64_t)(lon - min_lon_header) * 255) / d_lon);
+                py[j] = 255 - (int)(((int64_t)(lat - min_lat_header) * 255) / d_lat);
             }
             
             if (geometry_type == 2) { // Line
+                // REMPLACEZ la boucle addToBatch par une boucle de dessin direct :
                 for (uint16_t j = 1; j < coord_count; ++j) {
-                    addToBatch(px[j-1] + xOffset, py[j-1] + yOffset, px[j] + xOffset, py[j] + yOffset, color);
+                    map.drawLine(px[j-1] + xOffset, py[j-1] + yOffset, px[j] + xOffset, py[j] + yOffset, 0x0000);
                 }
                 executed++;
             } else if (geometry_type == 1) { // Point
@@ -1239,13 +1230,9 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         }
     }
 
-    flushBatch(map); // Flush any remaining lines in the batch
-    if (activeBatch) {
-        if (activeBatch->segments) delete[] activeBatch->segments;
-        delete activeBatch;
-        activeBatch = nullptr;
-    }
-
+    // flushBatch(map); // <-- Commentez cette ligne
+    // if (activeBatch) { ... } // <-- Commentez ce bloc
+    
     free(data);
     return executed > 0;
 }
