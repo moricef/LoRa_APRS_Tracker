@@ -64,7 +64,7 @@ namespace UIMapManager {
         uint32_t tileHash;
         uint32_t lastAccess;
         bool isValid;
-        char filePath[80];
+        char filePath[64];
     };
     
     struct CachedSymbol {
@@ -120,58 +120,7 @@ namespace UIMapManager {
     extern String map_current_region;
     extern bool map_follow_gps;  // Follow GPS or free panning mode
 
-    // Unified memory pool methods
-    void initUnifiedPool();
-    void* unifiedAlloc(size_t size, uint8_t type = 0);
-    void unifiedDealloc(void* ptr);
 
-    // RAII Memory Guard for automatic memory management
-    template<typename T>
-    class MemoryGuard
-    {
-        private:
-            T* ptr;
-            size_t size;
-            uint8_t type;
-            bool fromPool;
-            
-        public:
-            MemoryGuard(size_t numElements, uint8_t poolType = 0) 
-                : ptr(nullptr), size(numElements * sizeof(T)), type(poolType), fromPool(false)
-            {
-                ptr = static_cast<T*>(UIMapManager::unifiedAlloc(size, type));
-                if (ptr) 
-                    fromPool = true;
-                else 
-                {
-                    #ifdef BOARD_HAS_PSRAM
-                        ptr = static_cast<T*>(heap_caps_malloc(size, MALLOC_CAP_SPIRAM));
-                    #else
-                        ptr = static_cast<T*>(heap_caps_malloc(size, MALLOC_CAP_8BIT));
-                    #endif
-                    fromPool = false;
-                }
-            }
-            
-            ~MemoryGuard()
-            {
-                if (ptr) 
-                {
-                    if (fromPool)
-                        UIMapManager::unifiedDealloc(ptr);
-                    else 
-                        heap_caps_free(ptr);
-                }
-            }
-            
-            T* get() const { return ptr; }
-            T& operator*() const { return *ptr; }
-            T* operator->() const { return ptr; }
-            operator bool() const { return ptr != nullptr; }
-            
-            MemoryGuard(const MemoryGuard&) = delete;
-            MemoryGuard& operator=(const MemoryGuard&) = delete;
-    };
 
     // Function declarations
     void initTileCache();

@@ -33,10 +33,6 @@
 
 namespace UIMapManager {
 
-    // Unified memory pool system
-    static std::vector<uint8_t*> unifiedPool;
-    static SemaphoreHandle_t unifiedPoolMutex = nullptr;
-    static size_t totalAllocated = 0;
 
     // UI elements - Map screen
     lv_obj_t* screen_map = nullptr;
@@ -67,7 +63,7 @@ namespace UIMapManager {
     #define PAN_THRESHOLD 5  // Minimum pixels to trigger pan
 
     // Tile cache in PSRAM
-    #define TILE_CACHE_SIZE 20  // Number of tiles to cache
+    #define TILE_CACHE_SIZE 15  // Number of tiles to cache
     #define TILE_DATA_SIZE (MAP_TILE_SIZE * MAP_TILE_SIZE * sizeof(uint16_t))  // 128KB per tile for old raster tiles
 
     // Tile cache system
@@ -451,9 +447,10 @@ namespace UIMapManager {
                           map_center_lat, map_center_lon, map_current_zoom, &myX, &myY);
             if (myX >= 0 && myX < MAP_CANVAS_WIDTH && myY >= 0 && myY < MAP_CANVAS_HEIGHT) {
                 Beacon* currentBeacon = &Config.beacons[myBeaconsIndex];
-                String fullSymbol = currentBeacon->overlay + currentBeacon->symbol;
+                char fullSymbol[4]; // Overlay (1) + Symbol (1) + Null
+                snprintf(fullSymbol, sizeof(fullSymbol), "%s%s", currentBeacon->overlay.c_str(), currentBeacon->symbol.c_str());
                 configurePoolEntry(displayIdx, myX, myY,
-                                   currentBeacon->callsign.c_str(), fullSymbol.c_str(), -1);
+                                   currentBeacon->callsign.c_str(), fullSymbol, -1);
                 displayIdx++;
             }
         }
@@ -2362,45 +2359,6 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         Serial.println("[LVGL] Map screen created");
     }
 
-    // Initialize unified memory pool
-    void initUnifiedPool() {
-        if (unifiedPoolMutex == nullptr) {
-            unifiedPoolMutex = xSemaphoreCreateMutex();
-        }
-    }
-
-    // Allocate from unified pool
-    void* unifiedAlloc(size_t size, uint8_t type) {
-        void* ptr = nullptr;
-        if (unifiedPoolMutex && xSemaphoreTake(unifiedPoolMutex, portMAX_DELAY) == pdTRUE) {
-            ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-            if (ptr) {
-                unifiedPool.push_back((uint8_t*)ptr);
-                totalAllocated += heap_caps_get_allocated_size(ptr);
-            }
-            xSemaphoreGive(unifiedPoolMutex);
-        } else {
-            // Fallback if mutex is not created or taken
-            ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-        }
-        return ptr;
-    }
-
-    // Deallocate from unified pool
-    void unifiedDealloc(void* ptr) {
-        if (!ptr) return;
-
-        if (unifiedPoolMutex && xSemaphoreTake(unifiedPoolMutex, portMAX_DELAY) == pdTRUE) {
-            auto it = std::find(unifiedPool.begin(), unifiedPool.end(), (uint8_t*)ptr);
-            if (it != unifiedPool.end()) {
-                totalAllocated -= heap_caps_get_allocated_size(ptr);
-                unifiedPool.erase(it);
-            }
-            xSemaphoreGive(unifiedPoolMutex);
-        }
-        
-        heap_caps_free(ptr);
-    }
 
 } // namespace UIMapManager
 
