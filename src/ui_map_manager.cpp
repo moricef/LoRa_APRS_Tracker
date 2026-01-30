@@ -1103,7 +1103,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     const int32_t tile_max_lon_e7 = static_cast<int32_t>(tile_max_lon_deg * 10000000.0);
     const int32_t tile_max_lat_e7 = static_cast<int32_t>(tile_max_lat_deg * 10000000.0);
 
-    Serial.printf("[MAP] Tile Bounds E7: Lon %d to %d, Lat %d to %d\n", tile_min_lon_e7, tile_max_lon_e7, tile_min_lat_e7, tile_max_lat_e7);
+    Serial.printf("[MAP] Tile Bounds E7: Lon(%d to %d) Lat(%d to %d)\n", tile_min_lon_e7, tile_max_lon_e7, tile_min_lat_e7, tile_max_lat_e7);
 
     int64_t delta_lon = tile_max_lon_e7 - tile_min_lon_e7;
     int64_t delta_lat = tile_max_lat_e7 - tile_min_lat_e7;
@@ -1142,15 +1142,15 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
             memcpy(&lon, data + offset, 4); offset += 4;
             memcpy(&lat, data + offset, 4); offset += 4;
 
-            px[j] = (int)(((int64_t)(lon - tile_min_lon_e7) * VTILE_SIZE) / delta_lon);
-            py[j] = VTILE_SIZE - 1 - (int)(((int64_t)(lat - tile_min_lat_e7) * VTILE_SIZE) / delta_lat);
+            px[j] = (int)(((int64_t)(lon - tile_min_lon_e7) * (VTILE_SIZE - 1)) / delta_lon);
+            py[j] = VTILE_SIZE - 1 - (int)(((int64_t)(lat - tile_min_lat_e7) * (VTILE_SIZE - 1)) / delta_lat);
         }
         
         // Add debug logs for the first 10 features
         if (i < 10) {
             Serial.printf("[MAP] Feature %d: Type=%s, Color=0x%04X, Points=%d, FirstPx=(%d, %d)\n",
                 i,
-                (geometry_type == 2) ? "Line" : (geometry_type == 3) ? "Polygon" : "Point",
+                (geometry_type == 1) ? "Point" : ((geometry_type == 2) ? "Line" : "Polygon"),
                 color,
                 coord_count,
                 (coord_count > 0) ? px[0] : -1,
