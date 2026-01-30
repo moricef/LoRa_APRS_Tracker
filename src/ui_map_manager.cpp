@@ -1676,74 +1676,97 @@ namespace UIMapManager {
         }
     }
 
-    // Load a tile from SD card (with caching) and copy it to canvas
-    bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY) {
-        char path[128];
-        bool tileRendered = false;
+// Load a tile from SD card (with caching) and copy it to canvas
+bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY) {
+    char path[128];
+    bool tileRendered = false;
 
-        // --- 1. Check cache first using coordinates (works for any tile type) ---
-        int cacheIdx = findCachedTile(zoom, tileX, tileY);
-        if (cacheIdx >= 0) {
-            // Cache Hit: Copy from sprite cache to LVGL canvas
-            TFT_eSprite* cachedSprite = tileCache[cacheIdx].sprite;
-            lv_canvas_copy_buf(canvas, cachedSprite->frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
-            return true;
-        }
+    // --- 1. Check cache first using coordinates (works for any tile type) ---
+    int cacheIdx = findCachedTile(zoom, tileX, tileY);
+    if (cacheIdx >= 0) {
+        // Cache Hit: Copy from sprite cache to LVGL canvas
+        TFT_eSprite* cachedSprite = tileCache[cacheIdx].sprite;
+        lv_canvas_copy_buf(canvas, cachedSprite->frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
+        return true;
+    }
 
-        // --- 2. Cache Miss: Create a temporary sprite for rendering, force PSRAM ---
-        TFT_eSprite tempSprite(&tft);
-        tempSprite.setAttribute(PSRAM_ENABLE, true); // FIX: Force PSRAM for sprite buffer
-        if (tempSprite.createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) == nullptr) {
-            Serial.println("[MAP] ERROR: Sprite creation failed (Out of PSRAM?)");
-            return false;
-        }
+    // --- 2. Cache Miss: Create a temporary sprite for rendering, force PSRAM ---
+    TFT_eSprite tempSprite(&tft);
+    tempSprite.setAttribute(PSRAM_ENABLE, true);
+    if (tempSprite.createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) == nullptr) {
+        Serial.println("[MAP] ERROR: Sprite creation failed (Out of PSRAM?)");
+        return false;
+    }
     
-        // --- 3. Try to find and render a tile from SD card ---
-        // Check for vector tile (.bin) first
-        snprintf(path, sizeof(path), "/VECTMAP/%d/%d/%d.bin", zoom, tileX, tileY); // FIX: Removed /sdcard prefix
-        Serial.printf("[MAP] Loading: %s\n", path); // DEBUG: Log path
-        if (SD.exists(path)) {
-            tileRendered = renderTile(path, 0, 0, tempSprite);
+    // --- 3. Try to find and render a tile from SD card (with SPI Mutex) ---
+    if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        // DIAGNOSTIC: Check if SD card is available
+        if (!STORAGE_Utils::isSDAvailable()) {
+            Serial.println("[MAP] SD Card not mounted!");
         } else {
-            // Fallback to raster tiles (.png, .jpg)
-            snprintf(path, sizeof(path), "/MAP/%d/%d/%d.png", zoom, tileX, tileY); // FIX: Removed /sdcard prefix
-            Serial.printf("[MAP] Loading: %s\n", path); // DEBUG: Log path
+            // Check for vector tile (.bin) first
+            snprintf(path, sizeof(path), "/VECTMAP/%d/%d/%d.bin", zoom, tileX, tileY);
+            Serial.printf("[MAP] Loading: %s\n", path);
             if (SD.exists(path)) {
-                // PNG found: decode to temp sprite using PNGdec
-                spriteDecodeContext.sprite = &tempSprite;
-                // The pngFileOpened flag is set by the pngOpenFile callback
-                if (png.open(path, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngSpriteCallback) == PNG_SUCCESS && pngFileOpened) {
-                    if (png.decode(NULL, 0) == PNG_SUCCESS) {
-                        tileRendered = true;
-                    }
-                    png.close();
-                }
+                Serial.printf("[MAP] Found file: %s\n", path);
+                tileRendered = renderTile(path, 0, 0, tempSprite);
             } else {
-                snprintf(path, sizeof(path), "/MAP/%d/%d/%d.jpg", zoom, tileX, tileY); // FIX: Removed /sdcard prefix
-                Serial.printf("[MAP] Loading: %s\n", path); // DEBUG: Log path
+                // Fallback to raster tiles (.png, .jpg)
+                snprintf(path, sizeof(path), "/MAP/%d/%d/%d.png", zoom, tileX, tileY);
+                Serial.printf("[MAP] Loading: %s\n", path);
                 if (SD.exists(path)) {
-                    // JPEG found: decode to temp sprite using JPEGDEC
+                    Serial.printf("[MAP] Found file: %s\n", path);
                     spriteDecodeContext.sprite = &tempSprite;
-                    if (jpeg.open(path, jpegOpenFile, jpegCloseFile, jpegReadFile, jpegSeekFile, jpegSpriteCallback) == 1) {
-                         if (jpeg.decode(0, 0, 0) == 1) {
-                             tileRendered = true;
-                         }
-                         jpeg.close();
+                    if (png.open(path, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngSpriteCallback) == PNG_SUCCESS && pngFileOpened) {
+                        if (png.decode(NULL, 0) == PNG_SUCCESS) {
+                            tileRendered = true;
+                        }
+                        png.close();
+                    }
+                } else {
+                    snprintf(path, sizeof(path), "/MAP/%d/%d/%d.jpg", zoom, tileX, tileY);
+                    Serial.printf("[MAP] Loading: %s\n", path);
+                    if (SD.exists(path)) {
+                        Serial.printf("[MAP] Found file: %s\n", path);
+                        spriteDecodeContext.sprite = &tempSprite;
+                        if (jpeg.open(path, jpegOpenFile, jpegCloseFile, jpegReadFile, jpegSeekFile, jpegSpriteCallback) == 1) {
+                             if (jpeg.decode(0, 0, 0) == 1) {
+                                 tileRendered = true;
+                             }
+                             jpeg.close();
+                        }
+                    } else {
+                        // FINAL FALLBACK: Try JPG without leading slash
+                        snprintf(path, sizeof(path), "MAP/%d/%d/%d.jpg", zoom, tileX, tileY);
+                        Serial.printf("[MAP] Loading (no slash): %s\n", path);
+                        if (SD.exists(path)) {
+                            Serial.printf("[MAP] Found file: %s\n", path);
+                            spriteDecodeContext.sprite = &tempSprite;
+                            if (jpeg.open(path, jpegOpenFile, jpegCloseFile, jpegReadFile, jpegSeekFile, jpegSpriteCallback) == 1) {
+                                if (jpeg.decode(0, 0, 0) == 1) {
+                                    tileRendered = true;
+                                }
+                                jpeg.close();
+                            }
+                        }
                     }
                 }
             }
         }
-    
-        // --- 4. If rendering was successful, update cache and draw on canvas ---
-        if (tileRendered) {
-            // CONFIRMED: This call matches the required function signature.
-            addToCache(path, zoom, tileX, tileY, tempSprite);
-            lv_canvas_copy_buf(canvas, tempSprite.frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
-        }
-
-        tempSprite.deleteSprite();
-        return tileRendered;
+        xSemaphoreGive(spiMutex);
+    } else {
+        Serial.println("[MAP] ERROR: Could not get SPI Mutex for SD access");
     }
+    
+    // --- 4. If rendering was successful, update cache and draw on canvas ---
+    if (tileRendered) {
+        addToCache(path, zoom, tileX, tileY, tempSprite);
+        lv_canvas_copy_buf(canvas, tempSprite.frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
+    }
+
+    tempSprite.deleteSprite();
+    return tileRendered;
+}
 
     // Create map screen
     void create_map_screen() {
