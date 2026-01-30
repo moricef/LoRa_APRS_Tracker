@@ -64,7 +64,7 @@ namespace UIMapManager {
         uint32_t tileHash;
         uint32_t lastAccess;
         bool isValid;
-        char filePath[255];
+        char filePath[80];
     };
     
     struct CachedSymbol {

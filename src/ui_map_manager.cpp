@@ -67,7 +67,7 @@ namespace UIMapManager {
     #define PAN_THRESHOLD 5  // Minimum pixels to trigger pan
 
     // Tile cache in PSRAM
-    #define TILE_CACHE_SIZE 40  // Number of tiles to cache
+    #define TILE_CACHE_SIZE 20  // Number of tiles to cache
     #define TILE_DATA_SIZE (MAP_TILE_SIZE * MAP_TILE_SIZE * sizeof(uint16_t))  // 128KB per tile for old raster tiles
 
     // Tile cache system
@@ -76,7 +76,7 @@ namespace UIMapManager {
     static uint32_t cacheAccessCounter = 0;
 
     // Symbol cache in PSRAM
-    #define SYMBOL_CACHE_SIZE 30  // Cache for frequently used symbols
+    #define SYMBOL_CACHE_SIZE 10  // Cache for frequently used symbols
     #define SYMBOL_SIZE 24        // 24x24 pixels
     #define SYMBOL_DATA_SIZE (SYMBOL_SIZE * SYMBOL_SIZE * sizeof(lv_color_t))
 

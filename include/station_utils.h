@@ -22,7 +22,7 @@
 #include <Arduino.h>
 
 // Structure for stations to display on map
-#define MAP_STATIONS_MAX 30
+#define MAP_STATIONS_MAX 20
 
 struct MapStation {
     String   callsign;
