@@ -1077,7 +1077,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     createRenderBatch(getOptimalBatchSize());
 
     // Clear the sprite with a land color before drawing
-    map.fillSprite(lv_color_to16(lv_color_hex(0xefede6)));
+    map.fillSprite(lv_color_to16(lv_color_hex(0xf2efe9)));
 
     size_t offset = 0;
 
@@ -1126,11 +1126,15 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     // --- Pass 1: Polygons ---
     offset = features_start_offset;
     for (uint16_t i = 0; i < feature_count; ++i) {
+        if (i > 0 && i % 50 == 0) vTaskDelay(0); // Feed watchdog
+
         if (offset + 6 > fileSize) break;
 
         uint8_t geometry_type = data[offset++];
         uint16_t color;
         memcpy(&color, data + offset, 2); offset += 2;
+        color = (color << 8) | (color >> 8); // Swap bytes for correct ESP32 RGB565
+        
         uint8_t zoom_priority = data[offset++];
         (void)zoom_priority;
         uint8_t width = data[offset++];
@@ -1139,11 +1143,12 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         memcpy(&coord_count, data + offset, 2); offset += 2;
 
         size_t coords_size = coord_count * 8;
-        if (coord_count == 0 || offset + coords_size > fileSize) {
+        if (coord_count < 3 || offset + coords_size > fileSize) { // Also skip if not enough points for a polygon
+            if (coord_count > 0 && offset + coords_size <= fileSize) offset += coords_size;
             continue;
         }
 
-        if (geometry_type == 3 && coord_count >= 3) { // Polygon
+        if (geometry_type == 3 && coord_count <= 500) { // Polygon (optimized)
             int* px = (int*)ps_malloc(coord_count * sizeof(int));
             int* py = (int*)ps_malloc(coord_count * sizeof(int));
             if (!px || !py) {
@@ -1169,18 +1174,22 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
             free(px);
             free(py);
         } else {
-            offset += coords_size; // Skip non-polygon features
+            offset += coords_size; // Skip non-polygon features or complex ones
         }
     }
 
     // --- Pass 2: Lines and Points ---
     offset = features_start_offset;
     for (uint16_t i = 0; i < feature_count; ++i) {
+        if (i > 0 && i % 50 == 0) vTaskDelay(0); // Feed watchdog
+
         if (offset + 6 > fileSize) break;
 
         uint8_t geometry_type = data[offset++];
         uint16_t color;
         memcpy(&color, data + offset, 2); offset += 2;
+        color = (color << 8) | (color >> 8); // Swap bytes for correct ESP32 RGB565
+        
         uint8_t zoom_priority = data[offset++];
         (void)zoom_priority;
         uint8_t width = data[offset++];
