@@ -1690,18 +1690,24 @@ namespace UIMapManager {
             return true;
         }
 
-        // --- 2. Cache Miss: Create a temporary sprite for rendering ---
+        // --- 2. Cache Miss: Create a temporary sprite for rendering, force PSRAM ---
         TFT_eSprite tempSprite(&tft);
-        tempSprite.createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE);
+        tempSprite.setAttribute(PSRAM_ENABLE, true); // FIX: Force PSRAM for sprite buffer
+        if (tempSprite.createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) == nullptr) {
+            Serial.println("[MAP] ERROR: Sprite creation failed (Out of PSRAM?)");
+            return false;
+        }
     
         // --- 3. Try to find and render a tile from SD card ---
         // Check for vector tile (.bin) first
-        snprintf(path, sizeof(path), "/sdcard/VECTMAP/%d/%d/%d.bin", zoom, tileX, tileY);
+        snprintf(path, sizeof(path), "/VECTMAP/%d/%d/%d.bin", zoom, tileX, tileY); // FIX: Removed /sdcard prefix
+        Serial.printf("[MAP] Loading: %s\n", path); // DEBUG: Log path
         if (SD.exists(path)) {
             tileRendered = renderTile(path, 0, 0, tempSprite);
         } else {
             // Fallback to raster tiles (.png, .jpg)
-            snprintf(path, sizeof(path), "/sdcard/MAP/%d/%d/%d.png", zoom, tileX, tileY);
+            snprintf(path, sizeof(path), "/MAP/%d/%d/%d.png", zoom, tileX, tileY); // FIX: Removed /sdcard prefix
+            Serial.printf("[MAP] Loading: %s\n", path); // DEBUG: Log path
             if (SD.exists(path)) {
                 // PNG found: decode to temp sprite using PNGdec
                 spriteDecodeContext.sprite = &tempSprite;
@@ -1713,7 +1719,8 @@ namespace UIMapManager {
                     png.close();
                 }
             } else {
-                snprintf(path, sizeof(path), "/sdcard/MAP/%d/%d/%d.jpg", zoom, tileX, tileY);
+                snprintf(path, sizeof(path), "/MAP/%d/%d/%d.jpg", zoom, tileX, tileY); // FIX: Removed /sdcard prefix
+                Serial.printf("[MAP] Loading: %s\n", path); // DEBUG: Log path
                 if (SD.exists(path)) {
                     // JPEG found: decode to temp sprite using JPEGDEC
                     spriteDecodeContext.sprite = &tempSprite;
@@ -1729,6 +1736,7 @@ namespace UIMapManager {
     
         // --- 4. If rendering was successful, update cache and draw on canvas ---
         if (tileRendered) {
+            // CONFIRMED: This call matches the required function signature.
             addToCache(path, zoom, tileX, tileY, tempSprite);
             lv_canvas_copy_buf(canvas, tempSprite.frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
         }
