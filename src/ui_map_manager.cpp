@@ -268,7 +268,7 @@ namespace UIMapManager {
 
                 if (stX >= 0 && stX < MAP_CANVAS_WIDTH && stY >= 0 && stY < MAP_CANVAS_HEIGHT) {
                     // Draw station with symbol + SSID
-                    drawStationOnMap(map_canvas, stX, stY, station->callsign, station->symbol.c_str());
+                    // drawStationOnMap(map_canvas, stX, stY, station->callsign, station->symbol.c_str());
 
                     // Store hit zone (screen coords, adjusted for canvas margin)
                     if (stationHitZoneCount < MAP_STATIONS_MAX) {
@@ -1580,8 +1580,8 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
             // Draw PNG image pixel by pixel with alpha transparency
             lv_color_t* imgData = cache->data;
             uint8_t* alphaData = cache->alpha;
-            int startX = x - (SYMBOL_SIZE / 2) - 1;
-            int startY = y - (SYMBOL_SIZE / 2) - 1;
+            int startX = x - SYMBOL_SIZE / 2;
+            int startY = y - SYMBOL_SIZE / 2;
 
             for (int sy = 0; sy < SYMBOL_SIZE; sy++) {
                 for (int sx = 0; sx < SYMBOL_SIZE; sx++) {
@@ -1762,7 +1762,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
             if (myX >= 0 && myX < MAP_CANVAS_WIDTH && myY >= 0 && myY < MAP_CANVAS_HEIGHT) {
                 Beacon* currentBeacon = &Config.beacons[myBeaconsIndex];
                 String fullSymbol = currentBeacon->overlay + currentBeacon->symbol;
-                drawStationOnMap(map_canvas, myX, myY, currentBeacon->callsign, fullSymbol.c_str());
+                // drawStationOnMap(map_canvas, myX, myY, currentBeacon->callsign, fullSymbol.c_str());
             }
         }
 
@@ -2364,7 +2364,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                     // Get current beacon symbol (overlay + symbol)
                     Beacon* currentBeacon = &Config.beacons[myBeaconsIndex];
                     String fullSymbol = currentBeacon->overlay + currentBeacon->symbol;
-                    drawStationOnMap(map_canvas, myX, myY, currentBeacon->callsign, fullSymbol.c_str());
+                    // drawStationOnMap(map_canvas, myX, myY, currentBeacon->callsign, fullSymbol.c_str());
                 }
             }
 
