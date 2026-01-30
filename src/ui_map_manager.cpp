@@ -1044,27 +1044,29 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
     if (!path || path[0] == '\0') return false;
 
-    FILE* file = fopen(path, "rb");
-    if (!file) return false;
+    // Use Arduino SD library which handles /sd prefix correctly
+    File file = SD.open(path, FILE_READ);
+    if (!file) {
+        Serial.printf("[MAP] Failed to open tile with SD.open: %s\n", path);
+        return false;
+    }
 
-    fseek(file, 0, SEEK_END);
-    const long fileSize = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
+    const size_t fileSize = file.size();
     if (fileSize < 22) { // Minimum header size
-        fclose(file);
+        file.close();
         return false;
     }
 
     uint8_t* data = (uint8_t*)ps_malloc(fileSize);
     if (!data) {
-        fclose(file);
+        file.close();
         Serial.printf("[MAP] Failed to allocate %ld bytes for tile %s\n", fileSize, path);
         return false;
     }
 
-    const size_t bytesRead = fread(data, 1, fileSize, file);
-    fclose(file);
+    const size_t bytesRead = file.read(data, fileSize);
+    file.close();
+
     if (bytesRead != fileSize) {
         free(data);
         return false;
@@ -1083,7 +1085,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     memcpy(&feature_count, data + offset, 2);
     offset += 2;
 
-    Serial.printf("[MAP] NAV1: %d features in %s\n", feature_count, path);
+    Serial.printf("[MAP] NAV1: Found %d features in %s\n", feature_count, path);
 
     // Read bounding box from header, but IGNORE it for scaling. We calculate precise tile boundaries.
     int32_t min_lon_header, min_lat_header, max_lon_header, max_lat_header;
