@@ -471,6 +471,21 @@ namespace UIMapManager {
         Serial.printf("[MAP] Tile cache initialized with %d tiles capacity\n", maxCachedTiles);
     }
 
+    // Find a tile in cache by its coordinates, returns index or -1
+    int findCachedTile(int zoom, int tileX, int tileY) {
+        // Create a unique hash from coordinates. Max zoom 14 needs 4 bits. Max tile coord at z14 is 16383 (14 bits).
+        // Hash: 4 bits for zoom, 14 for tileX, 14 for tileY.
+        uint32_t tileHash = (static_cast<uint32_t>(zoom) << 28) | (static_cast<uint32_t>(tileX) << 14) | static_cast<uint32_t>(tileY);
+
+        for (int i = 0; i < tileCache.size(); ++i) {
+            if (tileCache[i].isValid && tileCache[i].tileHash == tileHash) {
+                tileCache[i].lastAccess = ++cacheAccessCounter;
+                return i;
+            }
+        }
+        return -1; // Not found
+    }
+
     // Find a tile in cache by its path, returns index or -1
     int findCachedTile(const char* filePath) {
         for (int i = 0; i < tileCache.size(); ++i) {
@@ -502,7 +517,7 @@ namespace UIMapManager {
     }
 
     // Add a rendered tile sprite to the cache
-    void addToCache(const char* filePath, TFT_eSprite& source) {
+    void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprite& source) {
         if (maxCachedTiles == 0) return; // Cache disabled
 
         // If cache is full, evict the least recently used tile
@@ -522,6 +537,7 @@ namespace UIMapManager {
         newEntry.filePath[sizeof(newEntry.filePath) - 1] = '\0';
         newEntry.lastAccess = ++cacheAccessCounter;
         newEntry.isValid = true;
+        newEntry.tileHash = (static_cast<uint32_t>(zoom) << 28) | (static_cast<uint32_t>(tileX) << 14) | static_cast<uint32_t>(tileY);
         
         tileCache.push_back(newEntry);
         Serial.printf("[CACHE] Added tile: %s\n", filePath);
@@ -1351,7 +1367,7 @@ namespace UIMapManager {
         
         if (tileRendered) {
             // --- 4. Add to cache and draw on canvas ---
-            addToCache(path, tempSprite);
+            addToCache(path, zoom, tileX, tileY, tempSprite);
             lv_canvas_copy_buf(canvas, tempSprite.frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
         }
 
