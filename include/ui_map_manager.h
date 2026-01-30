@@ -17,7 +17,7 @@
 
 // Forward declarations
 class Configuration;
-class TFT_eSprite; // <-- AJOUTER CECI
+class TFT_eSprite;
 
 // Dimensions de l'affichage
 #define SCREEN_WIDTH  320
@@ -25,7 +25,6 @@ class TFT_eSprite; // <-- AJOUTER CECI
 
 namespace UIMapManager {
 
-    // VVV AJOUTER TOUT CE BLOC AU DÉBUT DU NAMESPACE VVV
     /**
      * @brief Draw command types used for rendering vector graphics.
      */
@@ -65,7 +64,6 @@ namespace UIMapManager {
         float lat_min; float lat_max;
         float lon_min; float lon_max;
     };
-    // ^^^ FIN DU BLOC À AJOUTER ^^^
 
     // External data sources from lvgl_ui.cpp and other global variables
     extern TinyGPSPlus& gps;
@@ -102,7 +100,6 @@ namespace UIMapManager {
     extern String map_current_region;
     extern bool map_follow_gps;  // Follow GPS or free panning mode
 
-    // VVV AJOUTER TOUT CE BLOC VVV
     // Unified memory pool methods
     void initUnifiedPool();
     void* unifiedAlloc(size_t size, uint8_t type = 0);
@@ -153,19 +150,15 @@ namespace UIMapManager {
             MemoryGuard(const MemoryGuard&) = delete;
             MemoryGuard& operator=(const MemoryGuard&) = delete;
     };
-    // ^^^ FIN DU BLOC À AJOUTER ^^^
 
     // Function declarations
     void initTileCache();
-    // VVV AJOUTER CE BLOC VVV
     void clearTileCache();
     void initBatchRendering();
     bool renderTile(const char* path, TFT_eSprite &map);
     bool loadPalette(const char* palettePath);
-    // ^^^ FIN DU BLOC À AJOUTER ^^^
     int findCachedTile(int zoom, int tileX, int tileY);
     int findCacheSlot();
-    // VVV COMMENTER LA LIGNE SUIVANTE VVV
     // void copyTileToCanvas(uint16_t* tileData, lv_color_t* canvasBuffer,
     //                              int offsetX, int offsetY, int canvasWidth, int canvasHeight);
     void latLonToTile(float lat, float lon, int zoom, int* tileX, int* tileY);
