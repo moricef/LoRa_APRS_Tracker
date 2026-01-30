@@ -12,15 +12,59 @@
 #include <TinyGPS++.h> // Pour les données GPS
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <cstdint> // <-- AJOUTER CECI
 
 // Forward declarations
 class Configuration;
+class TFT_eSprite; // <-- AJOUTER CECI
 
 // Dimensions de l'affichage
 #define SCREEN_WIDTH  320
 #define SCREEN_HEIGHT 240
 
 namespace UIMapManager {
+
+    // VVV AJOUTER TOUT CE BLOC AU DÉBUT DU NAMESPACE VVV
+    /**
+     * @brief Draw command types used for rendering vector graphics.
+     */
+    enum DrawCommand : uint8_t 
+    {
+        DRAW_LINE = 1, DRAW_POLYLINE = 2, DRAW_STROKE_POLYGON = 3, DRAW_STROKE_POLYGONS = 4,
+        DRAW_HORIZONTAL_LINE = 5, DRAW_VERTICAL_LINE = 6, SET_COLOR = 0x80, SET_COLOR_INDEX = 0x81,
+        RECTANGLE = 0x82, STRAIGHT_LINE = 0x83, HIGHWAY_SEGMENT = 0x84, GRID_PATTERN = 0x85,
+        BLOCK_PATTERN = 0x86, CIRCLE = 0x87, SET_LAYER = 0x88, RELATIVE_MOVE = 0x89,
+        PREDICTED_LINE = 0x8A, COMPRESSED_POLYLINE = 0x8B, OPTIMIZED_POLYGON = 0x8C,
+        HOLLOW_POLYGON = 0x8D, OPTIMIZED_TRIANGLE = 0x8E, OPTIMIZED_RECTANGLE = 0x8F,
+        OPTIMIZED_CIRCLE = 0x90, SIMPLE_RECTANGLE = 0x96, SIMPLE_CIRCLE = 0x97,
+        SIMPLE_TRIANGLE = 0x98, DASHED_LINE = 0x99, DOTTED_LINE = 0x9A,
+    };
+    
+    struct CachedTile
+    {
+        TFT_eSprite* sprite;
+        uint32_t tileHash;
+        uint32_t lastAccess;
+        bool isValid;
+        char filePath[255];
+    };
+    
+    struct LineSegment { int x0, y0, x1, y1; uint16_t color; };
+    
+    struct RenderBatch
+    {
+        LineSegment* segments;
+        size_t count;
+        size_t capacity;
+        uint16_t color;
+    };
+
+    struct tileBounds
+    {
+        float lat_min; float lat_max;
+        float lon_min; float lon_max;
+    };
+    // ^^^ FIN DU BLOC À AJOUTER ^^^
 
     // External data sources from lvgl_ui.cpp and other global variables
     extern TinyGPSPlus& gps;
@@ -57,12 +101,72 @@ namespace UIMapManager {
     extern String map_current_region;
     extern bool map_follow_gps;  // Follow GPS or free panning mode
 
+    // VVV AJOUTER TOUT CE BLOC VVV
+    // Unified memory pool methods
+    void initUnifiedPool();
+    void* unifiedAlloc(size_t size, uint8_t type = 0);
+    void unifiedDealloc(void* ptr);
+
+    // RAII Memory Guard for automatic memory management
+    template<typename T>
+    class MemoryGuard
+    {
+        private:
+            T* ptr;
+            size_t size;
+            uint8_t type;
+            bool fromPool;
+            
+        public:
+            MemoryGuard(size_t numElements, uint8_t poolType = 0) 
+                : ptr(nullptr), size(numElements * sizeof(T)), type(poolType), fromPool(false)
+            {
+                ptr = static_cast<T*>(UIMapManager::unifiedAlloc(size, type));
+                if (ptr) 
+                    fromPool = true;
+                else 
+                {
+                    #ifdef BOARD_HAS_PSRAM
+                        ptr = static_cast<T*>(heap_caps_malloc(size, MALLOC_CAP_SPIRAM));
+                    #else
+                        ptr = static_cast<T*>(heap_caps_malloc(size, MALLOC_CAP_8BIT));
+                    #endif
+                    fromPool = false;
+                }
+            }
+            
+            ~MemoryGuard()
+            {
+                if (ptr) 
+                {
+                    if (fromPool)
+                        UIMapManager::unifiedDealloc(ptr);
+                    else 
+                        heap_caps_free(ptr);
+                }
+            }
+            
+            T* get() const { return ptr; }
+            operator bool() const { return ptr != nullptr; }
+            
+            MemoryGuard(const MemoryGuard&) = delete;
+            MemoryGuard& operator=(const MemoryGuard&) = delete;
+    };
+    // ^^^ FIN DU BLOC À AJOUTER ^^^
+
     // Function declarations
     void initTileCache();
+    // VVV AJOUTER CE BLOC VVV
+    void clearTileCache();
+    void initBatchRendering();
+    bool renderTile(const char* path, TFT_eSprite &map);
+    bool loadPalette(const char* palettePath);
+    // ^^^ FIN DU BLOC À AJOUTER ^^^
     int findCachedTile(int zoom, int tileX, int tileY);
     int findCacheSlot();
-    void copyTileToCanvas(uint16_t* tileData, lv_color_t* canvasBuffer,
-                                 int offsetX, int offsetY, int canvasWidth, int canvasHeight);
+    // VVV COMMENTER LA LIGNE SUIVANTE VVV
+    // void copyTileToCanvas(uint16_t* tileData, lv_color_t* canvasBuffer,
+    //                              int offsetX, int offsetY, int canvasWidth, int canvasHeight);
     void latLonToTile(float lat, float lon, int zoom, int* tileX, int* tileY);
     void latLonToPixel(float lat, float lon, float centerLat, float centerLon, int zoom, int* pixelX, int* pixelY);
     lv_color_t getAPRSSymbolColor(const char* symbol);
