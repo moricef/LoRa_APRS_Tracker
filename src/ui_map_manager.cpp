@@ -1586,20 +1586,28 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
             for (int sy = 0; sy < SYMBOL_SIZE; sy++) {
                 for (int sx = 0; sx < SYMBOL_SIZE; sx++) {
                     int pixelIdx = sy * SYMBOL_SIZE + sx;
-                    lv_color_t pixelColor = imgData[pixelIdx];
+                    
+                    // Get alpha value, default to opaque if no alpha channel
+                    uint8_t alpha = alphaData ? alphaData[pixelIdx] : 255;
 
-                    // Get alpha value (255 = opaque, 0 = transparent)
-                    uint8_t alpha = 255;  // Default fully opaque
-                    if (alphaData) {
-                        alpha = alphaData[pixelIdx];
-                    }
-
-                    // Only draw if not transparent (alpha > threshold)
-                    if (alpha > 128) {  // 50% threshold
+                    // Only process pixels that are not fully transparent
+                    if (alpha > 0) {
                         int px = startX + sx;
                         int py = startY + sy;
+
+                        // Ensure we are drawing within the canvas bounds
                         if (px >= 0 && px < MAP_CANVAS_WIDTH && py >= 0 && py < MAP_CANVAS_HEIGHT) {
-                            lv_canvas_set_px_color(canvas, px, py, pixelColor);
+                            lv_color_t pixelColor = imgData[pixelIdx];
+
+                            if (alpha == 255) {
+                                // Opaque pixel: directly set the color
+                                lv_canvas_set_px_color(canvas, px, py, pixelColor);
+                            } else {
+                                // Semi-transparent pixel: blend with the background
+                                lv_color_t bg_color = lv_canvas_get_px(canvas, px, py);
+                                lv_color_t blended_color = lv_color_mix(pixelColor, bg_color, alpha);
+                                lv_canvas_set_px_color(canvas, px, py, blended_color);
+                            }
                         }
                     }
                 }
