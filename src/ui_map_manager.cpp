@@ -543,6 +543,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 
     tileCache.push_back(newEntry);
     Serial.printf("[CACHE] Added tile: %s\n", filePath);
+    Serial.printf("[MAP] Cache size: %d, Free PSRAM: %u\n", tileCache.size(), ESP.getFreePsram());
 }
 
 
@@ -1717,6 +1718,53 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         }
     }
 
+// Helper function to safely copy a sprite to the canvas with clipping
+static void copySpriteToCanvasWithClip(lv_obj_t* canvas, TFT_eSprite* sprite, int offsetX, int offsetY) {
+    if (!canvas || !sprite || sprite->frameBuffer(0) == nullptr) return;
+
+    // Calculate source and destination rectangles for clipping
+    int src_x = 0;
+    int src_y = 0;
+    int dest_x = offsetX;
+    int dest_y = offsetY;
+    int copy_w = MAP_TILE_SIZE;
+    int copy_h = MAP_TILE_SIZE;
+
+    // Clip left edge
+    if (dest_x < 0) {
+        src_x = -dest_x;
+        copy_w += dest_x; // Decrease width
+        dest_x = 0;
+    }
+
+    // Clip top edge
+    if (dest_y < 0) {
+        src_y = -dest_y;
+        copy_h += dest_y; // Decrease height
+        dest_y = 0;
+    }
+
+    // Clip right edge
+    if (dest_x + copy_w > MAP_CANVAS_WIDTH) {
+        copy_w = MAP_CANVAS_WIDTH - dest_x;
+    }
+
+    // Clip bottom edge
+    if (dest_y + copy_h > MAP_CANVAS_HEIGHT) {
+        copy_h = MAP_CANVAS_HEIGHT - dest_y;
+    }
+
+    // If there is anything to draw
+    if (copy_w > 0 && copy_h > 0) {
+        uint16_t* fb = (uint16_t*)sprite->frameBuffer(0);
+        // Copy scanline by scanline to handle correct source buffer stride
+        for (int y = 0; y < copy_h; y++) {
+            uint16_t* src_row_ptr = fb + ((src_y + y) * MAP_TILE_SIZE) + src_x;
+            lv_canvas_copy_buf(canvas, src_row_ptr, dest_x, dest_y + y, copy_w, 1);
+        }
+    }
+}
+
 bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY) {
     char path[128];
     char found_path[128] = {0};
@@ -1728,7 +1776,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     int cacheIdx = findCachedTile(zoom, tileX, tileY);
     if (cacheIdx >= 0) {
         TFT_eSprite* cachedSprite = tileCache[cacheIdx].sprite;
-        lv_canvas_copy_buf(canvas, cachedSprite->frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
+        copySpriteToCanvasWithClip(canvas, cachedSprite, offsetX, offsetY);
         return true;
     }
 
@@ -1738,7 +1786,11 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     }
 
     // --- 3. Find a valid tile file on SD card (with SPI Mutex) ---
-    if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    if (spiMutex == NULL) {
+        Serial.println("[MAP] ERROR: spiMutex is NULL!");
+        return false;
+    }
+    if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         if (STORAGE_Utils::isSDAvailable()) {
             const char* region = map_current_region.c_str();
 
@@ -1769,7 +1821,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         Serial.printf("[MAP] Found file: %s\n", found_path);
         newSprite = new TFT_eSprite(&tft);
         newSprite->setAttribute(PSRAM_ENABLE, true);
-        if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr) {
+        if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr && newSprite->frameBuffer(0) != nullptr) {
             if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 switch (found_type) {
                     case TILE_VEC:
@@ -1804,7 +1856,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
 
     // --- 5. If rendering successful, update cache and draw on canvas ---
     if (tileRendered && newSprite) {
-        lv_canvas_copy_buf(canvas, newSprite->frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
+        copySpriteToCanvasWithClip(canvas, newSprite, offsetX, offsetY);
         addToCache(found_path, zoom, tileX, tileY, newSprite); // Cache takes ownership
     } else if (newSprite) {
         // Cleanup if rendering failed or sprite wasn't added to cache
