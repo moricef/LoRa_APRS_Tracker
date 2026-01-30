@@ -1042,6 +1042,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     }
 
 bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
+    (void)fillPolygons; // Silence unused variable warning
     if (!path || path[0] == '\0') return false;
 
     // Use Arduino SD library which handles /sd prefix correctly
@@ -1060,7 +1061,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     uint8_t* data = (uint8_t*)ps_malloc(fileSize);
     if (!data) {
         file.close();
-        Serial.printf("[MAP] Failed to allocate %ld bytes for tile %s\n", fileSize, path);
+        Serial.printf("[MAP] Failed to allocate %u bytes for tile %s\n", fileSize, path);
         return false;
     }
 
@@ -1071,6 +1072,9 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         free(data);
         return false;
     }
+
+    initBatchRendering();
+    createRenderBatch(getOptimalBatchSize());
 
     size_t offset = 0;
 
@@ -1122,6 +1126,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         uint16_t color;
         memcpy(&color, data + offset, 2); offset += 2;
         uint8_t zoom_priority = data[offset++];
+        (void)zoom_priority; // Silence unused variable warning
         uint8_t width = data[offset++];
         uint16_t coord_count;
         memcpy(&coord_count, data + offset, 2); offset += 2;
@@ -1163,7 +1168,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         // --- Rendering ---
         if (geometry_type == 2 && coord_count >= 2) { // Line
             for (uint16_t j = 1; j < coord_count; ++j) {
-                map.drawWideLine(px[j-1] + xOffset, py[j-1] + yOffset, px[j] + xOffset, py[j] + yOffset, width, color);
+                addToBatch(px[j-1] + xOffset, py[j-1] + yOffset, px[j] + xOffset, py[j] + yOffset, color);
             }
             executed++;
         } else if (geometry_type == 3 && coord_count >= 3) { // Polygon
@@ -1176,6 +1181,13 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         
         free(px);
         free(py);
+    }
+
+    flushBatch(map); // Flush any remaining lines in the batch
+    if (activeBatch) {
+        if (activeBatch->segments) delete[] activeBatch->segments;
+        delete activeBatch;
+        activeBatch = nullptr;
     }
 
     free(data);
