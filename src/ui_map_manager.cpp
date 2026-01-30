@@ -21,6 +21,7 @@
 #include <freertos/semphr.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <vector>
 
 #include "ui_map_manager.h"
 #include "configuration.h"
@@ -51,33 +52,6 @@ namespace UIMapManager {
     static bool mapsPathCached = false;     // Flag to check if path is cached
     bool map_follow_gps = true;  // Follow GPS or free panning mode
 
-    // --- START: New variables for vector tile rendering ---
-    static uint16_t currentDrawColor = 0xFFFF; // TFT_WHITE
-    static uint8_t PALETTE[256] = {0};
-    static uint32_t PALETTE_SIZE = 0;
-
-    // Unified memory pool system
-    struct UnifiedPoolEntry {
-        void* ptr;
-        size_t size;
-        bool isInUse;
-        uint32_t allocationCount;
-        uint8_t type;
-    };
-    static std::vector<UnifiedPoolEntry> unifiedPool;
-    static SemaphoreHandle_t unifiedPoolMutex = nullptr;
-    static size_t maxUnifiedPoolEntries = 0;
-    static uint32_t unifiedPoolHitCount = 0;
-    static uint32_t unifiedPoolMissCount = 0;
-
-    // Efficient batch rendering system
-    static RenderBatch* activeBatch = nullptr;
-    static size_t maxBatchSize = 0;
-    static uint32_t batchRenderCount = 0;
-    static uint32_t batchOptimizationCount = 0;
-    static uint32_t batchFlushCount = 0;
-    // --- END: New variables for vector tile rendering ---
-
     // Touch pan state
     static bool touch_dragging = false;
     static lv_coord_t touch_start_x = 0;
@@ -87,21 +61,13 @@ namespace UIMapManager {
     #define PAN_THRESHOLD 5  // Minimum pixels to trigger pan
 
     // Tile cache in PSRAM
-    #define TILE_CACHE_SIZE 40  // Number of tiles to cache (~5MB in PSRAM)
-    #define TILE_DATA_SIZE (MAP_TILE_SIZE * MAP_TILE_SIZE * sizeof(uint16_t))  // 128KB per tile
+    #define TILE_CACHE_SIZE 40  // Number of tiles to cache
+    #define TILE_DATA_SIZE (MAP_TILE_SIZE * MAP_TILE_SIZE * sizeof(uint16_t))  // 128KB per tile for old raster tiles
 
-    struct CachedTile {
-        int zoom;
-        int tileX;
-        int tileY;
-        uint16_t* data;      // Decoded tile pixels in PSRAM
-        uint32_t lastAccess; // For LRU eviction
-        bool valid;
-    };
-
-    static CachedTile tileCache[TILE_CACHE_SIZE];
-    static uint32_t tileCacheAccessCounter = 0;
-    static bool tileCacheInitialized = false;
+    // Tile cache system
+    static std::vector<CachedTile> tileCache;
+    static size_t maxCachedTiles = TILE_CACHE_SIZE;
+    static uint32_t cacheAccessCounter = 0;
 
     // Symbol cache in PSRAM
     #define SYMBOL_CACHE_SIZE 30  // Cache for frequently used symbols
@@ -331,83 +297,6 @@ namespace UIMapManager {
         Serial.println("[MAP] Symbol cache initialized");
     }
 
-    // --- START: Unified Memory Pool Implementation ---
-    void initUnifiedPool() {
-        if (unifiedPoolMutex == nullptr) {
-            unifiedPoolMutex = xSemaphoreCreateMutex();
-        }
-        #ifdef BOARD_HAS_PSRAM
-            size_t psramFree = ESP.getFreePsram();
-            maxUnifiedPoolEntries = std::min(static_cast<size_t>(100), psramFree / (1024 * 32)); // ~32KB per entry
-        #else
-            size_t ramFree = ESP.getFreeHeap();
-            maxUnifiedPoolEntries = std::min(static_cast<size_t>(25), ramFree / (1024 * 64)); // Larger chunk for RAM
-        #endif
-        unifiedPool.clear();
-        unifiedPool.reserve(maxUnifiedPoolEntries);
-        unifiedPoolHitCount = 0;
-        unifiedPoolMissCount = 0;
-    }
-
-    void* unifiedAlloc(size_t size, uint8_t type) {
-        if (unifiedPoolMutex && xSemaphoreTake(unifiedPoolMutex, portMAX_DELAY) == pdTRUE) {
-            for (auto& entry : unifiedPool) {
-                if (!entry.isInUse && entry.size >= size) {
-                    entry.isInUse = true;
-                    entry.allocationCount++;
-                    entry.type = type;
-                    unifiedPoolHitCount++;
-                    xSemaphoreGive(unifiedPoolMutex);
-                    return entry.ptr;
-                }
-            }
-            if (unifiedPool.size() < maxUnifiedPoolEntries) {
-                void* ptr = nullptr;
-                #ifdef BOARD_HAS_PSRAM
-                    ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-                #else
-                    ptr = heap_caps_malloc(size, MALLOC_CAP_8BIT);
-                #endif
-                if (ptr) {
-                    UnifiedPoolEntry entry;
-                    entry.ptr = ptr;
-                    entry.size = size;
-                    entry.isInUse = true;
-                    entry.allocationCount = 1;
-                    entry.type = type;
-                    unifiedPool.push_back(entry);
-                    unifiedPoolHitCount++;
-                    xSemaphoreGive(unifiedPoolMutex);
-                    return ptr;
-                }
-            }
-            unifiedPoolMissCount++;
-            xSemaphoreGive(unifiedPoolMutex);
-        }
-        unifiedPoolMissCount++;
-        #ifdef BOARD_HAS_PSRAM
-            return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-        #else
-            return heap_caps_malloc(size, MALLOC_CAP_8BIT);
-        #endif
-    }
-
-    void unifiedDealloc(void* ptr) {
-        if (!ptr) return;
-        if (unifiedPoolMutex && xSemaphoreTake(unifiedPoolMutex, portMAX_DELAY) == pdTRUE) {
-            for (auto& entry : unifiedPool) {
-                if (entry.ptr == ptr && entry.isInUse) {
-                    entry.isInUse = false;
-                    xSemaphoreGive(unifiedPoolMutex);
-                    return;
-                }
-            }
-            xSemaphoreGive(unifiedPoolMutex);
-        }
-        heap_caps_free(ptr);
-    }
-    // --- END: Unified Memory Pool Implementation ---
-
     // Forward declarations for PNG callbacks
     static void* pngOpenFile(const char* filename, int32_t* size);
     static void pngCloseFile(void* handle);
@@ -565,53 +454,51 @@ namespace UIMapManager {
 
     // Initialize tile cache
     void initTileCache() {
-        if (tileCacheInitialized) return;
-        for (int i = 0; i < TILE_CACHE_SIZE; i++) {
-            tileCache[i].data = nullptr;
-            tileCache[i].valid = false;
-            tileCache[i].zoom = -1;
-            tileCache[i].tileX = -1;
-            tileCache[i].tileY = -1;
-            tileCache[i].lastAccess = 0;
-        }
-        tileCacheInitialized = true;
-        Serial.println("[MAP] Tile cache initialized");
+        tileCache.clear();
+        tileCache.reserve(maxCachedTiles);
+        cacheAccessCounter = 0;
+        Serial.printf("[MAP] Tile cache initialized with %d tiles capacity\n", maxCachedTiles);
     }
 
     // Find a tile in cache, returns index or -1
     int findCachedTile(int zoom, int tileX, int tileY) {
-        for (int i = 0; i < TILE_CACHE_SIZE; i++) {
-            if (tileCache[i].valid &&
-                tileCache[i].zoom == zoom &&
-                tileCache[i].tileX == tileX &&
-                tileCache[i].tileY == tileY) {
-                tileCache[i].lastAccess = ++tileCacheAccessCounter;
-                return i;
-            }
-        }
+        // TODO: Re-implement for new cache logic based on file path/hash.
+        // The old implementation is incompatible with the new CachedTile struct.
         return -1;
     }
 
     // Find a slot for a new tile (empty or LRU)
     int findCacheSlot() {
-        // First look for an empty slot
-        for (int i = 0; i < TILE_CACHE_SIZE; i++) {
-            if (!tileCache[i].valid || tileCache[i].data == nullptr) {
-                return i;
-            }
-        }
-        // Find the LRU (oldest access)
-        int lruIndex = 0;
-        uint32_t oldestAccess = tileCache[0].lastAccess;
-        for (int i = 1; i < TILE_CACHE_SIZE; i++) {
-            if (tileCache[i].lastAccess < oldestAccess) {
-                oldestAccess = tileCache[i].lastAccess;
-                lruIndex = i;
-            }
-        }
-        return lruIndex;
+        // TODO: Re-implement for new cache logic.
+        // The old implementation is incompatible with the new std::vector-based cache.
+        return 0;
     }
 
+    // JPEG decoder for map tiles
+    static JPEGDEC jpeg;
+
+    // Context for JPEG decoding to cache
+    struct JPEGCacheContext {
+        uint16_t* cacheBuffer;  // Target cache buffer
+        int tileWidth;
+    };
+
+    static JPEGCacheContext jpegCacheContext;
+
+    // JPEGDEC callback for decoding to cache - called for each MCU block
+    static int jpegCacheCallback(JPEGDRAW* pDraw) {
+        uint16_t* src = pDraw->pPixels;
+        for (int y = 0; y < pDraw->iHeight; y++) {
+            int destY = pDraw->y + y;
+            if (destY >= MAP_TILE_SIZE) break;
+            for (int x = 0; x < pDraw->iWidth; x++) {
+                int destX = pDraw->x + x;
+                if (destX >= MAP_TILE_SIZE) break;
+                jpegCacheContext.cacheBuffer[destY * jpegCacheContext.tileWidth + destX] = src[y * pDraw->iWidth + x];
+            }
+        }
+        return 1;
+    }
 
     // PNG decoder for map tiles
     static PNG png;
@@ -662,102 +549,43 @@ namespace UIMapManager {
         return file->seek(iPosition);
     }
 
+    // JPEG file callbacks
+    static void* jpegOpenFile(const char* filename, int32_t* size) {
+        File* file = new File(SD.open(filename, FILE_READ));
+        if (!file || !*file) {
+            delete file;
+            return nullptr;
+        }
+        *size = file->size();
+        return file;
+    }
+
+    static void jpegCloseFile(void* handle) {
+        File* file = (File*)handle;
+        if (file) {
+            file->close();
+            delete file;
+        }
+    }
+
+    static int32_t jpegReadFile(JPEGFILE* pFile, uint8_t* pBuf, int32_t iLen) {
+        File* file = (File*)pFile->fHandle;
+        return file->read(pBuf, iLen);
+    }
+
+    static int32_t jpegSeekFile(JPEGFILE* pFile, int32_t iPosition) {
+        File* file = (File*)pFile->fHandle;
+        return file->seek(iPosition);
+    }
 
     // Preload a tile into cache (no canvas drawing) - called from Core 1 task
     bool preloadTileToCache(int tileX, int tileY, int zoom) {
-        initTileCache();
-
-        // Check if already in cache
-        if (findCachedTile(zoom, tileX, tileY) >= 0) {
-            return true;  // Already cached
-        }
-
-        bool success = false;
-
-        // Protect SPI bus access with mutex
-        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
-
-            if (STORAGE_Utils::isSDAvailable() && mapsPathCached && map_current_region.length() > 0) {
-                char tilePath[128];
-                int slot = findCacheSlot();
-
-                if (tileCache[slot].data == nullptr) {
-                    tileCache[slot].data = (uint16_t*)heap_caps_malloc(TILE_DATA_SIZE, MALLOC_CAP_SPIRAM);
-                }
-
-                if (tileCache[slot].data) {
-                    // Try JPEG first
-                    snprintf(tilePath, sizeof(tilePath), "%s/%s/%d/%d/%d.jpg",
-                             cachedMapsPath.c_str(), map_current_region.c_str(), zoom, tileX, tileY);
-
-                    jpegCacheContext.cacheBuffer = tileCache[slot].data;
-                    jpegCacheContext.tileWidth = MAP_TILE_SIZE;
-
-                    int rc = jpeg.open(tilePath, jpegOpenFile, jpegCloseFile, jpegReadFile, jpegSeekFile, jpegCacheCallback);
-                    if (rc) {
-                        jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
-                        rc = jpeg.decode(0, 0, 0);
-                        jpeg.close();
-
-                        if (rc) {
-                            tileCache[slot].zoom = zoom;
-                            tileCache[slot].tileX = tileX;
-                            tileCache[slot].tileY = tileY;
-                            tileCache[slot].lastAccess = ++tileCacheAccessCounter;
-                            tileCache[slot].valid = true;
-                            success = true;
-                        }
-                    }
-
-                    // Try PNG as fallback
-                    if (!success) {
-                        snprintf(tilePath, sizeof(tilePath), "%s/%s/%d/%d/%d.png",
-                                 cachedMapsPath.c_str(), map_current_region.c_str(), zoom, tileX, tileY);
-
-                        pngCacheContext.cacheBuffer = tileCache[slot].data;
-                        pngCacheContext.tileWidth = MAP_TILE_SIZE;
-
-                        rc = png.open(tilePath, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngCacheCallback);
-                        if (rc == PNG_SUCCESS && pngFileOpened) {
-                            rc = png.decode(nullptr, 0);
-                            png.close();
-
-                            if (rc == PNG_SUCCESS) {
-                                tileCache[slot].zoom = zoom;
-                                tileCache[slot].tileX = tileX;
-                                tileCache[slot].tileY = tileY;
-                                tileCache[slot].lastAccess = ++tileCacheAccessCounter;
-                                tileCache[slot].valid = true;
-                                success = true;
-                            }
-                        } else {
-                            png.close();
-                        }
-                    }
-                }
-            }
-            xSemaphoreGiveRecursive(spiMutex);
-        }
-        return success;
+        // TODO: Re-implement for new cache logic.
+        // The old implementation decoded raster tiles to a raw buffer, which is incompatible
+        // with the new sprite-based cache for vector tiles.
+        return false;
     }
 
-    // Copy cached tile to canvas with offset and clipping
-    void copyTileToCanvas(uint16_t* tileData, lv_color_t* canvasBuffer,
-                                 int offsetX, int offsetY, int canvasWidth, int canvasHeight) {
-        for (int ty = 0; ty < MAP_TILE_SIZE; ty++) {
-            int cy = offsetY + ty;
-            if (cy < 0 || cy >= canvasHeight) continue;
-
-            for (int tx = 0; tx < MAP_TILE_SIZE; tx++) {
-                int cx = offsetX + tx;
-                if (cx < 0 || cx >= canvasWidth) continue;
-
-                int canvasIdx = cy * canvasWidth + cx;
-                int tileIdx = ty * MAP_TILE_SIZE + tx;
-                canvasBuffer[canvasIdx].full = tileData[tileIdx];
-            }
-        }
-    }
 
     // Convert lat/lon to tile coordinates
     void latLonToTile(float lat, float lon, int zoom, int* tileX, int* tileY) {
@@ -1416,120 +1244,9 @@ namespace UIMapManager {
 
     // Load a tile from SD card (with caching) and copy it to canvas
     bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY) {
-        // Initialize cache on first use
-        initTileCache();
-
-        // Get canvas buffer
-        lv_img_dsc_t* dsc = lv_canvas_get_img(canvas);
-        lv_color_t* canvasBuffer = (lv_color_t*)dsc->data;
-
-        // Check cache first
-        int cacheIdx = findCachedTile(zoom, tileX, tileY);
-        if (cacheIdx >= 0) {
-            // Cache hit! Copy from cache to canvas
-            Serial.printf("[MAP] Cache hit: %d/%d/%d\n", zoom, tileX, tileY);
-            copyTileToCanvas(tileCache[cacheIdx].data, canvasBuffer, offsetX, offsetY,
-                             MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT);
-            return true;
-        }
-
-        // Cache miss - need to load from SD card
-        bool success = false;
-
-        // Protect SPI bus access with mutex
-        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
-
-            if (STORAGE_Utils::isSDAvailable()) {
-                // Cache maps path and region on first access (avoid repeated SD directory listing)
-                if (!mapsPathCached) {
-                    cachedMapsPath = STORAGE_Utils::getMapsPath();
-                    std::vector<String> regions = STORAGE_Utils::listDirs(cachedMapsPath);
-                    if (!regions.empty()) {
-                        map_current_region = regions[0];  // Use first region found
-                    }
-                    mapsPathCached = true;
-                    Serial.printf("[MAP] Cached maps path: %s, region: %s\n",
-                                  cachedMapsPath.c_str(), map_current_region.c_str());
-                }
-
-                if (map_current_region.length() > 0) {
-                    char tilePath[128];
-                    int slot = findCacheSlot();
-
-                    // Allocate cache slot if needed
-                    if (tileCache[slot].data == nullptr) {
-                        tileCache[slot].data = (uint16_t*)heap_caps_malloc(TILE_DATA_SIZE, MALLOC_CAP_SPIRAM);
-                    }
-
-                    if (tileCache[slot].data) {
-                        // Try JPEG first (priority - faster decoding)
-                        // No fileExists() - just try to open directly
-                        snprintf(tilePath, sizeof(tilePath), "%s/%s/%d/%d/%d.jpg",
-                                 cachedMapsPath.c_str(), map_current_region.c_str(), zoom, tileX, tileY);
-
-                        jpegCacheContext.cacheBuffer = tileCache[slot].data;
-                        jpegCacheContext.tileWidth = MAP_TILE_SIZE;
-
-                        int rc = jpeg.open(tilePath, jpegOpenFile, jpegCloseFile, jpegReadFile, jpegSeekFile, jpegCacheCallback);
-                        if (rc) {
-                            Serial.printf("[MAP] Loading JPEG: %d/%d/%d\n", zoom, tileX, tileY);
-                            jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
-                            rc = jpeg.decode(0, 0, 0);
-                            jpeg.close();
-
-                            if (rc) {
-                                tileCache[slot].zoom = zoom;
-                                tileCache[slot].tileX = tileX;
-                                tileCache[slot].tileY = tileY;
-                                tileCache[slot].lastAccess = ++tileCacheAccessCounter;
-                                tileCache[slot].valid = true;
-                                copyTileToCanvas(tileCache[slot].data, canvasBuffer, offsetX, offsetY, MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT);
-                                success = true;
-                            }
-                        }
-
-                        // Try PNG as fallback if JPEG not found
-                        if (!success) {
-                            snprintf(tilePath, sizeof(tilePath), "%s/%s/%d/%d/%d.png",
-                                     cachedMapsPath.c_str(), map_current_region.c_str(), zoom, tileX, tileY);
-
-                            pngCacheContext.cacheBuffer = tileCache[slot].data;
-                            pngCacheContext.tileWidth = MAP_TILE_SIZE;
-
-                            rc = png.open(tilePath, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngCacheCallback);
-                            if (rc == PNG_SUCCESS && pngFileOpened) {
-                                Serial.printf("[MAP] Loading PNG: %d/%d/%d\n", zoom, tileX, tileY);
-                                rc = png.decode(nullptr, 0);
-                                png.close();
-
-                                if (rc == PNG_SUCCESS) {
-                                    tileCache[slot].zoom = zoom;
-                                    tileCache[slot].tileX = tileX;
-                                    tileCache[slot].tileY = tileY;
-                                    tileCache[slot].lastAccess = ++tileCacheAccessCounter;
-                                    tileCache[slot].valid = true;
-                                    copyTileToCanvas(tileCache[slot].data, canvasBuffer, offsetX, offsetY, MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT);
-                                    success = true;
-                                }
-                            } else {
-                                png.close();
-                            }
-                        }
-
-                        // If tile not found, mark slot as invalid and clear coordinates
-                        if (!success) {
-                            Serial.printf("[MAP] Tile not found: %d/%d/%d\n", zoom, tileX, tileY);
-                            tileCache[slot].valid = false;
-                            tileCache[slot].zoom = -1;
-                            tileCache[slot].tileX = -1;
-                            tileCache[slot].tileY = -1;
-                        }
-                    }
-                }
-            }
-            xSemaphoreGiveRecursive(spiMutex); // Release SPI mutex
-        }
-        return success;
+        // TODO: Re-implement for new vector tile rendering logic.
+        // The old implementation is for raster tiles and is incompatible with the new cache.
+        return false;
     }
 
     // Create map screen
