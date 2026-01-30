@@ -51,6 +51,33 @@ namespace UIMapManager {
     static bool mapsPathCached = false;     // Flag to check if path is cached
     bool map_follow_gps = true;  // Follow GPS or free panning mode
 
+    // --- START: New variables for vector tile rendering ---
+    static uint16_t currentDrawColor = 0xFFFF; // TFT_WHITE
+    static uint8_t PALETTE[256] = {0};
+    static uint32_t PALETTE_SIZE = 0;
+
+    // Unified memory pool system
+    struct UnifiedPoolEntry {
+        void* ptr;
+        size_t size;
+        bool isInUse;
+        uint32_t allocationCount;
+        uint8_t type;
+    };
+    static std::vector<UnifiedPoolEntry> unifiedPool;
+    static SemaphoreHandle_t unifiedPoolMutex = nullptr;
+    static size_t maxUnifiedPoolEntries = 0;
+    static uint32_t unifiedPoolHitCount = 0;
+    static uint32_t unifiedPoolMissCount = 0;
+
+    // Efficient batch rendering system
+    static RenderBatch* activeBatch = nullptr;
+    static size_t maxBatchSize = 0;
+    static uint32_t batchRenderCount = 0;
+    static uint32_t batchOptimizationCount = 0;
+    static uint32_t batchFlushCount = 0;
+    // --- END: New variables for vector tile rendering ---
+
     // Touch pan state
     static bool touch_dragging = false;
     static lv_coord_t touch_start_x = 0;
@@ -304,6 +331,83 @@ namespace UIMapManager {
         Serial.println("[MAP] Symbol cache initialized");
     }
 
+    // --- START: Unified Memory Pool Implementation ---
+    void initUnifiedPool() {
+        if (unifiedPoolMutex == nullptr) {
+            unifiedPoolMutex = xSemaphoreCreateMutex();
+        }
+        #ifdef BOARD_HAS_PSRAM
+            size_t psramFree = ESP.getFreePsram();
+            maxUnifiedPoolEntries = std::min(static_cast<size_t>(100), psramFree / (1024 * 32)); // ~32KB per entry
+        #else
+            size_t ramFree = ESP.getFreeHeap();
+            maxUnifiedPoolEntries = std::min(static_cast<size_t>(25), ramFree / (1024 * 64)); // Larger chunk for RAM
+        #endif
+        unifiedPool.clear();
+        unifiedPool.reserve(maxUnifiedPoolEntries);
+        unifiedPoolHitCount = 0;
+        unifiedPoolMissCount = 0;
+    }
+
+    void* unifiedAlloc(size_t size, uint8_t type) {
+        if (unifiedPoolMutex && xSemaphoreTake(unifiedPoolMutex, portMAX_DELAY) == pdTRUE) {
+            for (auto& entry : unifiedPool) {
+                if (!entry.isInUse && entry.size >= size) {
+                    entry.isInUse = true;
+                    entry.allocationCount++;
+                    entry.type = type;
+                    unifiedPoolHitCount++;
+                    xSemaphoreGive(unifiedPoolMutex);
+                    return entry.ptr;
+                }
+            }
+            if (unifiedPool.size() < maxUnifiedPoolEntries) {
+                void* ptr = nullptr;
+                #ifdef BOARD_HAS_PSRAM
+                    ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+                #else
+                    ptr = heap_caps_malloc(size, MALLOC_CAP_8BIT);
+                #endif
+                if (ptr) {
+                    UnifiedPoolEntry entry;
+                    entry.ptr = ptr;
+                    entry.size = size;
+                    entry.isInUse = true;
+                    entry.allocationCount = 1;
+                    entry.type = type;
+                    unifiedPool.push_back(entry);
+                    unifiedPoolHitCount++;
+                    xSemaphoreGive(unifiedPoolMutex);
+                    return ptr;
+                }
+            }
+            unifiedPoolMissCount++;
+            xSemaphoreGive(unifiedPoolMutex);
+        }
+        unifiedPoolMissCount++;
+        #ifdef BOARD_HAS_PSRAM
+            return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+        #else
+            return heap_caps_malloc(size, MALLOC_CAP_8BIT);
+        #endif
+    }
+
+    void unifiedDealloc(void* ptr) {
+        if (!ptr) return;
+        if (unifiedPoolMutex && xSemaphoreTake(unifiedPoolMutex, portMAX_DELAY) == pdTRUE) {
+            for (auto& entry : unifiedPool) {
+                if (entry.ptr == ptr && entry.isInUse) {
+                    entry.isInUse = false;
+                    xSemaphoreGive(unifiedPoolMutex);
+                    return;
+                }
+            }
+            xSemaphoreGive(unifiedPoolMutex);
+        }
+        heap_caps_free(ptr);
+    }
+    // --- END: Unified Memory Pool Implementation ---
+
     // Forward declarations for PNG callbacks
     static void* pngOpenFile(const char* filename, int32_t* size);
     static void pngCloseFile(void* handle);
@@ -508,31 +612,6 @@ namespace UIMapManager {
         return lruIndex;
     }
 
-    // JPEG decoder for map tiles
-    static JPEGDEC jpeg;
-
-    // Context for JPEG decoding to cache
-    struct JPEGCacheContext {
-        uint16_t* cacheBuffer;  // Target cache buffer
-        int tileWidth;
-    };
-
-    static JPEGCacheContext jpegCacheContext;
-
-    // JPEGDEC callback for decoding to cache - called for each MCU block
-    static int jpegCacheCallback(JPEGDRAW* pDraw) {
-        uint16_t* src = pDraw->pPixels;
-        for (int y = 0; y < pDraw->iHeight; y++) {
-            int destY = pDraw->y + y;
-            if (destY >= MAP_TILE_SIZE) break;
-            for (int x = 0; x < pDraw->iWidth; x++) {
-                int destX = pDraw->x + x;
-                if (destX >= MAP_TILE_SIZE) break;
-                jpegCacheContext.cacheBuffer[destY * jpegCacheContext.tileWidth + destX] = src[y * pDraw->iWidth + x];
-            }
-        }
-        return 1;
-    }
 
     // PNG decoder for map tiles
     static PNG png;
@@ -583,34 +662,6 @@ namespace UIMapManager {
         return file->seek(iPosition);
     }
 
-    // JPEG file callbacks
-    static void* jpegOpenFile(const char* filename, int32_t* size) {
-        File* file = new File(SD.open(filename, FILE_READ));
-        if (!file || !*file) {
-            delete file;
-            return nullptr;
-        }
-        *size = file->size();
-        return file;
-    }
-
-    static void jpegCloseFile(void* handle) {
-        File* file = (File*)handle;
-        if (file) {
-            file->close();
-            delete file;
-        }
-    }
-
-    static int32_t jpegReadFile(JPEGFILE* pFile, uint8_t* pBuf, int32_t iLen) {
-        File* file = (File*)pFile->fHandle;
-        return file->read(pBuf, iLen);
-    }
-
-    static int32_t jpegSeekFile(JPEGFILE* pFile, int32_t iPosition) {
-        File* file = (File*)pFile->fHandle;
-        return file->seek(iPosition);
-    }
 
     // Preload a tile into cache (no canvas drawing) - called from Core 1 task
     bool preloadTileToCache(int tileX, int tileY, int zoom) {
