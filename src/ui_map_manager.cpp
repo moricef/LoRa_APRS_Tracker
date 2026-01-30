@@ -1722,7 +1722,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     char found_path[128] = {0};
     enum { TILE_NONE, TILE_VEC, TILE_PNG, TILE_JPG } found_type = TILE_NONE;
     bool tileRendered = false;
-    TFT_eSprite* newSprite = nullptr; // FIX: Sprite will be allocated on the heap
+    TFT_eSprite* newSprite = nullptr;
 
     // --- 1. Check cache first ---
     int cacheIdx = findCachedTile(zoom, tileX, tileY);
@@ -1767,7 +1767,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     // --- 4. If a file was found, create sprite and render it ---
     if (found_type != TILE_NONE) {
         Serial.printf("[MAP] Found file: %s\n", found_path);
-        newSprite = new TFT_eSprite(&tft); // FIX: Allocate on heap
+        newSprite = new TFT_eSprite(&tft);
         newSprite->setAttribute(PSRAM_ENABLE, true);
         if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr) {
             if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
@@ -1805,9 +1805,9 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     // --- 5. If rendering successful, update cache and draw on canvas ---
     if (tileRendered && newSprite) {
         lv_canvas_copy_buf(canvas, newSprite->frameBuffer(0), offsetX, offsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
-        addToCache(found_path, zoom, tileX, tileY, newSprite); // FIX: Cache takes ownership
+        addToCache(found_path, zoom, tileX, tileY, newSprite); // Cache takes ownership
     } else if (newSprite) {
-        // FIX: Cleanup if rendering failed or sprite wasn't added to cache
+        // Cleanup if rendering failed or sprite wasn't added to cache
         newSprite->deleteSprite();
         delete newSprite;
     }
