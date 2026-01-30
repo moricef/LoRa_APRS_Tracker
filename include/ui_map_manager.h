@@ -23,6 +23,8 @@ class TFT_eSprite;
 extern TinyGPSPlus gps;
 extern Configuration Config;
 extern uint8_t myBeaconsIndex;
+extern int mapStationsCount;
+extern SemaphoreHandle_t spiMutex; // Declared extern for SPI bus mutex access
 
 // Dimensions de l'affichage
 #define SCREEN_WIDTH  320
@@ -79,10 +81,6 @@ namespace UIMapManager {
         float lat_min; float lat_max;
         float lon_min; float lon_max;
     };
-
-    // Map-specific data sources
-    extern int& mapStationsCount;
-    extern SemaphoreHandle_t& spiMutex; // Declared extern for SPI bus mutex access
 
     // APRS symbol arrays
     extern const char* const* symbolArray;
