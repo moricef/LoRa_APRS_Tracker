@@ -62,6 +62,8 @@ namespace UIMapManager {
     static lv_coord_t touch_start_y = 0;
     static float drag_start_lat = 0.0f;
     static float drag_start_lon = 0.0f;
+    static lv_coord_t last_pan_dx = 0;  // Track last pan delta for station sync
+    static lv_coord_t last_pan_dy = 0;
     #define PAN_THRESHOLD 5  // Minimum pixels to trigger pan
 
     // Tile cache in PSRAM
@@ -81,9 +83,8 @@ namespace UIMapManager {
     struct CachedSymbol {
         char table;              // '/' for primary, '\' for alternate
         char symbol;             // ASCII character
-        lv_img_dsc_t img_dsc;   // LVGL image descriptor
-        lv_color_t* data;        // Symbol pixels in PSRAM
-        uint8_t* alpha;          // Alpha channel in PSRAM (nullptr if no alpha)
+        lv_img_dsc_t img_dsc;   // LVGL image descriptor (RGB565A8 format)
+        uint8_t* data;           // Combined RGB565+Alpha buffer in PSRAM
         uint32_t lastAccess;     // For LRU eviction
         bool valid;
     };
@@ -103,6 +104,18 @@ namespace UIMapManager {
     };
     static StationHitZone stationHitZones[MAP_STATIONS_MAX];
     static int stationHitZoneCount = 0;
+
+    // Station display objects pool (LVGL objects instead of canvas drawing)
+    struct StationDisplayObj {
+        lv_obj_t* container;  // Parent container for positioning
+        lv_obj_t* icon;       // lv_img for APRS symbol
+        lv_obj_t* icon_overlay; // Label for alphanumeric overlay (e.g., 'L', '1') or fallback char
+        lv_obj_t* label;      // lv_label for callsign
+        bool inUse;           // Currently displaying a station
+    };
+    #define STATION_POOL_SIZE (MAP_STATIONS_MAX + 1)  // +1 for own position at index 0
+    static StationDisplayObj stationDisplayPool[STATION_POOL_SIZE];
+    static bool stationDisplayPoolInitialized = false;
 
     // Periodic refresh timer for stations
     static lv_timer_t* map_refresh_timer = nullptr;
@@ -246,43 +259,241 @@ namespace UIMapManager {
     }
     // ============ END ASYNC TILE PRELOADING ============
 
-    // Clear station hit zones (no LVGL objects to delete)
+    // Clear station hit zones and hide display objects
     void cleanup_station_buttons() {
         stationHitZoneCount = 0;
+        // Hide all station display objects (keep pool intact for reuse)
+        if (stationDisplayPoolInitialized) {
+            for (int i = 0; i < STATION_POOL_SIZE; i++) {
+                if (stationDisplayPool[i].container) {
+                    lv_obj_add_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_HIDDEN);
+                }
+                stationDisplayPool[i].inUse = false;
+            }
+        }
     }
 
-    // Draw stations and store hit zones for click detection (no LVGL buttons)
-    void create_station_buttons() {
+    // Destroy station pool - call only when leaving map screen
+    void destroy_station_pool() {
+        stationHitZoneCount = 0;
+        if (stationDisplayPoolInitialized) {
+            for (int i = 0; i < STATION_POOL_SIZE; i++) {
+                // Objects will be deleted with parent map_container
+                // Just null out pointers to avoid dangling references
+                stationDisplayPool[i].container = nullptr;
+                stationDisplayPool[i].icon = nullptr;
+                stationDisplayPool[i].icon_overlay = nullptr;
+                stationDisplayPool[i].label = nullptr;
+                stationDisplayPool[i].inUse = false;
+            }
+            stationDisplayPoolInitialized = false;
+            Serial.println("[MAP] Station display pool destroyed");
+        }
+    }
+
+    // Initialize station display pool (call once when map_container is created)
+    void initStationDisplayPool() {
+        if (stationDisplayPoolInitialized || !map_container) return;
+
+        for (int i = 0; i < STATION_POOL_SIZE; i++) {
+            // Container for positioning (transparent, no layout)
+            stationDisplayPool[i].container = lv_obj_create(map_container);
+            lv_obj_set_size(stationDisplayPool[i].container, 80, 40);
+            lv_obj_set_style_bg_opa(stationDisplayPool[i].container, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(stationDisplayPool[i].container, 0, 0);
+            lv_obj_set_style_pad_all(stationDisplayPool[i].container, 0, 0);
+            lv_obj_clear_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_IGNORE_LAYOUT);
+
+            // Icon: lv_img for APRS symbol PNG (24x24)
+            stationDisplayPool[i].icon = lv_img_create(stationDisplayPool[i].container);
+            lv_obj_set_size(stationDisplayPool[i].icon, SYMBOL_SIZE, SYMBOL_SIZE);
+            lv_obj_align(stationDisplayPool[i].icon, LV_ALIGN_TOP_MID, 0, 0);
+            lv_obj_set_style_border_width(stationDisplayPool[i].icon, 0, 0);
+            lv_obj_set_style_outline_width(stationDisplayPool[i].icon, 0, 0);
+            lv_obj_set_style_shadow_width(stationDisplayPool[i].icon, 0, 0);
+            lv_obj_set_style_pad_all(stationDisplayPool[i].icon, 0, 0);
+            lv_obj_set_style_bg_opa(stationDisplayPool[i].icon, LV_OPA_TRANSP, 0);
+        
+            // Overlay label: displays letters inside the symbol icon (white, centered)
+            stationDisplayPool[i].icon_overlay = lv_label_create(stationDisplayPool[i].container);
+            lv_label_set_text(stationDisplayPool[i].icon_overlay, "");
+            lv_obj_set_style_text_font(stationDisplayPool[i].icon_overlay, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(stationDisplayPool[i].icon_overlay, lv_color_hex(0xffffff), 0);
+            lv_obj_align(stationDisplayPool[i].icon_overlay, LV_ALIGN_TOP_MID, 0, 4);
+
+            // Label for callsign (centered under icon)
+            stationDisplayPool[i].label = lv_label_create(stationDisplayPool[i].container);
+            lv_obj_align(stationDisplayPool[i].label, LV_ALIGN_TOP_MID, 0, SYMBOL_SIZE + 2);
+            lv_obj_set_style_text_font(stationDisplayPool[i].label, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(stationDisplayPool[i].label, lv_color_hex(0x332221), 0);
+            lv_obj_set_style_bg_color(stationDisplayPool[i].label, lv_color_hex(0x759a9e), 0);
+            lv_obj_set_style_bg_opa(stationDisplayPool[i].label, LV_OPA_50, 0);
+            lv_obj_set_style_pad_left(stationDisplayPool[i].label, 2, 0);
+            lv_obj_set_style_pad_right(stationDisplayPool[i].label, 2, 0);
+            lv_label_set_text(stationDisplayPool[i].label, "");
+
+            // Hide initially
+            lv_obj_add_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_HIDDEN);
+            stationDisplayPool[i].inUse = false;
+        }
+
+        stationDisplayPoolInitialized = true;
+        Serial.println("[MAP] Station display pool initialized (LVGL objects with lv_img)");
+    }
+
+    // Move all visible station display objects by delta (for pan sync)
+    void moveStationDisplayObjects(lv_coord_t dx, lv_coord_t dy) {
+        if (!stationDisplayPoolInitialized) return;
+        for (int i = 0; i < STATION_POOL_SIZE; i++) {
+            if (stationDisplayPool[i].inUse && stationDisplayPool[i].container) {
+                lv_coord_t x = lv_obj_get_x(stationDisplayPool[i].container);
+                lv_coord_t y = lv_obj_get_y(stationDisplayPool[i].container);
+                lv_obj_set_pos(stationDisplayPool[i].container, x + dx, y + dy);
+            }
+        }
+    }
+
+    // Helper: parse APRS symbol string and get cached symbol image descriptor
+    static CachedSymbol* parseAndGetSymbol(const char* aprsSymbol) {
+        char table = '/';
+        char symbol = ' ';
+        if (aprsSymbol && strlen(aprsSymbol) >= 2) {
+            if (aprsSymbol[0] == '/' || aprsSymbol[0] == '\\') {
+                table = aprsSymbol[0];
+                symbol = aprsSymbol[1];
+            } else {
+                table = '\\';  // Overlay = alternate table
+                symbol = aprsSymbol[1];
+            }
+        } else if (aprsSymbol && strlen(aprsSymbol) >= 1) {
+            symbol = aprsSymbol[0];
+        }
+        return getSymbolCacheEntry(table, symbol);
+    }
+
+    // Helper: configure a pool entry with position, symbol image, and label
+    static void configurePoolEntry(int poolIdx, int screenX, int screenY,
+                                   const char* callsign, const char* aprsSymbol, int8_t stationIdx) {
+        if (poolIdx >= STATION_POOL_SIZE || !stationDisplayPool[poolIdx].container) return;
+
+        StationDisplayObj& obj = stationDisplayPool[poolIdx];
+
+        // Position container (center 80px container on symbol position)
+        int objX = screenX - MAP_CANVAS_MARGIN - 40;
+        int objY = screenY - MAP_CANVAS_MARGIN - SYMBOL_SIZE / 2;
+        lv_obj_set_pos(obj.container, objX, objY);
+
+        // Try loading PNG symbol
+        CachedSymbol* cache = parseAndGetSymbol(aprsSymbol);
+
+        if (cache && cache->valid) {
+            // PNG found — display it
+            lv_obj_clear_flag(obj.icon, LV_OBJ_FLAG_HIDDEN);
+            lv_img_set_src(obj.icon, &cache->img_dsc);
+            lv_obj_set_style_bg_opa(obj.icon, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_bg_opa(obj.icon_overlay, LV_OPA_TRANSP, 0);
+            lv_label_set_text(obj.icon_overlay, "");  // Clear overlay by default
+        } else {
+            // Fallback: hide icon (no valid PNG), show symbol char via overlay
+            lv_obj_add_flag(obj.icon, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_color(obj.icon_overlay, lv_color_hex(0xff0000), 0);
+            lv_obj_set_style_bg_opa(obj.icon_overlay, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(obj.icon_overlay, LV_RADIUS_CIRCLE, 0);
+
+            if (aprsSymbol && strlen(aprsSymbol) >= 2) {
+                char symChar[2] = { aprsSymbol[1], '\0' };
+                lv_label_set_text(obj.icon_overlay, symChar);
+            }
+        }
+
+        // Alphanumeric overlay (e.g., "L", "1") — displayed on top of icon
+        if (aprsSymbol && strlen(aprsSymbol) >= 2) {
+            char overlay = aprsSymbol[0];
+            if (overlay != '/' && overlay != '\\' && overlay != ' ') {
+                char ovStr[2] = { overlay, '\0' };
+                lv_label_set_text(obj.icon_overlay, ovStr);
+            }
+        }
+
+        // Color label background by station type
+        lv_color_t bgColor = lv_color_hex(0x759a9e);  // Default GPS gray
+        if (aprsSymbol && strlen(aprsSymbol) >= 2) {
+            char sym = aprsSymbol[1];
+            if (sym == '&')      bgColor = lv_color_hex(0xcc0000);  // Red: iGate
+            else if (sym == '#') bgColor = lv_color_hex(0x00cc00);  // Green: Digipeater
+            else if (sym == '_') bgColor = lv_color_hex(0x0055cc);  // Blue: Weather
+        }
+        lv_obj_set_style_bg_color(obj.label, bgColor, 0);
+
+        lv_label_set_text(obj.label, callsign);
+        lv_obj_clear_flag(obj.container, LV_OBJ_FLAG_HIDDEN);
+        obj.inUse = true;
+
+        // Store hit zone (only for received stations, not own position)
+        if (stationIdx >= 0 && stationHitZoneCount < MAP_STATIONS_MAX) {
+            stationHitZones[stationHitZoneCount].x = screenX - MAP_CANVAS_MARGIN;
+            stationHitZones[stationHitZoneCount].y = screenY - MAP_CANVAS_MARGIN + 12;
+            stationHitZones[stationHitZoneCount].w = 80;
+            stationHitZones[stationHitZoneCount].h = 50;
+            stationHitZones[stationHitZoneCount].stationIdx = stationIdx;
+            stationHitZoneCount++;
+        }
+    }
+
+    // Update all station LVGL objects (own position + received stations)
+    void update_station_objects() {
         if (!map_container) return;
 
-        stationHitZoneCount = 0;
+        // Init pool if needed
+        if (!stationDisplayPoolInitialized) {
+            initStationDisplayPool();
+        }
 
-        // Draw stations and store hit zones
+        stationHitZoneCount = 0;
+        int displayIdx = 0;
+
+        // Index 0: own position
+        if (gps.location.isValid()) {
+            int myX, myY;
+            latLonToPixel(gps.location.lat(), gps.location.lng(),
+                          map_center_lat, map_center_lon, map_current_zoom, &myX, &myY);
+            if (myX >= 0 && myX < MAP_CANVAS_WIDTH && myY >= 0 && myY < MAP_CANVAS_HEIGHT) {
+                Beacon* currentBeacon = &Config.beacons[myBeaconsIndex];
+                String fullSymbol = currentBeacon->overlay + currentBeacon->symbol;
+                configurePoolEntry(displayIdx, myX, myY,
+                                   currentBeacon->callsign.c_str(), fullSymbol.c_str(), -1);
+                displayIdx++;
+            }
+        }
+
+        // Received stations
         STATION_Utils::cleanOldMapStations();
-        for (int i = 0; i < MAP_STATIONS_MAX; i++) {
+        int validCount = 0, visibleCount = 0;
+        for (int i = 0; i < MAP_STATIONS_MAX && displayIdx < STATION_POOL_SIZE; i++) {
             MapStation* station = STATION_Utils::getMapStation(i);
             if (station && station->valid && station->latitude != 0.0f && station->longitude != 0.0f) {
+                validCount++;
                 int stX, stY;
                 latLonToPixel(station->latitude, station->longitude,
                               map_center_lat, map_center_lon, map_current_zoom, &stX, &stY);
-
+            
                 if (stX >= 0 && stX < MAP_CANVAS_WIDTH && stY >= 0 && stY < MAP_CANVAS_HEIGHT) {
-                    // Draw station with symbol + SSID
-                    // drawStationOnMap(map_canvas, stX, stY, station->callsign, station->symbol.c_str());
-
-                    // Store hit zone (screen coords, adjusted for canvas margin)
-                    if (stationHitZoneCount < MAP_STATIONS_MAX) {
-                        // Ajuster la position et la taille de la zone de clic pour mieux englober l'ensemble visuel (symbole + texte)
-                        // Les coordonnées x, y représentent le CENTRE de la zone de détection dans le système de coordonnées du conteneur.
-                        stationHitZones[stationHitZoneCount].x = stX - MAP_CANVAS_MARGIN;      // Centre X sur le symbole
-                        stationHitZones[stationHitZoneCount].y = stY - MAP_CANVAS_MARGIN + 12; // Centre Y décalé plus bas pour mieux englober le texte
-                        stationHitZones[stationHitZoneCount].w = 80;                           // Largeur généreuse pour le doigt et le texte long
-                        stationHitZones[stationHitZoneCount].h = 50;                           // Hauteur pour couvrir symbole et texte
-                        stationHitZones[stationHitZoneCount].stationIdx = i;
-                        stationHitZoneCount++;
-                    }
+                    visibleCount++;
+                    // station->symbol already contains full APRS symbol (overlay+symbol, e.g. "/[" or "\>")
+                    configurePoolEntry(displayIdx, stX, stY,
+                                       station->callsign.c_str(), station->symbol.c_str(), i);
+                    displayIdx++;
                 }
             }
+        }
+
+        // Hide unused objects
+        for (int i = displayIdx; i < STATION_POOL_SIZE; i++) {
+            if (stationDisplayPool[i].container) {
+                lv_obj_add_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_HIDDEN);
+            }
+            stationDisplayPool[i].inUse = false;
         }
     }
 
@@ -309,31 +520,40 @@ namespace UIMapManager {
     static bool pngFileOpened = false;  // Track if PNG file actually opened
 
     // PNG draw callback for symbols - stores alpha channel info
-    static uint16_t* symbolDecodeBuffer = nullptr;
-    static uint8_t* symbolAlphaBuffer = nullptr;  // Alpha channel (0-255)
+    static uint8_t* symbolCombinedBuffer = nullptr;  // Target combined buffer
     static PNG symbolPNG;  // PNG decoder instance for symbols
 
     static int pngSymbolCallback(PNGDRAW* pDraw) {
-        if (!symbolDecodeBuffer) return 1;
+        if (!symbolCombinedBuffer) return 1;
+        if (pDraw->y >= SYMBOL_SIZE) return 1;  // Clamp oversized PNGs
 
-        // Decode line as RGB565
-        symbolPNG.getLineAsRGB565(pDraw, &symbolDecodeBuffer[pDraw->y * SYMBOL_SIZE],
-                                  PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+        const int w = (pDraw->iWidth < SYMBOL_SIZE) ? pDraw->iWidth : SYMBOL_SIZE;
+        const size_t rgb565Offset = pDraw->y * SYMBOL_SIZE;  // In uint16_t units
+        const size_t alphaOffset  = SYMBOL_SIZE * SYMBOL_SIZE * sizeof(uint16_t)
+                                  + pDraw->y * SYMBOL_SIZE;   // In bytes
 
-        // Extract alpha channel if present
-        if (symbolAlphaBuffer && pDraw->iHasAlpha) {
-            uint8_t* alpha = &symbolAlphaBuffer[pDraw->y * SYMBOL_SIZE];
-            for (int x = 0; x < pDraw->iWidth; x++) {
-                alpha[x] = pDraw->pPixels[x * 4 + 3];  // RGBA format, get A
+        // Extract alpha BEFORE getLineAsRGB565 (which overwrites pPixels)
+        uint8_t* alphaRow = symbolCombinedBuffer + alphaOffset;
+        if (pDraw->iHasAlpha) {
+            for (int x = 0; x < w; x++) {
+                alphaRow[x] = pDraw->pPixels[x * 4 + 3];  // RGBA -> A
             }
+            for (int x = w; x < SYMBOL_SIZE; x++) {
+                alphaRow[x] = 0;  // Transparent padding
+            }
+        } else {
+            memset(alphaRow, 255, SYMBOL_SIZE);  // Fully opaque
         }
+
+        // Decode line as RGB565 with black background (0x000000)
+        uint16_t* rgb565Row = (uint16_t*)symbolCombinedBuffer + rgb565Offset;
+        symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
 
         return 1;
     }
 
-    // Load symbol PNG from SD card
-    lv_color_t* loadSymbolFromSD(char table, char symbol) {
-        // Build path: /LoRa_Tracker/Symbols/primary/5B.png or /alternate/26.png
+    // Load symbol PNG from SD card into a combined RGB565A8 buffer
+    uint8_t* loadSymbolFromSD(char table, char symbol) {
         String tableName = (table == '/') ? "primary" : "alternate";
         char hexCode[3];
         snprintf(hexCode, sizeof(hexCode), "%02X", (uint8_t)symbol);
@@ -344,46 +564,38 @@ namespace UIMapManager {
             return nullptr;
         }
 
-        // Allocate buffer in PSRAM for decoded image
-        lv_color_t* imgBuf = (lv_color_t*)ps_malloc(SYMBOL_DATA_SIZE);
-        if (!imgBuf) {
+        const size_t rgb565Size = SYMBOL_SIZE * SYMBOL_SIZE * sizeof(uint16_t);
+        const size_t alphaSize  = SYMBOL_SIZE * SYMBOL_SIZE;
+        const size_t totalSize  = rgb565Size + alphaSize;  // 1728 bytes for 24x24
+
+        // Single allocation: combined RGB565A8 buffer in PSRAM
+        uint8_t* combined = (uint8_t*)ps_malloc(totalSize);
+        if (!combined) {
             Serial.println("[SYMBOL] PSRAM allocation failed");
             return nullptr;
         }
+        memset(combined, 0, totalSize);  // Zero-init (transparent black)
 
-        // Allocate alpha channel buffer in PSRAM (24x24 = 576 bytes)
-        symbolAlphaBuffer = (uint8_t*)ps_malloc(SYMBOL_SIZE * SYMBOL_SIZE);
-        if (!symbolAlphaBuffer) {
-            Serial.println("[SYMBOL] PSRAM allocation failed for alpha");
-            free(imgBuf);
-            return nullptr;
-        }
+        // Point callback directly at combined buffer
+        symbolCombinedBuffer = combined;
 
-        // Setup decode buffer for callback
-        symbolDecodeBuffer = (uint16_t*)imgBuf;
-
-        // Decode PNG using PNGdec
+        // Decode PNG
         int rc = symbolPNG.open(path.c_str(), pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngSymbolCallback);
         if (rc == PNG_SUCCESS && pngFileOpened) {
             rc = symbolPNG.decode(nullptr, 0);
             symbolPNG.close();
 
             if (rc == PNG_SUCCESS) {
-                symbolDecodeBuffer = nullptr;
-                // Keep symbolAlphaBuffer set - will be grabbed by getSymbol()
-                Serial.printf("[SYMBOL] Loaded: %c%c from %s\n", table, symbol, path.c_str());
-                return imgBuf;
+                symbolCombinedBuffer = nullptr;
+                Serial.printf("[SYMBOL] Loaded RGB565A8: %c%c from %s\n", table, symbol, path.c_str());
+                return combined;
             }
         }
 
-        // Failed to decode
+        // Failed
         symbolPNG.close();
-        symbolDecodeBuffer = nullptr;
-        if (symbolAlphaBuffer) {
-            free(symbolAlphaBuffer);
-            symbolAlphaBuffer = nullptr;
-        }
-        free(imgBuf);
+        symbolCombinedBuffer = nullptr;
+        free(combined);
         Serial.printf("[SYMBOL] Failed to load: %s\n", path.c_str());
         return nullptr;
     }
@@ -400,8 +612,8 @@ namespace UIMapManager {
             }
         }
 
-        // Not in cache - load from SD
-        lv_color_t* data = loadSymbolFromSD(table, symbol);
+        // Not in cache - load from SD (returns combined RGB565A8 buffer)
+        uint8_t* data = loadSymbolFromSD(table, symbol);
         if (!data) {
             return nullptr;  // Symbol not found
         }
@@ -425,27 +637,25 @@ namespace UIMapManager {
             if (symbolCache[slotIdx].data) {
                 free(symbolCache[slotIdx].data);
             }
-            if (symbolCache[slotIdx].alpha) {
-                free(symbolCache[slotIdx].alpha);
-            }
         }
 
-        // Store in cache (including alpha buffer from loadSymbolFromSD)
+        const size_t rgb565Size = SYMBOL_SIZE * SYMBOL_SIZE * sizeof(uint16_t);
+        const size_t alphaSize = SYMBOL_SIZE * SYMBOL_SIZE;
+
+        // Store in cache
         symbolCache[slotIdx].table = table;
         symbolCache[slotIdx].symbol = symbol;
         symbolCache[slotIdx].data = data;
-        symbolCache[slotIdx].alpha = symbolAlphaBuffer;  // Grab alpha from global
-        symbolAlphaBuffer = nullptr;  // Reset global
         symbolCache[slotIdx].lastAccess = symbolCacheAccessCounter++;
         symbolCache[slotIdx].valid = true;
 
-        // Setup LVGL image descriptor
+        // Setup LVGL image descriptor for RGB565A8 format
         symbolCache[slotIdx].img_dsc.header.always_zero = 0;
         symbolCache[slotIdx].img_dsc.header.w = SYMBOL_SIZE;
         symbolCache[slotIdx].img_dsc.header.h = SYMBOL_SIZE;
-        symbolCache[slotIdx].img_dsc.data_size = SYMBOL_DATA_SIZE;
-        symbolCache[slotIdx].img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
-        symbolCache[slotIdx].img_dsc.data = (uint8_t*)data;
+        symbolCache[slotIdx].img_dsc.data_size = rgb565Size + alphaSize;
+        symbolCache[slotIdx].img_dsc.header.cf = LV_IMG_CF_RGB565A8;
+        symbolCache[slotIdx].img_dsc.data = data;
 
         return &symbolCache[slotIdx];
     }
@@ -1353,286 +1563,6 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         *pixelY = MAP_CANVAS_HEIGHT / 2 + (int)(((targetTileY - centerTileY) + (subY - centerSubY)) * MAP_TILE_SIZE);
     }
 
-    // Get symbol color based on SSID and APRS symbol
-    lv_color_t getSymbolColor(const String& ssid, const char* aprsSymbol) {
-        // Extract symbol character (always second char in 2-char format)
-        // Format: "/X" or "\X" or "OX" where O is overlay
-        char symbolChar = ' ';
-        if (aprsSymbol && strlen(aprsSymbol) >= 2) {
-            symbolChar = aprsSymbol[1];  // Symbol is always second character
-        } else if (aprsSymbol && strlen(aprsSymbol) >= 1) {
-            symbolChar = aprsSymbol[0];
-        }
-
-        // Check symbol first for special cases
-        switch (symbolChar) {
-            case '&':  // iGate
-                return lv_color_hex(0xff0000);  // Red
-            case '#':  // Digipeater
-                return lv_color_hex(0x0f9600);  // Green
-            case '_':  // Weather station (standard APRS weather symbol)
-                return lv_color_hex(0x00007f);  // Dark blue
-        }
-
-        // Extract SSID suffix for color by SSID
-        int dashPos = ssid.lastIndexOf('-');
-        int ssidNum = -1;
-        if (dashPos >= 0 && dashPos < ssid.length() - 1) {
-            ssidNum = ssid.substring(dashPos + 1).toInt();
-        }
-
-        // Color by SSID number
-        switch (ssidNum) {
-            case 7:   // Mobile
-            case 9:   // Handheld
-                return lv_color_hex(0xff0000);  // Red
-            case 13:  // Weather station (custom SSID)
-                return lv_color_hex(0x00007f);  // Dark blue
-            default:
-                return lv_color_hex(0xffff00);  // Yellow
-        }
-    }
-
-    // Get standard APRS color for symbol (deprecated, use getColorFromSSID instead)
-    lv_color_t getAPRSSymbolColor(const char* symbol) {
-        if (!symbol || strlen(symbol) < 1) return lv_color_hex(0xffff00);  // Yellow by default
-
-        // The symbol can be a single character "[" or with a table "/[" or overlay "O["
-        // Symbol is always second character in 2-char format
-        char symbolChar;
-        if (strlen(symbol) >= 2) {
-            symbolChar = symbol[1];  // Symbol is always second character
-        } else {
-            symbolChar = symbol[0];
-        }
-
-        switch (symbolChar) {
-            case '[':  // Human/Jogger
-            case 'b':  // Bicycle
-                return lv_color_hex(0xff0000);  // Red
-            case '>':  // Car
-            case 'U':  // Bus
-            case 'j':  // Jeep
-            case 'k':  // Camion
-            case '<':  // Motorcycle
-                return lv_color_hex(0x0000ff);  // Blue
-            case 's':  // Ship/boat
-            case 'Y':  // Yacht
-                return lv_color_hex(0x00ffff);  // Cyan
-            case '-':  // Home
-            case 'y':  // House with yagi
-                return lv_color_hex(0x00ff00);  // Green
-            case 'a':  // Ambulance
-            case 'f':  // Fire truck
-            case 'u':  // Fire station
-                return lv_color_hex(0xff6600);  // Orange
-            case '^':  // Plane
-            case '\'': // Small plane
-            case 'X':  // Helicopter
-                return lv_color_hex(0x00ffff);  // Cyan
-            case '&':  // iGate
-                return lv_color_hex(0x800080);  // Purple
-            default:
-                return lv_color_hex(0xffff00);  // Yellow
-        }
-    }
-
-    // Forward declaration
-    void drawMapSymbol(lv_obj_t* canvas, int x, int y, const char* symbolChar, lv_color_t color);
-
-    // Draw custom symbol for special types (iGate, digipeater, weather)
-    void drawCustomSymbol(lv_obj_t* canvas, int x, int y, const String& ssid, const char* aprsSymbol, lv_color_t color) {
-        // Extract symbol character
-        char symbolChar = ' ';
-        if (aprsSymbol && strlen(aprsSymbol) >= 2 && (aprsSymbol[0] == '/' || aprsSymbol[0] == '\\')) {
-            symbolChar = aprsSymbol[1];
-        } else if (aprsSymbol && strlen(aprsSymbol) >= 1) {
-            symbolChar = aprsSymbol[0];
-        }
-
-        // Extract SSID suffix
-        int dashPos = ssid.lastIndexOf('-');
-        int ssidNum = -1;
-        if (dashPos >= 0 && dashPos < ssid.length() - 1) {
-            ssidNum = ssid.substring(dashPos + 1).toInt();
-        }
-
-        // Only Weather needs custom symbol (blue circle with "Wx")
-        // iGate and Digipeater use PNG symbols with "L" overlay
-        lv_draw_rect_dsc_t rect_dsc;
-        lv_draw_rect_dsc_init(&rect_dsc);
-        lv_draw_label_dsc_t lbl_dsc;
-        lv_draw_label_dsc_init(&lbl_dsc);
-
-        // Weather - Blue circle with white "Wx"
-        rect_dsc.bg_color = lv_color_hex(0x00007f);  // Dark blue
-        rect_dsc.bg_opa = LV_OPA_COVER;
-        rect_dsc.border_width = 0;
-        rect_dsc.radius = 6;
-        lv_canvas_draw_rect(canvas, x - 6, y - 6, 12, 12, &rect_dsc);
-
-        lbl_dsc.color = lv_color_hex(0xffffff);  // White
-        lbl_dsc.font = &lv_font_montserrat_14;
-        lv_canvas_draw_text(canvas, x - 6, y - 5, 12, &lbl_dsc, "Wx");
-    }
-
-    // Draw station on map: symbol + SSID label
-    void drawStationOnMap(lv_obj_t* canvas, int x, int y, const String& ssid, const char* aprsSymbol) {
-        // Get symbol color based on SSID and APRS symbol
-        lv_color_t symbolColor = getSymbolColor(ssid, aprsSymbol);
-
-        // Extract symbol character to check if we need custom rendering
-        // Format: "/X" or "\X" or "OX" - symbol is always second character
-        char symbolChar = ' ';
-        if (aprsSymbol && strlen(aprsSymbol) >= 2) {
-            symbolChar = aprsSymbol[1];  // Symbol is always second character
-        } else if (aprsSymbol && strlen(aprsSymbol) >= 1) {
-            symbolChar = aprsSymbol[0];
-        }
-
-        // Extract SSID suffix
-        int dashPos = ssid.lastIndexOf('-');
-        int ssidNum = -1;
-        if (dashPos >= 0 && dashPos < ssid.length() - 1) {
-            ssidNum = ssid.substring(dashPos + 1).toInt();
-        }
-
-        // Draw standard APRS symbol PNG (includes red diamond for /&, green star for /#, etc.)
-        drawMapSymbol(canvas, x, y, aprsSymbol, symbolColor);
-
-        // Add white "L" overlay for iGate, Digipeater, or SSID 1-7
-        bool isIGate = (symbolChar == '&');
-        bool isDigipeater = (symbolChar == '#' || (ssidNum >= 1 && ssidNum <= 7));
-
-        if (isIGate || isDigipeater) {
-            lv_draw_label_dsc_t lbl_dsc;
-            lv_draw_label_dsc_init(&lbl_dsc);
-            lbl_dsc.color = lv_color_hex(0xffffff);  // White
-            lbl_dsc.font = &lv_font_montserrat_14;
-            lv_canvas_draw_text(canvas, x - 3, y - 5, 10, &lbl_dsc, "L");
-        }
-
-        // For Weather (SSID-13 or symbol _), use custom blue circle
-        if (ssidNum == 13 || symbolChar == '_') {
-            drawCustomSymbol(canvas, x, y, ssid, aprsSymbol, symbolColor);
-            // Skip SSID label for weather - custom symbol already drawn
-            return;
-        }
-
-        // Draw SSID label below symbol with semi-transparent background
-        // Background: GPS gray color #759a9e at 45% opacity
-        lv_draw_rect_dsc_t bg_dsc;
-        lv_draw_rect_dsc_init(&bg_dsc);
-        bg_dsc.bg_color = lv_color_hex(0x759a9e);  // GPS gray
-        bg_dsc.bg_opa = (LV_OPA_COVER * 45) / 100;  // 45% opacity (115)
-        bg_dsc.radius = 2;  // Slightly rounded corners
-        bg_dsc.border_width = 0;
-
-        // Use Montserrat 12 (smallest available normal font)
-        int text_width = strlen(ssid.c_str()) * 6;  // ~6px per char with font 12
-        int bg_width = text_width + 14;  // Padding: 2px left + 12px right for good coverage
-        int bg_height = 12;  // Height for font 12
-        // Align background with text start position (x - 35) with small left padding
-        lv_canvas_draw_rect(canvas, x - 37, y + 11, bg_width, bg_height, &bg_dsc);
-
-        // Draw text in dark brown #332221 using Montserrat 12
-        lv_draw_label_dsc_t lbl_dsc;
-        lv_draw_label_dsc_init(&lbl_dsc);
-        lbl_dsc.color = lv_color_hex(0x332221);  // Dark brown
-        lbl_dsc.font = &lv_font_montserrat_12;  // Small font size 12
-        lv_canvas_draw_text(canvas, x - 35, y + 11, 70, &lbl_dsc, ssid.c_str());
-    }
-
-    // Draw APRS symbol on map at specified position (low-level function)
-    void drawMapSymbol(lv_obj_t* canvas, int x, int y, const char* symbolChar, lv_color_t color) {
-        // Parse table, symbol and overlay from symbolChar
-        // APRS symbol format:
-        //   "/X" = primary table, symbol X, no overlay
-        //   "\X" = alternate table, symbol X, no overlay
-        //   "OX" = alternate table, symbol X, with overlay character O (A-Z, 0-9)
-        char table = '/';  // default primary table
-        char symbol = ' ';
-        char overlay = 0;  // overlay character to draw on top (0 = none)
-
-        if (symbolChar && strlen(symbolChar) >= 2) {
-            if (symbolChar[0] == '/') {
-                // Primary table, no overlay
-                table = '/';
-                symbol = symbolChar[1];
-            } else if (symbolChar[0] == '\\') {
-                // Alternate table, no overlay
-                table = '\\';
-                symbol = symbolChar[1];
-            } else {
-                // Overlay character + symbol = alternate table with overlay
-                table = '\\';  // Alternate table
-                overlay = symbolChar[0];  // Overlay character (A-Z, 0-9)
-                symbol = symbolChar[1];   // Symbol character
-            }
-        } else if (symbolChar && strlen(symbolChar) >= 1) {
-            symbol = symbolChar[0];
-        }
-
-        // Get symbol cache entry (includes both image data and alpha)
-        CachedSymbol* cache = getSymbolCacheEntry(table, symbol);
-
-        if (cache && cache->data) {
-            // Draw PNG image pixel by pixel with alpha transparency
-            lv_color_t* imgData = cache->data;
-            uint8_t* alphaData = cache->alpha;
-            int startX = x - SYMBOL_SIZE / 2;
-            int startY = y - SYMBOL_SIZE / 2;
-
-            for (int sy = 0; sy < SYMBOL_SIZE; sy++) {
-                for (int sx = 0; sx < SYMBOL_SIZE; sx++) {
-                    int pixelIdx = sy * SYMBOL_SIZE + sx;
-                    
-                    // Get alpha value, default to opaque if no alpha channel
-                    uint8_t alpha = alphaData ? alphaData[pixelIdx] : 255;
-
-                    // Only process pixels that are not fully transparent
-                    if (alpha > 0) {
-                        int px = startX + sx;
-                        int py = startY + sy;
-
-                        // Ensure we are drawing within the canvas bounds
-                        if (px >= 0 && px < MAP_CANVAS_WIDTH && py >= 0 && py < MAP_CANVAS_HEIGHT) {
-                            lv_color_t pixelColor = imgData[pixelIdx];
-
-                            if (alpha == 255) {
-                                // Opaque pixel: directly set the color
-                                lv_canvas_set_px_color(canvas, px, py, pixelColor);
-                            } else {
-                                // Semi-transparent pixel: blend with the background
-                                lv_color_t bg_color = lv_canvas_get_px(canvas, px, py);
-                                lv_color_t blended_color = lv_color_mix(pixelColor, bg_color, alpha);
-                                lv_canvas_set_px_color(canvas, px, py, blended_color);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Draw overlay character on top of symbol if present
-            if (overlay != 0) {
-                char overlayStr[2] = {overlay, '\0'};
-                lv_draw_label_dsc_t lbl_dsc;
-                lv_draw_label_dsc_init(&lbl_dsc);
-                lbl_dsc.color = lv_color_hex(0xffffff);  // White text
-                lbl_dsc.font = &lv_font_montserrat_14;
-                // Center the overlay character on the symbol
-                lv_canvas_draw_text(canvas, x - 4, y - 7, 12, &lbl_dsc, overlayStr);
-            }
-        } else {
-            // Fallback: draw simple circle if symbol not found
-            Serial.printf("[SYMBOL] Symbol not found: %c%c\n", table, symbol);
-            lv_draw_rect_dsc_t rect_dsc;
-            lv_draw_rect_dsc_init(&rect_dsc);
-            rect_dsc.bg_color = lv_color_hex(0xff0000);  // Red to indicate missing
-            rect_dsc.radius = 6;
-            lv_canvas_draw_rect(canvas, x - 6, y - 6, 12, 12, &rect_dsc);
-        }
-    }
 
     // Track map station click - stores callsign to prefill compose screen
     static String map_prefill_callsign = "";
@@ -1652,6 +1582,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     // Map back button handler
     void btn_map_back_clicked(lv_event_t* e) {
         Serial.println("[LVGL] MAP BACK button pressed");
+        destroy_station_pool();
         cleanup_station_buttons();  // Clean up station buttons when leaving map
         map_follow_gps = true;  // Reset to follow GPS when leaving map
         // Stop periodic refresh timer
@@ -1754,20 +1685,8 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
                 "No offline tiles available.");
         }
 
-        // Draw own position (overlay + symbol for correct APRS symbol)
-        if (gps.location.isValid()) {
-            int myX, myY;
-            latLonToPixel(gps.location.lat(), gps.location.lng(),
-                          map_center_lat, map_center_lon, map_current_zoom, &myX, &myY);
-            if (myX >= 0 && myX < MAP_CANVAS_WIDTH && myY >= 0 && myY < MAP_CANVAS_HEIGHT) {
-                Beacon* currentBeacon = &Config.beacons[myBeaconsIndex];
-                String fullSymbol = currentBeacon->overlay + currentBeacon->symbol;
-                // drawStationOnMap(map_canvas, myX, myY, currentBeacon->callsign, fullSymbol.c_str());
-            }
-        }
-
-        // Draw received stations and create clickable buttons
-        create_station_buttons();
+        // Update station LVGL objects (own position + received stations)
+        update_station_objects();
 
         // Recenter canvas after drawing new tiles (avoids visual jump)
         lv_obj_set_pos(map_canvas, -MAP_CANVAS_MARGIN, -MAP_CANVAS_MARGIN);
@@ -1864,6 +1783,8 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
             // Finger down - start tracking
             touch_start_x = point.x;
             touch_start_y = point.y;
+            last_pan_dx = 0;
+            last_pan_dy = 0;
             drag_start_lat = map_center_lat;
             drag_start_lon = map_center_lon;
             touch_dragging = false;
@@ -1917,27 +1838,25 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
                 lv_coord_t new_x = -MAP_CANVAS_MARGIN + dx;
                 lv_coord_t new_y = -MAP_CANVAS_MARGIN + dy;
 
-                // Check if we're approaching margin limits - if so, trigger redraw and recenter
-                if (abs(dx) > MAP_CANVAS_MARGIN - 20 || abs(dy) > MAP_CANVAS_MARGIN - 20) {
-                    // Update coordinates incrementally
-                    int n = 1 << map_current_zoom;
-                    float degrees_per_pixel = 360.0f / n / MAP_TILE_SIZE;
-                    map_center_lon = drag_start_lon - (dx * degrees_per_pixel);
-                    map_center_lat = drag_start_lat + (dy * degrees_per_pixel);
+                if (abs(dx) > MAP_CANVAS_MARGIN - 10 || abs(dy) > MAP_CANVAS_MARGIN - 10) {
+                    if (dx > MAP_CANVAS_MARGIN - 10) dx = MAP_CANVAS_MARGIN - 10;
+                    if (dx < -(MAP_CANVAS_MARGIN - 10)) dx = -(MAP_CANVAS_MARGIN - 10);
+                    if (dy > MAP_CANVAS_MARGIN - 10) dy = MAP_CANVAS_MARGIN - 10;
+                    if (dy < -(MAP_CANVAS_MARGIN - 10)) dy = -(MAP_CANVAS_MARGIN - 10);
 
-                    // Reset drag start to current position
-                    drag_start_lat = map_center_lat;
-                    drag_start_lon = map_center_lon;
-                    touch_start_x = point.x;
-                    touch_start_y = point.y;
+                    new_x = -MAP_CANVAS_MARGIN + dx;
+                    new_y = -MAP_CANVAS_MARGIN + dy;
+                }
 
-                    // Recenter canvas and redraw
-                    lv_obj_set_pos(map_canvas, -MAP_CANVAS_MARGIN, -MAP_CANVAS_MARGIN);
-                    redraw_map_canvas();
-                    Serial.println("[MAP] Margin limit reached - redraw triggered");
-                } else {
+                {
                     // Normal panning within margin
                     lv_obj_set_pos(map_canvas, new_x, new_y);
+                    // Move station objects by incremental delta
+                    lv_coord_t delta_dx = dx - last_pan_dx;
+                    lv_coord_t delta_dy = dy - last_pan_dy;
+                    moveStationDisplayObjects(delta_dx, delta_dy);
+                    last_pan_dx = dx;
+                    last_pan_dy = dy;
                 }
             }
         }
@@ -1963,6 +1882,11 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 
                 // Schedule redraw (canvas will be recentered after new tiles are drawn)
                 schedule_map_reload();
+
+                // Preload tiles at adjacent zoom levels for fast zoom switch
+                int cX, cY;
+                latLonToTile(map_center_lat, map_center_lon, map_current_zoom, &cX, &cY);
+                queueAdjacentZoomTiles(cX, cY, map_current_zoom);
             } else {
                 // Tap (no drag) - check if a station was tapped
                 for (int i = 0; i < stationHitZoneCount; i++) {
@@ -2354,22 +2278,8 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                     "No offline tiles available.\nDownload OSM tiles and copy to:\nSD:/LoRa_Tracker/Maps/REGION/z/x/y.png");
             }
 
-            // Draw own position (if GPS is valid) - overlay + symbol for correct APRS symbol
-            if (gps.location.isValid()) {
-                int myX, myY;
-                latLonToPixel(gps.location.lat(), gps.location.lng(),
-                              map_center_lat, map_center_lon, map_current_zoom, &myX, &myY);
-
-                if (myX >= 0 && myX < MAP_CANVAS_WIDTH && myY >= 0 && myY < MAP_CANVAS_HEIGHT) {
-                    // Get current beacon symbol (overlay + symbol)
-                    Beacon* currentBeacon = &Config.beacons[myBeaconsIndex];
-                    String fullSymbol = currentBeacon->overlay + currentBeacon->symbol;
-                    // drawStationOnMap(map_canvas, myX, myY, currentBeacon->callsign, fullSymbol.c_str());
-                }
-            }
-
-            // Draw received stations and create clickable buttons
-            create_station_buttons();
+            // Update station LVGL objects (own position + received stations)
+            update_station_objects();
 
             // Force canvas redraw after direct buffer writes
             lv_canvas_set_buffer(map_canvas, map_canvas_buf, MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT, LV_IMG_CF_TRUE_COLOR);
