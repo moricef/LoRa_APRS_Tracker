@@ -33,6 +33,11 @@
 
 namespace UIMapManager {
 
+    // Unified memory pool system
+    static std::vector<uint8_t*> unifiedPool;
+    static SemaphoreHandle_t unifiedPoolMutex = nullptr;
+    static size_t totalAllocated = 0;
+
     // UI elements - Map screen
     lv_obj_t* screen_map = nullptr;
     lv_obj_t* map_canvas = nullptr;
@@ -1525,6 +1530,46 @@ namespace UIMapManager {
         startTilePreloadTask();
 
         Serial.println("[LVGL] Map screen created");
+    }
+
+    // Initialize unified memory pool
+    void initUnifiedPool() {
+        if (unifiedPoolMutex == nullptr) {
+            unifiedPoolMutex = xSemaphoreCreateMutex();
+        }
+    }
+
+    // Allocate from unified pool
+    void* unifiedAlloc(size_t size, uint8_t type) {
+        void* ptr = nullptr;
+        if (unifiedPoolMutex && xSemaphoreTake(unifiedPoolMutex, portMAX_DELAY) == pdTRUE) {
+            ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+            if (ptr) {
+                unifiedPool.push_back((uint8_t*)ptr);
+                totalAllocated += heap_caps_get_allocated_size(ptr);
+            }
+            xSemaphoreGive(unifiedPoolMutex);
+        } else {
+            // Fallback if mutex is not created or taken
+            ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+        }
+        return ptr;
+    }
+
+    // Deallocate from unified pool
+    void unifiedDealloc(void* ptr) {
+        if (!ptr) return;
+
+        if (unifiedPoolMutex && xSemaphoreTake(unifiedPoolMutex, portMAX_DELAY) == pdTRUE) {
+            auto it = std::find(unifiedPool.begin(), unifiedPool.end(), (uint8_t*)ptr);
+            if (it != unifiedPool.end()) {
+                totalAllocated -= heap_caps_get_allocated_size(ptr);
+                unifiedPool.erase(it);
+            }
+            xSemaphoreGive(unifiedPoolMutex);
+        }
+        
+        heap_caps_free(ptr);
     }
 
 } // namespace UIMapManager
