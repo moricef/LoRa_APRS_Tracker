@@ -631,8 +631,21 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     // --- Color Management Utilities ---
 
     bool loadPalette(const char* palettePath) {
-        FILE* f = fopen(palettePath, "rb");
-        if (!f) return false;
+        FILE* f = nullptr;
+        if (palettePath) {
+            f = fopen(palettePath, "rb");
+        }
+    
+        if (!f) {
+            // Default palette fallback
+            PALETTE[0] = 0x00; // Black
+            PALETTE[1] = 0x25; // Dark Gray (for roads)
+            PALETTE[2] = 0x10; // Green (for parks)
+            PALETTE[3] = 0x02; // Blue (for water)
+            PALETTE_SIZE = 4;
+            Serial.println("[MAP] palette.bin not found, using default fallback palette.");
+            return true;
+        }
         
         uint32_t numColors;
         if (fread(&numColors, 4, 1, f) != 1) {
@@ -813,11 +826,6 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     // --- Main Rendering Function ---
 
     bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
-        static bool isPaletteLoaded = false;
-        if (!isPaletteLoaded) {
-            isPaletteLoaded = loadPalette("/LoRa_Tracker/Maps/GrandSUD/palette.bin");
-        }
-
         if (!path || path[0] == '\0') return false;
 
         FILE* file = fopen(path, "rb");
@@ -2087,18 +2095,15 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         if (STORAGE_Utils::isSDAvailable()) {
             const char* region = map_current_region.c_str();
 
-            snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.bin", region, zoom, tileX, tileY);
-            Serial.printf("[MAP] Region: %s, Probing: %s\n", region, path);
+            snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.bin", region, zoom, tileX, tileY);
             File f = SD.open(path);
             if (f) { f.close(); strcpy(found_path, path); found_type = TILE_VEC; }
             else {
                 snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
-                Serial.printf("[MAP] Region: %s, Probing: %s\n", region, path);
                 f = SD.open(path);
                 if (f) { f.close(); strcpy(found_path, path); found_type = TILE_PNG; }
                 else {
                     snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
-                    Serial.printf("[MAP] Region: %s, Probing: %s\n", region, path);
                     f = SD.open(path);
                     if (f) { f.close(); strcpy(found_path, path); found_type = TILE_JPG; }
                 }
@@ -2168,6 +2173,14 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
 
         // Discover and set the map region if it's not already defined
         discoverAndSetMapRegion();
+
+        initBatchRendering();
+        if (!map_current_region.isEmpty()) {
+            String palettePath = "/LoRa_Tracker/VectMaps/" + map_current_region + "/palette.bin";
+            loadPalette(palettePath.c_str());
+        } else {
+            loadPalette(nullptr); // Will trigger fallback
+        }
 
         // Clean up old station buttons if screen is being recreated
         cleanup_station_buttons();
