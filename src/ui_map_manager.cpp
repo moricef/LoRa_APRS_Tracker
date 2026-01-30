@@ -1077,7 +1077,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     createRenderBatch(getOptimalBatchSize());
 
     // Clear the sprite with a land color before drawing
-    map.fillSprite(lv_color_to16(lv_color_hex(0xf2efe9)));
+    map.fillSprite(0xDEFB); // Correct Little-Endian Beige
 
     size_t offset = 0;
 
@@ -1113,8 +1113,6 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     const int32_t tile_min_lat_e7 = static_cast<int32_t>(tile_min_lat_deg * 10000000.0);
     const int32_t tile_max_lon_e7 = static_cast<int32_t>(tile_max_lon_deg * 10000000.0);
     const int32_t tile_max_lat_e7 = static_cast<int32_t>(tile_max_lat_deg * 10000000.0);
-
-    Serial.printf("[MAP] Tile Bounds E7: Lon(%d to %d) Lat(%d to %d)\n", tile_min_lon_e7, tile_max_lon_e7, tile_min_lat_e7, tile_max_lat_e7);
 
     int64_t delta_lon = tile_max_lon_e7 - tile_min_lon_e7;
     int64_t delta_lat = tile_max_lat_e7 - tile_min_lat_e7;
@@ -1162,8 +1160,10 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                 int32_t lon, lat;
                 memcpy(&lon, data + offset, 4); offset += 4;
                 memcpy(&lat, data + offset, 4); offset += 4;
-                px[j] = (int)(((int64_t)(lon - tile_min_lon_e7) * (VTILE_SIZE - 1)) / delta_lon);
-                py[j] = VTILE_SIZE - 1 - (int)(((int64_t)(lat - tile_min_lat_e7) * (VTILE_SIZE - 1)) / delta_lat);
+                double lon_val = lon / 10000000.0;
+                double lat_val = lat / 10000000.0;
+                px[j] = (int)((lon_val - tile_min_lon_deg) / (tile_max_lon_deg - tile_min_lon_deg) * 255.0);
+                py[j] = (int)(255.0 - ((lat_val - tile_min_lat_deg) / (tile_max_lat_deg - tile_min_lat_deg) * 255.0));
             }
             
             fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset);
@@ -1216,8 +1216,10 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                 int32_t lon, lat;
                 memcpy(&lon, data + offset, 4); offset += 4;
                 memcpy(&lat, data + offset, 4); offset += 4;
-                px[j] = (int)(((int64_t)(lon - tile_min_lon_e7) * (VTILE_SIZE - 1)) / delta_lon);
-                py[j] = VTILE_SIZE - 1 - (int)(((int64_t)(lat - tile_min_lat_e7) * (VTILE_SIZE - 1)) / delta_lat);
+                double lon_val = lon / 10000000.0;
+                double lat_val = lat / 10000000.0;
+                px[j] = (int)((lon_val - tile_min_lon_deg) / (tile_max_lon_deg - tile_min_lon_deg) * 255.0);
+                py[j] = (int)(255.0 - ((lat_val - tile_min_lat_deg) / (tile_max_lat_deg - tile_min_lat_deg) * 255.0));
             }
             
             if (geometry_type == 2) { // Line
