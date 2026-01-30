@@ -1073,11 +1073,11 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         return false;
     }
 
-    // initBatchRendering(); // <-- Commentez cette ligne
-    // createRenderBatch(getOptimalBatchSize()); // <-- Commentez cette ligne
+    initBatchRendering();
+    createRenderBatch(getOptimalBatchSize());
 
     // Clear the sprite with a land color before drawing
-    map.fillSprite(0xFFFF); // Pure White for high-contrast test
+    map.fillSprite(0xF79E); // Correct Little-Endian Beige
 
     size_t offset = 0;
 
@@ -1103,13 +1103,10 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     
     const size_t features_start_offset = offset;
     
-    // --- BYPASS tile boundary calculation and use HEADER values for scaling ---
-    // Supprimez ou commentez toute la section de calcul de tile_min_lon_deg, etc.
-    // REMPLACEZ-LA par ceci :
-    int64_t d_lon = (int64_t)max_lon_header - min_lon_header;
-    int64_t d_lat = (int64_t)max_lat_header - min_lat_header;
-    if (d_lon == 0) d_lon = 1;
-    if (d_lat == 0) d_lat = 1;
+    // --- Calculate precise tile boundaries for scaling ---
+    double lon_w, lat_n, lon_e, lat_s;
+    tileToLonLat(tileX, tileY, zoom, lon_w, lat_n);
+    tileToLonLat(tileX + 1, tileY + 1, zoom, lon_e, lat_s);
 
     int executed = 0;
 
@@ -1123,7 +1120,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         uint8_t geometry_type = data[offset++];
         uint16_t color;
         memcpy(&color, data + offset, 2); offset += 2;
-        // color = (color << 8) | (color >> 8); // <-- Supprimez cette ligne
+        color = (color << 8) | (color >> 8); // Swap bytes for correct ESP32 RGB565
         
         uint8_t zoom_priority = data[offset++];
         (void)zoom_priority;
@@ -1152,14 +1149,16 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                 int32_t lon, lat;
                 memcpy(&lon, data + offset, 4); offset += 4;
                 memcpy(&lat, data + offset, 4); offset += 4;
-                // REMPLACEZ les anciennes lignes de conversion de pixels par celles-ci :
-                px[j] = (int)(((int64_t)(lon - min_lon_header) * 255) / d_lon);
-                py[j] = 255 - (int)(((int64_t)(lat - min_lat_header) * 255) / d_lat);
+                // REMPLACEZ les anciennes lignes de conversion par la nouvelle formule :
+                double lon_deg = lon / 10000000.0;
+                double lat_deg = lat / 10000000.0;
+                px[j] = (int)((lon_deg - lon_w) / (lon_e - lon_w) * 255.0);
+                py[j] = (int)((lat_n - lat_deg) / (lat_n - lat_s) * 255.0);
             }
             
-            // fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset); // <-- Assurez-vous que c'est commenté
-            // const uint16_t borderColor = darkenRGB565(color); // <-- Supprimez ou commentez
-            drawPolygonBorder(map, px, py, coord_count, 0x0000, 0x0000, xOffset, yOffset); // <-- Forcez le noir
+            fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset);
+            const uint16_t borderColor = darkenRGB565(color);
+            drawPolygonBorder(map, px, py, coord_count, borderColor, color, xOffset, yOffset);
             executed++;
             
             free(px);
@@ -1179,7 +1178,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         uint8_t geometry_type = data[offset++];
         uint16_t color;
         memcpy(&color, data + offset, 2); offset += 2;
-        // color = (color << 8) | (color >> 8); // <-- Supprimez cette ligne
+        color = (color << 8) | (color >> 8); // Swap bytes for correct ESP32 RGB565
         
         uint8_t zoom_priority = data[offset++];
         (void)zoom_priority;
@@ -1207,15 +1206,17 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                 int32_t lon, lat;
                 memcpy(&lon, data + offset, 4); offset += 4;
                 memcpy(&lat, data + offset, 4); offset += 4;
-                // REMPLACEZ les anciennes lignes de conversion de pixels par celles-ci :
-                px[j] = (int)(((int64_t)(lon - min_lon_header) * 255) / d_lon);
-                py[j] = 255 - (int)(((int64_t)(lat - min_lat_header) * 255) / d_lat);
+                // REMPLACEZ les anciennes lignes de conversion par la nouvelle formule :
+                double lon_deg = lon / 10000000.0;
+                double lat_deg = lat / 10000000.0;
+                px[j] = (int)((lon_deg - lon_w) / (lon_e - lon_w) * 255.0);
+                py[j] = (int)((lat_n - lat_deg) / (lat_n - lat_s) * 255.0);
             }
             
             if (geometry_type == 2) { // Line
-                // REMPLACEZ la boucle addToBatch par une boucle de dessin direct :
+                // REMPLACEZ la boucle de dessin direct par la boucle addToBatch :
                 for (uint16_t j = 1; j < coord_count; ++j) {
-                    map.drawLine(px[j-1] + xOffset, py[j-1] + yOffset, px[j] + xOffset, py[j] + yOffset, 0x0000);
+                    addToBatch(px[j-1] + xOffset, py[j-1] + yOffset, px[j] + xOffset, py[j] + yOffset, color);
                 }
                 executed++;
             } else if (geometry_type == 1) { // Point
@@ -1230,8 +1231,12 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         }
     }
 
-    // flushBatch(map); // <-- Commentez cette ligne
-    // if (activeBatch) { ... } // <-- Commentez ce bloc
+    flushBatch(map);
+    if (activeBatch) {
+        if (activeBatch->segments) delete[] activeBatch->segments;
+        delete activeBatch;
+        activeBatch = nullptr;
+    }
     
     free(data);
     return executed > 0;
