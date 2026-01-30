@@ -1022,6 +1022,13 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 
 // --- Main Rendering Function ---
 
+    static void tileToLonLat(int tileX, int tileY, int zoom, double& lon, double& lat) {
+        int n = 1 << zoom;
+        lon = tileX / (double)n * 360.0 - 180.0;
+        double lat_rad = atan(sinh(M_PI * (1.0 - 2.0 * tileY / n)));
+        lat = lat_rad * 180.0 / M_PI;
+    }
+
     uint16_t darkenRGB565(const uint16_t color, const float amount = 0.4f) {
         uint8_t r5 = (color >> 11) & 0x1F;
         uint8_t g6 = (color >> 5) & 0x3F;
@@ -1034,7 +1041,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         return (r5 << 11) | (g6 << 5) | b5;
     }
 
-    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
+bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
     if (!path || path[0] == '\0') return false;
 
     FILE* file = fopen(path, "rb");
@@ -1076,14 +1083,26 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     memcpy(&feature_count, data + offset, 2);
     offset += 2;
 
-    int32_t min_lon, min_lat, max_lon, max_lat;
-    memcpy(&min_lon, data + offset, 4); offset += 4;
-    memcpy(&min_lat, data + offset, 4); offset += 4;
-    memcpy(&max_lon, data + offset, 4); offset += 4;
-    memcpy(&max_lat, data + offset, 4); offset += 4;
+    // Read bounding box from header, but IGNORE it for scaling. We calculate precise tile boundaries.
+    int32_t min_lon_header, min_lat_header, max_lon_header, max_lat_header;
+    memcpy(&min_lon_header, data + offset, 4); offset += 4;
+    memcpy(&min_lat_header, data + offset, 4); offset += 4;
+    memcpy(&max_lon_header, data + offset, 4); offset += 4;
+    memcpy(&max_lat_header, data + offset, 4); offset += 4;
+    
+    // --- Calculate precise tile boundaries for scaling ---
+    double tile_min_lon_deg, tile_max_lat_deg;
+    double tile_max_lon_deg, tile_min_lat_deg;
+    tileToLonLat(tileX, tileY, zoom, tile_min_lon_deg, tile_max_lat_deg);
+    tileToLonLat(tileX + 1, tileY + 1, zoom, tile_max_lon_deg, tile_min_lat_deg);
 
-    int64_t delta_lon = max_lon - min_lon;
-    int64_t delta_lat = max_lat - min_lat;
+    const int32_t tile_min_lon_e7 = static_cast<int32_t>(tile_min_lon_deg * 10000000.0);
+    const int32_t tile_min_lat_e7 = static_cast<int32_t>(tile_min_lat_deg * 10000000.0);
+    const int32_t tile_max_lon_e7 = static_cast<int32_t>(tile_max_lon_deg * 10000000.0);
+    const int32_t tile_max_lat_e7 = static_cast<int32_t>(tile_max_lat_deg * 10000000.0);
+
+    int64_t delta_lon = tile_max_lon_e7 - tile_min_lon_e7;
+    int64_t delta_lat = tile_max_lat_e7 - tile_min_lat_e7;
     if (delta_lon == 0) delta_lon = 1;
     if (delta_lat == 0) delta_lat = 1;
 
@@ -1119,17 +1138,17 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
             memcpy(&lon, data + offset, 4); offset += 4;
             memcpy(&lat, data + offset, 4); offset += 4;
 
-            px[j] = (int)(((int64_t)(lon - min_lon) * VTILE_SIZE) / delta_lon);
-            py[j] = VTILE_SIZE - 1 - (int)(((int64_t)(lat - min_lat) * VTILE_SIZE) / delta_lat);
+            px[j] = (int)(((int64_t)(lon - tile_min_lon_e7) * VTILE_SIZE) / delta_lon);
+            py[j] = VTILE_SIZE - 1 - (int)(((int64_t)(lat - tile_min_lat_e7) * VTILE_SIZE) / delta_lat);
         }
         
         // --- Rendering ---
-        if (geometry_type == 1 && coord_count >= 2) { // Line
+        if (geometry_type == 2 && coord_count >= 2) { // Line
             for (uint16_t j = 1; j < coord_count; ++j) {
                 map.drawWideLine(px[j-1] + xOffset, py[j-1] + yOffset, px[j] + xOffset, py[j] + yOffset, width, color);
             }
             executed++;
-        } else if (geometry_type == 2 && coord_count >= 3) { // Polygon
+        } else if (geometry_type == 3 && coord_count >= 3) { // Polygon
             fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset);
             const uint16_t borderColor = darkenRGB565(color);
             drawPolygonBorder(map, px, py, coord_count, borderColor, color, xOffset, yOffset);
@@ -1769,7 +1788,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
             if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 switch (found_type) {
                     case TILE_NAV:
-                        tileRendered = renderTile(found_path, 0, 0, *newSprite);
+                        tileRendered = renderTile(found_path, tileX, tileY, zoom, 0, 0, *newSprite);
                         break;
                     case TILE_PNG:
                         spriteDecodeContext.sprite = newSprite;
