@@ -1717,7 +1717,6 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         }
     }
 
-// Load a tile from SD card (with caching) and copy it to canvas
 bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY) {
     char path[128];
     char found_path[128] = {0};
