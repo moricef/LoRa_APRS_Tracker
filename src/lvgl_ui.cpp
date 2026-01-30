@@ -66,6 +66,12 @@ const uint8_t *symbolsAPRS[] = {runnerSymbol,     carSymbol,
 
 // Expose variables defined in this file to UIMapManager namespace
 namespace UIMapManager {
+// Definitions for externs in ui_map_manager.h
+TinyGPSPlus& gps = ::gps;
+Configuration& Config = ::Config;
+uint8_t& myBeaconsIndex = ::myBeaconsIndex;
+int& mapStationsCount = ::mapStationsCount;
+
 SemaphoreHandle_t &spiMutex = ::spiMutex;
 const char *const *symbolArray = ::symbolArray;
 const int &symbolArraySize = ::symbolArraySize;

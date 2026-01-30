@@ -12,7 +12,8 @@
 #include <TinyGPS++.h> // Pour les données GPS
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
-#include <cstdint> // <-- AJOUTER CECI
+#include <cstdint>
+#include "esp_heap_caps.h"
 
 // Forward declarations
 class Configuration;
