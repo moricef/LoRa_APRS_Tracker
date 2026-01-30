@@ -10,6 +10,7 @@
 #include <lvgl.h>
 #include <Arduino.h> // Pour String, millis, etc.
 #include <TinyGPS++.h> // Pour les données GPS
+#include <TFT_eSPI.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <cstdint>
@@ -17,11 +18,11 @@
 
 // Forward declarations
 class Configuration;
-class TFT_eSprite;
 
 // External data sources from lvgl_ui.cpp and other global variables
 extern TinyGPSPlus gps;
 extern Configuration Config;
+extern TFT_eSPI tft;
 extern uint8_t myBeaconsIndex;
 extern int mapStationsCount;
 extern SemaphoreHandle_t spiMutex; // Declared extern for SPI bus mutex access
