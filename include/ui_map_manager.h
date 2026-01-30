@@ -155,6 +155,8 @@ namespace UIMapManager {
             }
             
             T* get() const { return ptr; }
+            T& operator*() const { return *ptr; }
+            T* operator->() const { return ptr; }
             operator bool() const { return ptr != nullptr; }
             
             MemoryGuard(const MemoryGuard&) = delete;
@@ -165,7 +167,7 @@ namespace UIMapManager {
     void initTileCache();
     void clearTileCache();
     void initBatchRendering();
-    bool renderTile(const char* path, TFT_eSprite &map);
+    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, TFT_eSprite &map);
     bool loadPalette(const char* palettePath);
     int findCachedTile(int zoom, int tileX, int tileY);
     int findCacheSlot();
