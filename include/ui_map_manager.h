@@ -67,6 +67,15 @@ namespace UIMapManager {
         char filePath[255];
     };
     
+    struct CachedSymbol {
+        char table;              // '/' for primary, '\' for alternate
+        char symbol;             // ASCII character
+        lv_img_dsc_t img_dsc;   // LVGL image descriptor (RGB565A8 format)
+        uint8_t* data;           // Combined RGB565+Alpha buffer in PSRAM
+        uint32_t lastAccess;     // For LRU eviction
+        bool valid;
+    };
+    
     struct LineSegment { int x0, y0, x1, y1; uint16_t color; };
     
     struct RenderBatch
@@ -176,8 +185,7 @@ namespace UIMapManager {
     //                              int offsetX, int offsetY, int canvasWidth, int canvasHeight);
     void latLonToTile(float lat, float lon, int zoom, int* tileX, int* tileY);
     void latLonToPixel(float lat, float lon, float centerLat, float centerLon, int zoom, int* pixelX, int* pixelY);
-    lv_color_t getAPRSSymbolColor(const char* symbol);
-    void drawMapSymbol(lv_obj_t* canvas, int x, int y, const char* symbolChar, lv_color_t color);
+    CachedSymbol* getSymbolCacheEntry(char table, char symbol);
     void map_station_clicked(lv_event_t* e);
     void btn_map_back_clicked(lv_event_t* e);
     void btn_map_recenter_clicked(lv_event_t* e);

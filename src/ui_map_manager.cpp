@@ -502,7 +502,6 @@ namespace UIMapManager {
         if (symbolCacheInitialized) return;
         for (int i = 0; i < SYMBOL_CACHE_SIZE; i++) {
             symbolCache[i].data = nullptr;
-            symbolCache[i].alpha = nullptr;
             symbolCache[i].valid = false;
             symbolCache[i].table = 0;
             symbolCache[i].symbol = 0;
