@@ -43,9 +43,9 @@ namespace UIMapManager {
     lv_obj_t* map_container = nullptr;
 
     // Map state variables
-    static const int map_available_zooms[] = {8, 10, 12, 14}; // Available zoom levels (only levels with tiles on SD card)
+    static const int map_available_zooms[] = {8, 9, 10, 11, 12, 13, 14, 15, 16}; 
     const int map_zoom_count = sizeof(map_available_zooms) / sizeof(map_available_zooms[0]);
-    int map_zoom_index = 0;  // Index in map_available_zooms (starts at zoom 8)
+    int map_zoom_index = 4;  // Index in map_available_zooms (starts at zoom 8)
     int map_current_zoom = map_available_zooms[0]; // Initialize with first available zoom
     float map_center_lat = 0.0f;
     float map_center_lon = 0.0f;
@@ -1134,9 +1134,13 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                 if (px) { free(px); }
                 if (py) { free(py); }
             }
-            
-            // --- PASS 2 : ROUTES (Type 2) ---
+          // --- PASS 2 : ROUTES (Type 2) ---
             else if (pass == 2 && type == 2 && total_coords >= 2) {
+                // 1. On récupère la couleur brute et on l'inverse pour le hardware
+                uint16_t raw_color;
+                memcpy(&raw_color, p + 1, 2);
+                uint16_t line_color = (raw_color << 8) | (raw_color >> 8);
+
                 for (uint16_t j = 1; j < total_coords; j++) {
                     int32_t la, aa, lb, ab;
                     memcpy(&la, coord_ptr + ((j-1) * 8), 4); memcpy(&aa, coord_ptr + ((j-1) * 8) + 4, 4);
@@ -1147,8 +1151,9 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                     int x1 = (int)(((lb / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
                     int y1 = (int)((lat_n - (ab / 10000000.0)) / (lat_n - lat_s) * 255.0);
 
-                    if (width <= 1) addToBatch(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, color);
-                    else map.drawWideLine(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, width, color);
+                    // 2. On utilise line_color au lieu de color
+                    if (width <= 1) addToBatch(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, line_color);
+                    else map.drawWideLine(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, width, line_color);
                 }
             }
 
