@@ -1091,16 +1091,27 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
             uint8_t width = p[4];
             uint16_t total_coords; memcpy(&total_coords, p + 5, 2);
             uint8_t* coord_ptr = p + 7;
-
+            
             // --- PASS 1 : POLYGONES (Type 3) ---
             if (pass == 1 && type == 3 && total_coords >= 3) {
-                // Lecture du suffixe des Rings pour trouver la fin du contour principal
+                uint16_t raw_color; 
+                memcpy(&raw_color, p + 1, 2); // On lit la couleur brute du fichier
+
+                // 1. On calcule la bordure AVANT le swap (sur la couleur naturelle)
+                // Augmentons à 0.25f (25%) pour que ce soit bien visible par rapport au fond
+                uint16_t raw_border = darkenRGB565(raw_color, 0.25f);
+
+                // 2. Maintenant on SWAP les deux pour le hardware du T-Deck
+                uint16_t fillColor = (raw_color << 8) | (raw_color >> 8);
+                uint16_t borderColor = (raw_border << 8) | (raw_border >> 8);
+
+                // Lecture du suffixe des Rings pour le contour principal
                 uint8_t* ring_ptr = coord_ptr + (total_coords * 8);
                 uint16_t first_ring_end = total_coords;
                 if (ring_ptr < data + fileSize) {
                     uint8_t ring_count = ring_ptr[0];
                     if (ring_count > 0) {
-                        memcpy(&first_ring_end, ring_ptr + 1, 2); // Fin du 1er anneau
+                        memcpy(&first_ring_end, ring_ptr + 1, 2);
                     }
                 }
 
@@ -1115,13 +1126,15 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                         py[j] = (int)((lat_n - (la_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
                     }
                     if (fillPolygons) {
-                        fillPolygonGeneral(map, px, py, first_ring_end, color, xOffset, yOffset);
+                        fillPolygonGeneral(map, px, py, first_ring_end, fillColor, xOffset, yOffset);
                     }
-                    drawPolygonBorder(map, px, py, first_ring_end, darkenRGB565(color, 0.15f), color, xOffset, yOffset);
+                    // On utilise borderColor qui a été calculé proprement
+                    drawPolygonBorder(map, px, py, first_ring_end, borderColor, fillColor, xOffset, yOffset);
                 }
                 if (px) { free(px); }
                 if (py) { free(py); }
             }
+            
             // --- PASS 2 : ROUTES (Type 2) ---
             else if (pass == 2 && type == 2 && total_coords >= 2) {
                 for (uint16_t j = 1; j < total_coords; j++) {
