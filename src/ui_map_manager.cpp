@@ -1055,12 +1055,17 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 }
 
 bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
+    // Supprime les warnings d'inutilisation des paramètres
+    (void)tileX; (void)tileY; (void)zoom; 
+
     if (!path || path[0] == '\0') return false;
 
     File file = SD.open(path, FILE_READ);
     if (!file) return false;
 
     size_t fileSize = file.size();
+    if (fileSize < 22) { file.close(); return false; }
+
     uint8_t* data = (uint8_t*)ps_malloc(fileSize);
     if (!data) { file.close(); return false; }
     file.read(data, fileSize);
@@ -1073,13 +1078,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
 
     initBatchRendering();
     createRenderBatch(getOptimalBatchSize());
-    
-    // Fond Blanc (comme demandé pour le style)
     map.fillSprite(TFT_WHITE); 
-
-    double lon_w, lat_n, lon_e, lat_s;
-    tileToLonLat(tileX, tileY, zoom, lon_w, lat_n);
-    tileToLonLat(tileX + 1, tileY + 1, zoom, lon_e, lat_s);
 
     uint32_t last_wdt_ms = millis();
 
@@ -1093,84 +1092,63 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                 last_wdt_ms = millis();
             }
 
-            if (p + 7 > data + fileSize) break;
+            if (p + 12 > data + fileSize) break;
 
             uint8_t type = p[0];
             uint16_t color; memcpy(&color, p + 1, 2);
-            // CORRECTION COULEUR : Swap indispensable pour le hardware T-Deck
             color = (color << 8) | (color >> 8); 
             
             uint8_t width = p[4];
-            uint16_t total_coords; memcpy(&total_coords, p + 5, 2);
-            uint8_t* coord_ptr = p + 7;
+            uint16_t count; memcpy(&count, p + 9, 2);
             
-            // --- PASS 1 : POLYGONES (Type 3) ---
-            if (pass == 1 && type == 3 && total_coords >= 3) {
-                uint16_t raw_color; 
-                memcpy(&raw_color, p + 1, 2); // On lit la couleur brute du fichier
+            uint8_t* coord_ptr = p + 12;
+            if (coord_ptr + (count * 4) > data + fileSize) break;
 
-                // 1. On calcule la bordure AVANT le swap (sur la couleur naturelle)
-                // Augmentons à 0.25f (25%) pour que ce soit bien visible par rapport au fond
-                uint16_t raw_border = darkenRGB565(raw_color, 0.25f);
-
-                // 2. Maintenant on SWAP les deux pour le hardware du T-Deck
-                uint16_t fillColor = (raw_color << 8) | (raw_color >> 8);
-                uint16_t borderColor = (raw_border << 8) | (raw_border >> 8);
-
-                // Lecture du suffixe des Rings pour le contour principal
-                uint8_t* ring_ptr = coord_ptr + (total_coords * 8);
-                uint16_t first_ring_end = total_coords;
+            if (pass == 1 && type == 3 && count >= 3) {
+                uint8_t* ring_ptr = coord_ptr + (count * 4);
+                uint16_t first_ring_end = count;
                 if (ring_ptr < data + fileSize) {
                     uint8_t ring_count = ring_ptr[0];
-                    if (ring_count > 0) {
-                        memcpy(&first_ring_end, ring_ptr + 1, 2);
-                    }
+                    if (ring_count > 0) memcpy(&first_ring_end, ring_ptr + 1, 2);
                 }
 
                 int* px = (int*)ps_malloc(first_ring_end * sizeof(int));
                 int* py = (int*)ps_malloc(first_ring_end * sizeof(int));
                 if (px && py) {
                     for (uint16_t j = 0; j < first_ring_end; j++) {
-                        int32_t lo_e7, la_e7;
-                        memcpy(&lo_e7, coord_ptr + (j * 8), 4);
-                        memcpy(&la_e7, coord_ptr + (j * 8) + 4, 4);
-                        px[j] = (int)(((lo_e7 / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                        py[j] = (int)((lat_n - (la_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
+                        int16_t rx, ry;
+                        memcpy(&rx, coord_ptr + (j * 4), 2);
+                        memcpy(&ry, coord_ptr + (j * 4) + 2, 2);
+                        px[j] = (rx >> 4) + xOffset;
+                        py[j] = (ry >> 4) + yOffset;
                     }
-                    if (fillPolygons) {
-                        fillPolygonGeneral(map, px, py, first_ring_end, fillColor, xOffset, yOffset);
-                    }
-                    // On utilise borderColor qui a été calculé proprement
-                    drawPolygonBorder(map, px, py, first_ring_end, borderColor, fillColor, xOffset, yOffset);
+                    if (fillPolygons) fillPolygonGeneral(map, px, py, first_ring_end, color, 0, 0);
+                    drawPolygonBorder(map, px, py, first_ring_end, darkenRGB565(color, 0.15f), color, 0, 0);
                 }
+                // Indentation corrigée pour le compilateur
                 if (px) { free(px); }
                 if (py) { free(py); }
             }
-          // --- PASS 2 : ROUTES (Type 2) ---
-            else if (pass == 2 && type == 2 && total_coords >= 2) {
-                // 1. On récupère la couleur brute et on l'inverse pour le hardware
-                uint16_t raw_color;
-                memcpy(&raw_color, p + 1, 2);
-                uint16_t line_color = (raw_color << 8) | (raw_color >> 8);
-
-                for (uint16_t j = 1; j < total_coords; j++) {
-                    int32_t la, aa, lb, ab;
-                    memcpy(&la, coord_ptr + ((j-1) * 8), 4); memcpy(&aa, coord_ptr + ((j-1) * 8) + 4, 4);
-                    memcpy(&lb, coord_ptr + (j * 8), 4);     memcpy(&ab, coord_ptr + (j * 8) + 4, 4);
-
-                    int x0 = (int)(((la / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                    int y0 = (int)((lat_n - (aa / 10000000.0)) / (lat_n - lat_s) * 255.0);
-                    int x1 = (int)(((lb / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                    int y1 = (int)((lat_n - (ab / 10000000.0)) / (lat_n - lat_s) * 255.0);
-
-                    // 2. On utilise line_color au lieu de color
-                    if (width <= 1) addToBatch(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, line_color);
-                    else map.drawWideLine(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, width, line_color);
+            else if (pass == 2 && type != 3) {
+                if (type == 2 && count >= 2) {
+                    int16_t prx, pry;
+                    memcpy(&prx, coord_ptr, 2); memcpy(&pry, coord_ptr + 2, 2);
+                    for (uint16_t j = 1; j < count; j++) {
+                        int16_t rx, ry;
+                        memcpy(&rx, coord_ptr + (j * 4), 2); memcpy(&ry, coord_ptr + (j * 4) + 2, 2);
+                        int x0 = (prx >> 4) + xOffset; int y0 = (pry >> 4) + yOffset;
+                        int x1 = (rx >> 4) + xOffset;  int y1 = (ry >> 4) + yOffset;
+                        if (width <= 1) addToBatch(x0, y0, x1, y1, color);
+                        else map.drawWideLine(x0, y0, x1, y1, width, color);
+                        prx = rx; pry = ry;
+                    }
+                } else if (type == 1) {
+                    int16_t rx, ry;
+                    memcpy(&rx, coord_ptr, 2); memcpy(&ry, coord_ptr + 2, 2);
+                    map.fillCircle((rx >> 4) + xOffset, (ry >> 4) + yOffset, 2, color);
                 }
             }
-
-            // AVANCEMENT DU POINTEUR (Saut du header + coords + rings)
-            p += 7 + (total_coords * 8);
+            p += 12 + (count * 4);
             if (type == 3 && p < data + fileSize) {
                 uint8_t r_count = p[0];
                 p += 1 + (r_count * 2);
