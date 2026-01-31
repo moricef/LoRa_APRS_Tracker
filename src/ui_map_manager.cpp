@@ -1096,7 +1096,6 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
 
             uint8_t type = p[0];
             uint16_t color; memcpy(&color, p + 1, 2);
-            color = (color << 8) | (color >> 8); 
             
             uint8_t width = p[4];
             uint16_t count; memcpy(&count, p + 9, 2);
@@ -1122,14 +1121,25 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                         px[j] = (rx >> 4) + xOffset;
                         py[j] = (ry >> 4) + yOffset;
                     }
-                    if (fillPolygons) fillPolygonGeneral(map, px, py, first_ring_end, color, 0, 0);
-                    drawPolygonBorder(map, px, py, first_ring_end, darkenRGB565(color, 0.15f), color, 0, 0);
+                    if (fillPolygons) {
+                        uint16_t borderColor = darkenRGB565(color, 0.15f);
+                        color = (color << 8) | (color >> 8);
+                        borderColor = (borderColor << 8) | (borderColor >> 8);
+                        fillPolygonGeneral(map, px, py, first_ring_end, color, 0, 0);
+                        drawPolygonBorder(map, px, py, first_ring_end, borderColor, color, 0, 0);
+                    } else {
+                        uint16_t borderColor = darkenRGB565(color, 0.15f);
+                        color = (color << 8) | (color >> 8);
+                        borderColor = (borderColor << 8) | (borderColor >> 8);
+                        drawPolygonBorder(map, px, py, first_ring_end, borderColor, color, 0, 0);
+                    }
                 }
                 // Indentation corrigée pour le compilateur
                 if (px) { free(px); }
                 if (py) { free(py); }
             }
             else if (pass == 2 && type != 3) {
+                color = (color << 8) | (color >> 8);
                 if (type == 2 && count >= 2) {
                     int16_t prx, pry;
                     memcpy(&prx, coord_ptr, 2); memcpy(&pry, coord_ptr + 2, 2);
