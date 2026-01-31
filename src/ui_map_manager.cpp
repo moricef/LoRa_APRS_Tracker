@@ -1062,7 +1062,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     initBatchRendering();
     createRenderBatch(getOptimalBatchSize());
     
-    // Fond blanc neutre pour isoler les couleurs des features
+    // Fond Blanc (comme demandé pour le style)
     map.fillSprite(TFT_WHITE); 
 
     double lon_w, lat_n, lon_e, lat_s;
@@ -1075,80 +1075,75 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         uint8_t* p = data + 22; 
         
         for (uint16_t i = 0; i < feature_count; i++) {
-            // Respiration système toutes les 100ms
             if (millis() - last_wdt_ms > 100) {
                 esp_task_wdt_reset();
-                vTaskDelay(pdMS_TO_TICKS(1));
+                yield();
                 last_wdt_ms = millis();
             }
 
             if (p + 7 > data + fileSize) break;
 
             uint8_t type = p[0];
-            uint16_t color; 
-            memcpy(&color, p + 1, 2); // Lecture directe RGB565 Little-Endian (PAS DE SWAP)
+            uint16_t color; memcpy(&color, p + 1, 2);
+            // CORRECTION COULEUR : Swap indispensable pour le hardware T-Deck
+            color = (color << 8) | (color >> 8); 
             
             uint8_t width = p[4];
-            uint16_t count = 1;
-            uint8_t header_size = 5;
-
-            if (type == 2 || type == 3) {
-                memcpy(&count, p + 5, 2);
-                header_size = 7;
-            }
-
-            uint8_t* coord_ptr = p + header_size;
-            if (coord_ptr + (count * 8) > data + fileSize) break;
+            uint16_t total_coords; memcpy(&total_coords, p + 5, 2);
+            uint8_t* coord_ptr = p + 7;
 
             // --- PASS 1 : POLYGONES (Type 3) ---
-            if (pass == 1 && type == 3 && count >= 3) {
-                int* px = (int*)ps_malloc(count * sizeof(int));
-                int* py = (int*)ps_malloc(count * sizeof(int));
+            if (pass == 1 && type == 3 && total_coords >= 3) {
+                // Lecture du suffixe des Rings pour trouver la fin du contour principal
+                uint8_t* ring_ptr = coord_ptr + (total_coords * 8);
+                uint16_t first_ring_end = total_coords;
+                if (ring_ptr < data + fileSize) {
+                    uint8_t ring_count = ring_ptr[0];
+                    if (ring_count > 0) {
+                        memcpy(&first_ring_end, ring_ptr + 1, 2); // Fin du 1er anneau
+                    }
+                }
+
+                int* px = (int*)ps_malloc(first_ring_end * sizeof(int));
+                int* py = (int*)ps_malloc(first_ring_end * sizeof(int));
                 if (px && py) {
-                    for (uint16_t j = 0; j < count; j++) {
-                        int32_t lon_e7, lat_e7;
-                        memcpy(&lon_e7, coord_ptr + (j * 8), 4);
-                        memcpy(&lat_e7, coord_ptr + (j * 8) + 4, 4);
-                        px[j] = (int)(((lon_e7 / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                        py[j] = (int)((lat_n - (lat_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
+                    for (uint16_t j = 0; j < first_ring_end; j++) {
+                        int32_t lo_e7, la_e7;
+                        memcpy(&lo_e7, coord_ptr + (j * 8), 4);
+                        memcpy(&la_e7, coord_ptr + (j * 8) + 4, 4);
+                        px[j] = (int)(((lo_e7 / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
+                        py[j] = (int)((lat_n - (la_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
                     }
-                    fillPolygonGeneral(map, px, py, count, color, xOffset, yOffset);
-                    drawPolygonBorder(map, px, py, count, darkenRGB565(color, 0.15f), color, xOffset, yOffset);
+                    if (fillPolygons) {
+                        fillPolygonGeneral(map, px, py, first_ring_end, color, xOffset, yOffset);
+                    }
+                    drawPolygonBorder(map, px, py, first_ring_end, darkenRGB565(color, 0.15f), color, xOffset, yOffset);
                 }
-                if (px) free(px); if (py) free(py);
+                if (px) { free(px); }
+                if (py) { free(py); }
             }
-            // --- PASS 2 : ROUTES (Type 2) ET POINTS (Type 1) ---
-            else if (pass == 2 && type != 3) {
-                if (type == 2 && count >= 2) { 
-                    for (uint16_t j = 1; j < count; j++) {
-                        int32_t lon_a, lat_a, lon_b, lat_b;
-                        memcpy(&lon_a, coord_ptr + ((j-1) * 8), 4);
-                        memcpy(&lat_a, coord_ptr + ((j-1) * 8) + 4, 4);
-                        memcpy(&lon_b, coord_ptr + (j * 8), 4);
-                        memcpy(&lat_b, coord_ptr + (j * 8) + 4, 4);
+            // --- PASS 2 : ROUTES (Type 2) ---
+            else if (pass == 2 && type == 2 && total_coords >= 2) {
+                for (uint16_t j = 1; j < total_coords; j++) {
+                    int32_t la, aa, lb, ab;
+                    memcpy(&la, coord_ptr + ((j-1) * 8), 4); memcpy(&aa, coord_ptr + ((j-1) * 8) + 4, 4);
+                    memcpy(&lb, coord_ptr + (j * 8), 4);     memcpy(&ab, coord_ptr + (j * 8) + 4, 4);
 
-                        int x0 = (int)(((lon_a / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                        int y0 = (int)((lat_n - (lat_a / 10000000.0)) / (lat_n - lat_s) * 255.0);
-                        int x1 = (int)(((lon_b / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                        int y1 = (int)((lat_n - (lat_b / 10000000.0)) / (lat_n - lat_s) * 255.0);
+                    int x0 = (int)(((la / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
+                    int y0 = (int)((lat_n - (aa / 10000000.0)) / (lat_n - lat_s) * 255.0);
+                    int x1 = (int)(((lb / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
+                    int y1 = (int)((lat_n - (ab / 10000000.0)) / (lat_n - lat_s) * 255.0);
 
-                        if (width <= 1) addToBatch(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, color);
-                        else map.drawWideLine(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, width, color);
-                    }
-                } else if (type == 1) { 
-                    int32_t lon_e7, lat_e7;
-                    memcpy(&lon_e7, coord_ptr, 4);
-                    memcpy(&lat_e7, coord_ptr + 4, 4);
-                    int x = (int)(((lon_e7 / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                    int y = (int)((lat_n - (lat_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
-                    map.fillCircle(x + xOffset, y + yOffset, 2, color);
+                    if (width <= 1) addToBatch(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, color);
+                    else map.drawWideLine(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, width, color);
                 }
             }
-            // AVANCEMENT DU POINTEUR (Correction Rings pour les Polygones)
-            p += header_size + (count * 8);
+
+            // AVANCEMENT DU POINTEUR (Saut du header + coords + rings)
+            p += 7 + (total_coords * 8);
             if (type == 3 && p < data + fileSize) {
-                uint8_t ring_count = p[0];
-                p += 1 + (ring_count * 2);
+                uint8_t r_count = p[0];
+                p += 1 + (r_count * 2);
             }
         }
         if (pass == 2) flushBatch(map);
