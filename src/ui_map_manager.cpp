@@ -30,6 +30,7 @@
 #include "storage_utils.h"
 #include "custom_characters.h" // For symbolsAPRS, SYMBOL_WIDTH, SYMBOL_HEIGHT
 #include "lvgl_ui.h" // To call LVGL_UI::open_compose_with_callsign
+#include <esp_task_wdt.h> // 
 
 namespace UIMapManager {
 
@@ -1020,7 +1021,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         }
     }
 
-// --- Main Rendering Function ---
+// === Main Rendering Function ===
 
     static void tileToLonLat(int tileX, int tileY, int zoom, double& lon, double& lat) {
         int n = 1 << zoom;
@@ -1058,22 +1059,26 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     uint16_t feature_count;
     memcpy(&feature_count, data + 4, 2);
 
-    // Initialisation du Batch pour booster le tracé des lignes
+    // Initialisation du tracé
     initBatchRendering();
     createRenderBatch(getOptimalBatchSize());
-
-    // Fond de tuile (Ivoire OSM)
     map.fillSprite(map.color565(239, 237, 230)); 
 
     double lon_w, lat_n, lon_e, lat_s;
     tileToLonLat(tileX, tileY, zoom, lon_w, lat_n);
     tileToLonLat(tileX + 1, tileY + 1, zoom, lon_e, lat_s);
 
-    // RENDU EN 2 PASSES
+    // --- RENDU EN 2 PASSES ---
     for (int pass = 1; pass <= 2; pass++) {
         uint8_t* p = data + 22; 
         
         for (uint16_t i = 0; i < feature_count; i++) {
+            // SÉCURITÉ : Reset du Watchdog toutes les 10 formes
+            if (i % 10 == 0) {
+                esp_task_wdt_reset(); 
+                yield();
+            }
+
             if (p + 5 > data + fileSize) break;
 
             uint8_t type = p[0];
@@ -1084,16 +1089,19 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
             uint16_t count = 1;
             uint8_t header_size = 5;
 
-            // Détection dynamique du header : Type 1 (Point) = 5 octets, Type 2/3 = 7 octets
             if (type == 2 || type == 3) {
                 if (p + 7 > data + fileSize) break;
                 memcpy(&count, p + 5, 2);
                 header_size = 7;
             }
 
-            uint8_t* coord_ptr = p + header_size;
+            // SÉCURITÉ : Vérification de la validité du nombre de points
+            if (count > 2000) count = 2000; 
 
-            // --- PASSE 1 : SURFACES (Type 3) ---
+            uint8_t* coord_ptr = p + header_size;
+            if (coord_ptr + (count * 8) > data + fileSize) break;
+
+            // Passage 1 : Surfaces
             if (pass == 1 && type == 3 && count >= 3) {
                 int* px = (int*)ps_malloc(count * sizeof(int));
                 int* py = (int*)ps_malloc(count * sizeof(int));
@@ -1105,15 +1113,13 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                         px[j] = (int)(((lon_e7 / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
                         py[j] = (int)((lat_n - (lat_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
                     }
-                    if (fillPolygons) {
-                        fillPolygonGeneral(map, px, py, count, color, xOffset, yOffset);
-                    }
+                    fillPolygonGeneral(map, px, py, count, color, xOffset, yOffset);
                     drawPolygonBorder(map, px, py, count, darkenRGB565(color, 0.15f), color, xOffset, yOffset);
                 }
                 if (px) free(px);
                 if (py) free(py);
             }
-            // --- PASSE 2 : ROUTES (Type 2) ET POINTS (Type 1) ---
+            // Passage 2 : Routes et points
             else if (pass == 2 && type != 3) {
                 if (type == 2 && count >= 2) { 
                     for (uint16_t j = 1; j < count; j++) {
@@ -1142,12 +1148,11 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
             }
             p += header_size + (count * 8);
         }
-        if (pass == 2) flushBatch(map);
-        yield();
+        // Petite pause entre les passes pour laisser le système gérer les interruptions
+        vTaskDelay(pdMS_TO_TICKS(1)); 
     }
 
-    Serial.printf("[MAP] Tuile %s rendu : %u features\n", path, feature_count);
-
+    flushBatch(map);
     if (activeBatch) {
         if (activeBatch->segments) delete[] activeBatch->segments;
         delete activeBatch;
