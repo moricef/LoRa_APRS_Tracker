@@ -1121,18 +1121,13 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                         px[j] = (rx >> 4) + xOffset;
                         py[j] = (ry >> 4) + yOffset;
                     }
+                    uint16_t borderColor = darkenRGB565(color, 0.15f);
+                    color = (color << 8) | (color >> 8);
+                    borderColor = (borderColor << 8) | (borderColor >> 8);
                     if (fillPolygons) {
-                        uint16_t borderColor = darkenRGB565(color, 0.15f);
-                        color = (color << 8) | (color >> 8);
-                        borderColor = (borderColor << 8) | (borderColor >> 8);
                         fillPolygonGeneral(map, px, py, first_ring_end, color, 0, 0);
-                        drawPolygonBorder(map, px, py, first_ring_end, borderColor, color, 0, 0);
-                    } else {
-                        uint16_t borderColor = darkenRGB565(color, 0.15f);
-                        color = (color << 8) | (color >> 8);
-                        borderColor = (borderColor << 8) | (borderColor >> 8);
-                        drawPolygonBorder(map, px, py, first_ring_end, borderColor, color, 0, 0);
                     }
+                    drawPolygonBorder(map, px, py, first_ring_end, borderColor, color, 0, 0);
                 }
                 // Indentation corrigée pour le compilateur
                 if (px) { free(px); }
