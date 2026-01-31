@@ -1030,17 +1030,17 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         lat = lat_rad * 180.0 / M_PI;
     }
 
-    uint16_t darkenRGB565(const uint16_t color, const float amount = 0.4f) {
-        uint8_t r5 = (color >> 11) & 0x1F;
-        uint8_t g6 = (color >> 5) & 0x3F;
-        uint8_t b5 = color & 0x1F;
+    uint16_t darkenRGB565(const uint16_t color, const float amount) {
+    uint16_t r = (color >> 11) & 0x1F;
+    uint16_t g = (color >> 5) & 0x3F;
+    uint16_t b = color & 0x1F;
 
-        r5 = static_cast<uint8_t>(r5 * (1.0f - amount));
-        g6 = static_cast<uint8_t>(g6 * (1.0f - amount));
-        b5 = static_cast<uint8_t>(b5 * (1.0f - amount));
+    r = (uint16_t)(r * (1.0f - amount));
+    g = (uint16_t)(g * (1.0f - amount));
+    b = (uint16_t)(b * (1.0f - amount));
 
-        return (r5 << 11) | (g6 << 5) | b5;
-    }
+    return (r << 11) | (g << 5) | b;
+}
 
 bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
     if (!path || path[0] == '\0') return false;
@@ -1049,70 +1049,77 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     if (!file) return false;
 
     size_t fileSize = file.size();
-    if (fileSize < 22) { file.close(); return false; }
-
     uint8_t* data = (uint8_t*)ps_malloc(fileSize);
     if (!data) { file.close(); return false; }
     file.read(data, fileSize);
     file.close();
 
-    // 1. Vérification du Header Global (22 octets)
     if (memcmp(data, "NAV1", 4) != 0) { free(data); return false; }
 
     uint16_t feature_count;
-    memcpy(&feature_count, data + 4, 2); // Little-endian
+    memcpy(&feature_count, data + 4, 2);
 
-    // 2. Préparation du rendu
-    map.fillSprite(map.color565(239, 237, 230)); // Fond Ivoire
     initBatchRendering();
     createRenderBatch(getOptimalBatchSize());
+    
+    // Fond blanc neutre pour isoler les couleurs des features
+    map.fillSprite(TFT_WHITE); 
 
-    // Calcul des limites de la tuile pour la projection
     double lon_w, lat_n, lon_e, lat_s;
     tileToLonLat(tileX, tileY, zoom, lon_w, lat_n);
     tileToLonLat(tileX + 1, tileY + 1, zoom, lon_e, lat_s);
 
-    // 3. Rendu en deux passes (Z-Order)
+    uint32_t last_wdt_ms = millis();
+
     for (int pass = 1; pass <= 2; pass++) {
-        uint8_t* p = data + 22; // Saut du header global
+        uint8_t* p = data + 22; 
         
         for (uint16_t i = 0; i < feature_count; i++) {
+            // Respiration système toutes les 100ms
+            if (millis() - last_wdt_ms > 100) {
+                esp_task_wdt_reset();
+                vTaskDelay(pdMS_TO_TICKS(1));
+                last_wdt_ms = millis();
+            }
+
             if (p + 7 > data + fileSize) break;
 
-            // Header de la Feature (7 octets fixes)
-            uint8_t type    = p[0]; // 1=Point, 2=Line, 3=Polygon
-            uint16_t color; memcpy(&color, p + 1, 2); // RGB565 Little-Endian
-            // uint8_t zoom_p  = p[3]; // Non utilisé ici
-            uint8_t width   = p[4];
-            uint16_t count; memcpy(&count, p + 5, 2);
-
-            uint8_t* coord_ptr = p + 7;
+            uint8_t type = p[0];
+            uint16_t color; 
+            memcpy(&color, p + 1, 2); // Lecture directe RGB565 Little-Endian (PAS DE SWAP)
             
-            // --- PASSE 1 : POLYGONES (Type 3) ---
+            uint8_t width = p[4];
+            uint16_t count = 1;
+            uint8_t header_size = 5;
+
+            if (type == 2 || type == 3) {
+                memcpy(&count, p + 5, 2);
+                header_size = 7;
+            }
+
+            uint8_t* coord_ptr = p + header_size;
+            if (coord_ptr + (count * 8) > data + fileSize) break;
+
+            // --- PASS 1 : POLYGONES (Type 3) ---
             if (pass == 1 && type == 3 && count >= 3) {
                 int* px = (int*)ps_malloc(count * sizeof(int));
                 int* py = (int*)ps_malloc(count * sizeof(int));
                 if (px && py) {
                     for (uint16_t j = 0; j < count; j++) {
-                        int32_t lon_val, lat_val;
-                        memcpy(&lon_val, coord_ptr + (j * 8), 4);
-                        memcpy(&lat_val, coord_ptr + (j * 8) + 4, 4);
-                        
-                        double lon_deg = lon_val / 10000000.0;
-                        double lat_deg = lat_val / 10000000.0;
-                        
-                        px[j] = (int)((lon_deg - lon_w) / (lon_e - lon_w) * 255.0);
-                        py[j] = (int)((lat_n - lat_deg) / (lat_n - lat_s) * 255.0);
+                        int32_t lon_e7, lat_e7;
+                        memcpy(&lon_e7, coord_ptr + (j * 8), 4);
+                        memcpy(&lat_e7, coord_ptr + (j * 8) + 4, 4);
+                        px[j] = (int)(((lon_e7 / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
+                        py[j] = (int)((lat_n - (lat_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
                     }
                     fillPolygonGeneral(map, px, py, count, color, xOffset, yOffset);
                     drawPolygonBorder(map, px, py, count, darkenRGB565(color, 0.15f), color, xOffset, yOffset);
                 }
-                if (px) free(px);
-                if (py) free(py);
+                if (px) free(px); if (py) free(py);
             }
-            // --- PASSE 2 : LIGNES (Type 2) ET POINTS (Type 1) ---
+            // --- PASS 2 : ROUTES (Type 2) ET POINTS (Type 1) ---
             else if (pass == 2 && type != 3) {
-                if (type == 2 && count >= 2) {
+                if (type == 2 && count >= 2) { 
                     for (uint16_t j = 1; j < count; j++) {
                         int32_t lon_a, lat_a, lon_b, lat_b;
                         memcpy(&lon_a, coord_ptr + ((j-1) * 8), 4);
@@ -1128,29 +1135,20 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                         if (width <= 1) addToBatch(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, color);
                         else map.drawWideLine(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, width, color);
                     }
-                } else if (type == 1) {
-                    int32_t lon_val, lat_val;
-                    memcpy(&lon_val, coord_ptr, 4);
-                    memcpy(&lat_val, coord_ptr + 4, 4);
-                    int x = (int)(((lon_val / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                    int y = (int)((lat_n - (lat_val / 10000000.0)) / (lat_n - lat_s) * 255.0);
+                } else if (type == 1) { 
+                    int32_t lon_e7, lat_e7;
+                    memcpy(&lon_e7, coord_ptr, 4);
+                    memcpy(&lat_e7, coord_ptr + 4, 4);
+                    int x = (int)(((lon_e7 / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
+                    int y = (int)((lat_n - (lat_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
                     map.fillCircle(x + xOffset, y + yOffset, 2, color);
                 }
             }
-
-            // 4. AVANCEMENT DU POINTEUR (Gestion du Suffixe de Ring pour les Polygones)
-            p += 7 + (count * 8); // Header (7) + Coordonnées (N*8)
-            if (type == 3) {
-                if (p < data + fileSize) {
-                    uint8_t ring_count = p[0];
-                    p += 1 + (ring_count * 2); // Ring count (1) + Ring ends (R*2)
-                }
-            }
-            
-            // Respiration Watchdog
-            if (i % 20 == 0) {
-                esp_task_wdt_reset();
-                yield();
+            // AVANCEMENT DU POINTEUR (Correction Rings pour les Polygones)
+            p += header_size + (count * 8);
+            if (type == 3 && p < data + fileSize) {
+                uint8_t ring_count = p[0];
+                p += 1 + (ring_count * 2);
             }
         }
         if (pass == 2) flushBatch(map);
