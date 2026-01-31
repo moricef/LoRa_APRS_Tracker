@@ -1042,202 +1042,118 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     }
 
 bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
-    (void)fillPolygons; // Silence unused variable warning
     if (!path || path[0] == '\0') return false;
 
-    // Use Arduino SD library which handles /sd prefix correctly
     File file = SD.open(path, FILE_READ);
-    if (!file) {
-        Serial.printf("[MAP] Failed to open tile with SD.open: %s\n", path);
-        return false;
-    }
+    if (!file) return false;
 
     const size_t fileSize = file.size();
-    if (fileSize < 22) { // Minimum header size
-        file.close();
-        return false;
-    }
+    if (fileSize < 22) { file.close(); return false; }
 
     uint8_t* data = (uint8_t*)ps_malloc(fileSize);
-    if (!data) {
-        file.close();
-        Serial.printf("[MAP] Failed to allocate %u bytes for tile %s\n", fileSize, path);
-        return false;
-    }
+    if (!data) { file.close(); return false; }
 
-    const size_t bytesRead = file.read(data, fileSize);
+    file.read(data, fileSize);
     file.close();
 
-    if (bytesRead != fileSize) {
-        free(data);
-        return false;
-    }
-
-    initBatchRendering();
-    createRenderBatch(getOptimalBatchSize());
-
-    // Clear the sprite with a land color before drawing
-    map.fillSprite(0xF79E); // Correct Little-Endian Beige
-
-    size_t offset = 0;
-
-    // --- NAV1 Header (22 bytes) ---
-    if (memcmp(data, "NAV1", 4) != 0) {
-        free(data);
-        return false;
-    }
-    offset += 4;
+    // Vérification Header NAV1
+    if (memcmp(data, "NAV1", 4) != 0) { free(data); return false; }
 
     uint16_t feature_count;
-    memcpy(&feature_count, data + offset, 2);
-    offset += 2;
+    memcpy(&feature_count, data + 4, 2);
 
-    Serial.printf("[MAP] NAV1: Found %d features in %s\n", feature_count, path);
+    // Initialisation du Sprite (Couleur Terre/Beige par défaut)
+    // 0xF79E en Big Endian ou Little Endian selon la config, 
+    // on utilise une valeur sûre pour le T-Deck :
+    map.fillSprite(map.color565(239, 237, 230)); 
 
-    // Read bounding box from header, but IGNORE it for scaling. We calculate precise tile boundaries.
-    int32_t min_lon_header, min_lat_header, max_lon_header, max_lat_header;
-    memcpy(&min_lon_header, data + offset, 4); offset += 4;
-    memcpy(&min_lat_header, data + offset, 4); offset += 4;
-    memcpy(&max_lon_header, data + offset, 4); offset += 4;
-    memcpy(&max_lat_header, data + offset, 4); offset += 4;
-    
-    const size_t features_start_offset = offset;
-    
-    // --- Calculate precise tile boundaries for scaling ---
+    // Calcul des limites de la tuile pour la projection Mercator
     double lon_w, lat_n, lon_e, lat_s;
     tileToLonLat(tileX, tileY, zoom, lon_w, lat_n);
     tileToLonLat(tileX + 1, tileY + 1, zoom, lon_e, lat_s);
 
+    const size_t features_start_offset = 22;
     int executed = 0;
 
-    // --- Pass 1: Polygons ---
-    offset = features_start_offset;
+    // --- PASSE 1 : POLYGONES (Forêts, Zones urbaines, Eau) ---
+    size_t offset = features_start_offset;
     for (uint16_t i = 0; i < feature_count; ++i) {
-        if (i > 0 && i % 20 == 0) yield(); // Feed watchdog
-
-        if (offset + 6 > fileSize) break;
+        if (offset + 7 > fileSize) break;
 
         uint8_t geometry_type = data[offset++];
-        uint16_t color;
-        memcpy(&color, data + offset, 2); offset += 2;
-        color = (color << 8) | (color >> 8); // Swap bytes for correct ESP32 RGB565
+        uint16_t color; memcpy(&color, data + offset, 2); offset += 2;
+        color = (color << 8) | (color >> 8); // Swap pour l'ESP32
         
-        uint8_t zoom_priority = data[offset++];
-        (void)zoom_priority;
-        uint8_t width = data[offset++];
-        (void)width; // Silence unused variable warning
-        uint16_t coord_count;
-        memcpy(&coord_count, data + offset, 2); offset += 2;
+        offset += 2; // Sauter zoom_priority et width
+        uint16_t coord_count; memcpy(&coord_count, data + offset, 2); offset += 2;
 
-        size_t coords_size = coord_count * 8;
-        if (coord_count < 3 || offset + coords_size > fileSize) { // Also skip if not enough points for a polygon
-            if (coord_count > 0 && offset + coords_size <= fileSize) offset += coords_size;
-            continue;
-        }
-
-        if (geometry_type == 3 && coord_count <= 500) { // Polygon (optimized)
+        if (geometry_type == 3 && coord_count >= 3) {
             int* px = (int*)ps_malloc(coord_count * sizeof(int));
             int* py = (int*)ps_malloc(coord_count * sizeof(int));
-            if (!px || !py) {
-                if (px) free(px);
-                if (py) free(py);
-                offset += coords_size;
-                continue;
+            if (px && py) {
+                for (uint16_t j = 0; j < coord_count; ++j) {
+                    int32_t lon_e7, lat_e7;
+                    memcpy(&lon_e7, data + offset + (j * 8), 4);
+                    memcpy(&lat_e7, data + offset + (j * 8) + 4, 4);
+                    double lon_d = lon_e7 / 10000000.0;
+                    double lat_d = lat_e7 / 10000000.0;
+                    // Projection précise sur 256 pixels
+                    px[j] = (int)((lon_d - lon_w) / (lon_e - lon_w) * 255.0);
+                    py[j] = (int)((lat_n - lat_d) / (lat_n - lat_s) * 255.0);
+                }
+                fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset);
+                drawPolygonBorder(map, px, py, coord_count, darkenRGB565(color, 0.1f), color, xOffset, yOffset);
+                executed++;
             }
-
-            for (uint16_t j = 0; j < coord_count; ++j) {
-                int32_t lon, lat;
-                memcpy(&lon, data + offset, 4); offset += 4;
-                memcpy(&lat, data + offset, 4); offset += 4;
-                // REMPLACEZ les anciennes lignes de conversion par la nouvelle formule :
-                double lon_deg = lon / 10000000.0;
-                double lat_deg = lat / 10000000.0;
-                px[j] = (int)((lon_deg - lon_w) / (lon_e - lon_w) * 255.0);
-                py[j] = (int)((lat_n - lat_deg) / (lat_n - lat_s) * 255.0);
-            }
-            
-            fillPolygonGeneral(map, px, py, coord_count, color, xOffset, yOffset);
-            const uint16_t borderColor = darkenRGB565(color);
-            drawPolygonBorder(map, px, py, coord_count, borderColor, color, xOffset, yOffset);
-            executed++;
-            
-            free(px);
-            free(py);
-        } else {
-            offset += coords_size; // Skip non-polygon features or complex ones
+            if (px) free(px);
+            if (py) free(py);
         }
+        offset += (coord_count * 8);
+        if (i % 30 == 0) yield();
     }
 
-    // --- Pass 2: Lines and Points ---
+    // --- PASSE 2 : LIGNES (Routes, Rivières) ---
+    initBatchRendering();
+    createRenderBatch(getOptimalBatchSize());
     offset = features_start_offset;
     for (uint16_t i = 0; i < feature_count; ++i) {
-        if (i > 0 && i % 20 == 0) yield(); // Feed watchdog
-
-        if (offset + 6 > fileSize) break;
+        if (offset + 7 > fileSize) break;
 
         uint8_t geometry_type = data[offset++];
-        uint16_t color;
-        memcpy(&color, data + offset, 2); offset += 2;
-        color = (color << 8) | (color >> 8); // Swap bytes for correct ESP32 RGB565
-        
-        uint8_t zoom_priority = data[offset++];
-        (void)zoom_priority;
+        uint16_t color; memcpy(&color, data + offset, 2); offset += 2;
+        color = (color << 8) | (color >> 8);
+
+        offset += 1; // zoom_priority
         uint8_t width = data[offset++];
-        (void)width; // Silence unused variable warning (addToBatch does not use it)
-        uint16_t coord_count;
-        memcpy(&coord_count, data + offset, 2); offset += 2;
+        uint16_t coord_count; memcpy(&coord_count, data + offset, 2); offset += 2;
 
-        size_t coords_size = coord_count * 8;
-        if (coord_count == 0 || offset + coords_size > fileSize) {
-            continue;
-        }
-
-        if ((geometry_type == 2 && coord_count >= 2) || (geometry_type == 1)) { // Lines and Points
-            int* px = (int*)ps_malloc(coord_count * sizeof(int));
-            int* py = (int*)ps_malloc(coord_count * sizeof(int));
-            if (!px || !py) {
-                if (px) free(px);
-                if (py) free(py);
-                offset += coords_size;
-                continue;
-            }
-
+        if (geometry_type == 2 && coord_count >= 2) {
+            int prev_px = 0, prev_py = 0;
             for (uint16_t j = 0; j < coord_count; ++j) {
-                int32_t lon, lat;
-                memcpy(&lon, data + offset, 4); offset += 4;
-                memcpy(&lat, data + offset, 4); offset += 4;
-                // REMPLACEZ les anciennes lignes de conversion par la nouvelle formule :
-                double lon_deg = lon / 10000000.0;
-                double lat_deg = lat / 10000000.0;
-                px[j] = (int)((lon_deg - lon_w) / (lon_e - lon_w) * 255.0);
-                py[j] = (int)((lat_n - lat_deg) / (lat_n - lat_s) * 255.0);
-            }
-            
-            if (geometry_type == 2) { // Line
-                // REMPLACEZ la boucle de dessin direct par la boucle addToBatch :
-                for (uint16_t j = 1; j < coord_count; ++j) {
-                    addToBatch(px[j-1] + xOffset, py[j-1] + yOffset, px[j] + xOffset, py[j] + yOffset, color);
+                int32_t lon_e7, lat_e7;
+                memcpy(&lon_e7, data + offset + (j * 8), 4);
+                memcpy(&lat_e7, data + offset + (j * 8) + 4, 4);
+                double lon_d = lon_e7 / 10000000.0;
+                double lat_d = lat_e7 / 10000000.0;
+                int px = (int)((lon_d - lon_w) / (lon_e - lon_w) * 255.0);
+                int py = (int)((lat_n - lat_d) / (lat_n - lat_s) * 255.0);
+
+                if (j > 0) {
+                    if (width <= 1) {
+                        addToBatch(prev_px + xOffset, prev_py + yOffset, px + xOffset, py + yOffset, color);
+                    } else {
+                        map.drawWideLine(prev_px + xOffset, prev_py + yOffset, px + xOffset, py + yOffset, width, color);
+                    }
                 }
-                executed++;
-            } else if (geometry_type == 1) { // Point
-                // Point rendering can be added here if needed, e.g., map.drawPixel(...)
-                executed++;
+                prev_px = px; prev_py = py;
             }
-            
-            free(px);
-            free(py);
-        } else {
-            offset += coords_size; // Skip polygon features
+            executed++;
         }
+        offset += (coord_count * 8);
+        if (i % 50 == 0) yield();
     }
 
     flushBatch(map);
-    if (activeBatch) {
-        if (activeBatch->segments) delete[] activeBatch->segments;
-        delete activeBatch;
-        activeBatch = nullptr;
-    }
-    
     free(data);
     return executed > 0;
 }
