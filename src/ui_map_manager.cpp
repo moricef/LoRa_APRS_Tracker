@@ -1059,7 +1059,6 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     uint16_t feature_count;
     memcpy(&feature_count, data + 4, 2);
 
-    // Initialisation du tracé
     initBatchRendering();
     createRenderBatch(getOptimalBatchSize());
     map.fillSprite(map.color565(239, 237, 230)); 
@@ -1068,15 +1067,24 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     tileToLonLat(tileX, tileY, zoom, lon_w, lat_n);
     tileToLonLat(tileX + 1, tileY + 1, zoom, lon_e, lat_s);
 
-    // --- RENDU EN 2 PASSES ---
+    // Buffer de points réutilisable (évite les malloc/free incessants)
+    const int MAX_PTS = 1000;
+    int* px = (int*)ps_malloc(MAX_PTS * sizeof(int));
+    int* py = (int*)ps_malloc(MAX_PTS * sizeof(int));
+    
+    uint32_t last_yield_ms = millis();
+
+    // RENDU EN 2 PASSES
     for (int pass = 1; pass <= 2; pass++) {
         uint8_t* p = data + 22; 
         
         for (uint16_t i = 0; i < feature_count; i++) {
-            // SÉCURITÉ : Reset du Watchdog toutes les 10 formes
-            if (i % 10 == 0) {
-                esp_task_wdt_reset(); 
-                yield();
+            // --- SÉCURITÉ WATCHDOG TEMPORELLE ---
+            // Si on a dessiné pendant plus de 50ms, on rend la main au système
+            if (millis() - last_yield_ms > 50) {
+                esp_task_wdt_reset();
+                vTaskDelay(pdMS_TO_TICKS(1)); // Pause réelle
+                last_yield_ms = millis();
             }
 
             if (p + 5 > data + fileSize) break;
@@ -1095,47 +1103,37 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
                 header_size = 7;
             }
 
-            // SÉCURITÉ : Vérification de la validité du nombre de points
-            if (count > 2000) count = 2000; 
-
             uint8_t* coord_ptr = p + header_size;
             if (coord_ptr + (count * 8) > data + fileSize) break;
 
-            // Passage 1 : Surfaces
-            if (pass == 1 && type == 3 && count >= 3) {
-                int* px = (int*)ps_malloc(count * sizeof(int));
-                int* py = (int*)ps_malloc(count * sizeof(int));
-                if (px && py) {
+            // --- PASSE 1 : SURFACES ---
+            if (pass == 1 && type == 3 && count >= 3 && count < MAX_PTS && px && py) {
+                for (uint16_t j = 0; j < count; j++) {
+                    int32_t lon_e7, lat_e7;
+                    memcpy(&lon_e7, coord_ptr + (j * 8), 4);
+                    memcpy(&lat_e7, coord_ptr + (j * 8) + 4, 4);
+                    px[j] = (int)(((lon_e7 / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
+                    py[j] = (int)((lat_n - (lat_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
+                }
+                fillPolygonGeneral(map, px, py, count, color, xOffset, yOffset);
+                drawPolygonBorder(map, px, py, count, darkenRGB565(color, 0.15f), color, xOffset, yOffset);
+            }
+            // --- PASSE 2 : LIGNES ET POINTS ---
+            else if (pass == 2 && type != 3) {
+                if (type == 2 && count >= 2) { 
+                    int prev_x, prev_y;
                     for (uint16_t j = 0; j < count; j++) {
                         int32_t lon_e7, lat_e7;
                         memcpy(&lon_e7, coord_ptr + (j * 8), 4);
                         memcpy(&lat_e7, coord_ptr + (j * 8) + 4, 4);
-                        px[j] = (int)(((lon_e7 / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                        py[j] = (int)((lat_n - (lat_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
-                    }
-                    fillPolygonGeneral(map, px, py, count, color, xOffset, yOffset);
-                    drawPolygonBorder(map, px, py, count, darkenRGB565(color, 0.15f), color, xOffset, yOffset);
-                }
-                if (px) free(px);
-                if (py) free(py);
-            }
-            // Passage 2 : Routes et points
-            else if (pass == 2 && type != 3) {
-                if (type == 2 && count >= 2) { 
-                    for (uint16_t j = 1; j < count; j++) {
-                        int32_t la, aa, lb, ab;
-                        memcpy(&la, coord_ptr + ((j-1) * 8), 4);
-                        memcpy(&aa, coord_ptr + ((j-1) * 8) + 4, 4);
-                        memcpy(&lb, coord_ptr + (j * 8), 4);
-                        memcpy(&ab, coord_ptr + (j * 8) + 4, 4);
+                        int cur_x = (int)(((lon_e7 / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
+                        int cur_y = (int)((lat_n - (lat_e7 / 10000000.0)) / (lat_n - lat_s) * 255.0);
 
-                        int x0 = (int)(((la / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                        int y0 = (int)((lat_n - (aa / 10000000.0)) / (lat_n - lat_s) * 255.0);
-                        int x1 = (int)(((lb / 10000000.0) - lon_w) / (lon_e - lon_w) * 255.0);
-                        int y1 = (int)((lat_n - (ab / 10000000.0)) / (lat_n - lat_s) * 255.0);
-
-                        if (width <= 1) addToBatch(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, color);
-                        else map.drawWideLine(x0 + xOffset, y0 + yOffset, x1 + xOffset, y1 + yOffset, width, color);
+                        if (j > 0) {
+                            if (width <= 1) addToBatch(prev_x + xOffset, prev_y + yOffset, cur_x + xOffset, cur_y + yOffset, color);
+                            else map.drawWideLine(prev_x + xOffset, prev_y + yOffset, cur_x + xOffset, cur_y + yOffset, width, color);
+                        }
+                        prev_x = cur_x; prev_y = cur_y;
                     }
                 } else if (type == 1) { 
                     int32_t lon_e7, lat_e7;
@@ -1148,8 +1146,6 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
             }
             p += header_size + (count * 8);
         }
-        // Petite pause entre les passes pour laisser le système gérer les interruptions
-        vTaskDelay(pdMS_TO_TICKS(1)); 
     }
 
     flushBatch(map);
@@ -1159,6 +1155,8 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
         activeBatch = nullptr;
     }
 
+    if (px) free(px);
+    if (py) free(py);
     free(data);
     return true;
 }
