@@ -961,45 +961,57 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     }
 
     void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
-        int miny = py[0], maxy = py[0];
-        for (int i = 1; i < numPoints; ++i) {
-            if (py[i] < miny) miny = py[i];
-            if (py[i] > maxy) maxy = py[i];
-        }
+    if (numPoints < 3) return;
 
-        int* xints = (int*)ps_malloc(numPoints * sizeof(int));
-        if (!xints) {
-            Serial.println("[MAP] fillPolygonGeneral: ps_malloc failed");
-            return;
-        }
-
-        for (int y = miny; y <= maxy; ++y) {
-            int nodes = 0;
-            for (int i = 0, j = numPoints - 1; i < numPoints; j = i++) {
-                if ((py[i] < y && py[j] >= y) || (py[j] < y && py[i] >= y)) {
-                    if (py[j] - py[i] != 0) {
-                       xints[nodes++] = static_cast<int>(px[i] + (float)(y - py[i]) * (px[j] - px[i]) / (py[j] - py[i]));
-                    }
-                }
-            }
-            if (nodes > 1) {
-                std::sort(xints, xints + nodes);
-                for (int i = 0; i < nodes; i += 2) {
-                    if (i + 1 < nodes) {
-                        int x0 = xints[i] + xOffset;
-                        int x1 = xints[i + 1] + xOffset;
-                        int yy = y + yOffset;
-                        if (yy >= 0 && yy < VTILE_SIZE + yOffset) {
-                            if (x0 < 0) x0 = 0;
-                            if (x1 >= VTILE_SIZE + xOffset) x1 = VTILE_SIZE - 1 + xOffset;
-                            map.drawLine(x0, yy, x1, yy, color);
-                        }
-                    }
-                }
-            }
-        }
-        free(xints);
+    int miny = py[0], maxy = py[0];
+    for (int i = 1; i < numPoints; ++i) {
+        if (py[i] < miny) miny = py[i];
+        if (py[i] > maxy) maxy = py[i];
     }
+
+    // --- CORRECTION : CLIPPING VERTICAL ---
+    // On ne traite que la zone visible de la tuile (0-255)
+    if (miny < 0) miny = 0;
+    if (maxy > 255) maxy = 255;
+    if (miny > maxy) return; // La forme est totalement hors-tuile
+
+    int* xints = (int*)ps_malloc(numPoints * sizeof(int));
+    if (!xints) return;
+
+    for (int y = miny; y <= maxy; ++y) {
+        // Respiration Watchdog pour les polygones très hauts
+        if ((y & 0x1F) == 0) esp_task_wdt_reset(); 
+
+        int nodes = 0;
+        for (int i = 0, j = numPoints - 1; i < numPoints; j = i++) {
+            if ((py[i] < y && py[j] >= y) || (py[j] < y && py[i] >= y)) {
+                if (py[j] - py[i] != 0) {
+                    // Calcul de l'intersection X pour cette ligne Y
+                    xints[nodes++] = px[i] + (y - py[i]) * (px[j] - px[i]) / (py[j] - py[i]);
+                }
+            }
+        }
+        
+        if (nodes > 1) {
+            std::sort(xints, xints + nodes);
+            for (int i = 0; i < nodes; i += 2) {
+                if (i + 1 < nodes) {
+                    int x0 = xints[i] + xOffset;
+                    int x1 = xints[i + 1] + xOffset;
+                    
+                    // --- CORRECTION : CLIPPING HORIZONTAL ---
+                    if (x0 < 0) x0 = 0;
+                    if (x1 > 255) x1 = 255;
+                    
+                    if (x1 >= x0) {
+                        map.drawFastHLine(x0, y + yOffset, x1 - x0 + 1, color);
+                    }
+                }
+            }
+        }
+    }
+    free(xints);
+}
 
     void drawPolygonBorder(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t borderColor, const uint16_t fillColor, const int xOffset, const int yOffset) {
         if (numPoints < 2) return;
