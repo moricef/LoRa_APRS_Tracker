@@ -832,10 +832,18 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
         }
 
         int activeHead = -1;
+        uint32_t last_wdt_ms = millis(); // WDT tracking for complex polygons
         int startY = std::max(minY, -yOffset);
         int endY = std::min(maxY, (int)MAP_TILE_SIZE - 1 - yOffset);
 
         for (int y = startY; y <= endY; y++) {
+            // Add watchdog reset inside the scanline loop for very large polygons
+            if (millis() - last_wdt_ms > 100) {
+                esp_task_wdt_reset();
+                yield();
+                last_wdt_ms = millis();
+            }
+
             if (y - minY >= 0 && y - minY < edgeBuckets.size()) {
                 int eIdx = edgeBuckets[y - minY];
                 while (eIdx != -1) {
@@ -899,6 +907,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
     // --- MAIN VECTOR RENDERING ENGINE ---
 
 bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
+    esp_task_wdt_reset(); // Reset WDT before potentially blocking SD card access
     uint8_t* data = nullptr;
     size_t fileSize = 0;
 
