@@ -145,11 +145,13 @@ static bool lvgl_display_initialized = false;
 // Display flush callback
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
                           lv_color_t *color_p) {
-  if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
-    tft.pushImage(area->x1, area->y1, area->x2 - area->x1 + 1, area->y2 - area->y1 + 1, (uint16_t *)color_p);
-    xSemaphoreGiveRecursive(spiMutex);
-  }
-  lv_disp_flush_ready(drv);
+    uint32_t w = (area->x2 - area->x1 + 1);
+    uint32_t h = (area->y2 - area->y1 + 1);
+    if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
+        tft.pushImage(area->x1, area->y1, w, h, (uint16_t *)color_p);
+        xSemaphoreGiveRecursive(spiMutex);
+    }
+    lv_disp_flush_ready(drv);
 }
 
 // Touch read callback

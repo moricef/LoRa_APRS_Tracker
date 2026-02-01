@@ -899,29 +899,37 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
     // --- MAIN VECTOR RENDERING ENGINE ---
 
 bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
-    File file = SD.open(path, FILE_READ);
-    if (!file) {
-        Serial.printf("[MAP] Failed to open tile: %s\n", path);
-        return false;
-    }
-    size_t fileSize = file.size();
-    if (fileSize < 22) { // Minimum size for NAV1 header
-        file.close();
-        return false;
-    }
-    uint8_t* data = (uint8_t*)ps_malloc(fileSize);
-    if (!data) { 
-        file.close(); 
-        Serial.println("[MAP] Failed to allocate memory for tile");
-        return false; 
-    }
-    file.read(data, fileSize);
-    file.close();
+    uint8_t* data = nullptr;
+    size_t fileSize = 0;
 
-    if (memcmp(data, "NAV1", 4) != 0) { 
-        free(data); 
+    // Protect all SD card operations with the SPI mutex
+    if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        File file = SD.open(path, FILE_READ);
+        if (file) {
+            fileSize = file.size();
+            if (fileSize >= 22) {
+                data = (uint8_t*)ps_malloc(fileSize);
+                if (data) {
+                    file.read(data, fileSize);
+                } else {
+                    Serial.println("[MAP] Failed to allocate memory for tile");
+                }
+            }
+            file.close();
+        } else {
+            Serial.printf("[MAP] Failed to open tile: %s\n", path);
+        }
+        xSemaphoreGiveRecursive(spiMutex);
+    }
+
+    if (!data) {
+        return false;
+    }
+
+    if (memcmp(data, "NAV1", 4) != 0) {
+        free(data);
         Serial.printf("[MAP] Invalid NAV1 magic for tile: %s\n", path);
-        return false; 
+        return false;
     }
 
     uint16_t feature_count;
