@@ -85,10 +85,6 @@ namespace UIMapManager {
         int nextActive;
     };
 
-    // Static vectors for AEL polygon filler
-    static std::vector<Edge> edgePool;
-    static std::vector<int> edgeBuckets;
-    
 
     struct tileBounds
     {

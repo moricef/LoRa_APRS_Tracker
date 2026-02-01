@@ -959,35 +959,41 @@ bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite 
         if (p + 12 + feature_data_size > data + fileSize) break;
 
         if (geomType == 3 && coordCount >= 3) { // Is a valid Polygon
-            uint16_t colorRgb565; 
+            uint16_t colorRgb565;
             memcpy(&colorRgb565, p + 1, 2);
             int16_t* coords = (int16_t*)(p + 12);
             uint16_t* ringEnds = (ringCount > 0) ? (uint16_t*)(p + 12 + coordCount * 4 + 2) : nullptr;
-            
+
             int* px = (int*)ps_malloc(coordCount * sizeof(int));
+            if (!px) continue; // Not enough memory, skip feature
+
             int* py = (int*)ps_malloc(coordCount * sizeof(int));
+            if (!py) {
+                free(px); // Free px before skipping
+                continue;
+            }
 
-            if (px && py) {
-                for (uint16_t j = 0; j < coordCount; j++) {
-                    px[j] = (coords[j * 2] >> 4) + xOffset;
-                    py[j] = (coords[j * 2 + 1] >> 4) + yOffset;
-                }
-            
-                if (fillPolygons) {
-                    fillPolygonGeneral(map, px, py, coordCount, colorRgb565, 0, 0, ringCount, ringEnds);
-                }
+            // Both buffers allocated successfully
+            for (uint16_t j = 0; j < coordCount; j++) {
+                px[j] = (coords[j * 2] >> 4) + xOffset;
+                py[j] = (coords[j * 2 + 1] >> 4) + yOffset;
+            }
+        
+            if (fillPolygons) {
+                fillPolygonGeneral(map, px, py, coordCount, colorRgb565, 0, 0, ringCount, ringEnds);
+            }
 
-                uint16_t outerRingEnd = (ringCount > 0) ? ringEnds[0] : coordCount;
-                if (outerRingEnd >= 2) {
-                    uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
-                    for (int k = 0; k < outerRingEnd; k++) {
-                        int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
-                        map.drawLine(px[k], py[k], px[next], py[next], borderColor);
-                    }
+            uint16_t outerRingEnd = (ringCount > 0) ? ringEnds[0] : coordCount;
+            if (outerRingEnd >= 2) {
+                uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
+                for (int k = 0; k < outerRingEnd; k++) {
+                    int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
+                    map.drawLine(px[k], py[k], px[next], py[next], borderColor);
                 }
             }
-            if (px) free(px);
-            if (py) free(py);
+
+            free(px);
+            free(py);
         }
         p += 12 + feature_data_size; // Advance pointer to the next feature
     }
