@@ -960,40 +960,36 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         return true;
     }
 
-   void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
+void fillPolygonGeneral(TFT_eSprite &map, const float *px, const float *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
     if (numPoints < 3) return;
 
-    int miny = py[0], maxy = py[0];
+    float miny = py[0], maxy = py[0];
     for (int i = 1; i < numPoints; ++i) {
         if (py[i] < miny) miny = py[i];
         if (py[i] > maxy) maxy = py[i];
     }
 
-    // Clipping vertical dynamique basé sur la taille réelle du sprite
-    int clipTop = -yOffset;
-    int clipBottom = map.height() - 1 - yOffset;
-    
-    if (miny < clipTop) miny = clipTop;
-    if (maxy > clipBottom) maxy = clipBottom;
-    if (miny > maxy) return;
+    int iMinY = (int)ceilf(miny);
+    int iMaxY = (int)floorf(maxy);
+
+    if (iMinY < 0) iMinY = 0;
+    if (iMaxY >= map.height()) iMaxY = map.height() - 1;
+    if (iMinY > iMaxY) return;
 
     int* xints = (int*)ps_malloc(numPoints * sizeof(int));
     if (!xints) return;
 
-    for (int y = miny; y <= maxy; ++y) {
-        // Respiration système
-        if ((y & 0x1F) == 0) {
-            esp_task_wdt_reset();
-            yield();
-        }
+    for (int y = iMinY; y <= iMaxY; ++y) {
+        if ((y & 0x1F) == 0) esp_task_wdt_reset(); 
 
         int nodes = 0;
-        float y_f = (float)y + 0.5f; // On teste au centre du pixel pour plus de précision
+        float y_pos = (float)y + 0.5f;
 
         for (int i = 0, j = numPoints - 1; i < numPoints; j = i++) {
-            if (((float)py[i] < y_f && (float)py[j] >= y_f) || ((float)py[j] < y_f && (float)py[i] >= y_f)) {
-                // CALCUL EN FLOAT : Évite les décalages entre tuiles adjacentes
-                xints[nodes++] = (int)((float)px[i] + (y_f - (float)py[i]) * (float)(px[j] - px[i]) / (float)(py[j] - py[i]));
+            if ((py[i] < y_pos && py[j] >= y_pos) || (py[j] < y_pos && py[i] >= y_pos)) {
+                if (fabsf(py[j] - py[i]) > 0.0001f) {
+                    xints[nodes++] = (int)(px[i] + (y_pos - py[i]) * (px[j] - px[i]) / (py[j] - py[i]));
+                }
             }
         }
         
@@ -1004,13 +1000,15 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
                     int x0 = xints[i] + xOffset;
                     int x1 = xints[i + 1] + xOffset;
                     
-                    // Clipping horizontal dynamique
-                    if (x0 < 0) x0 = 0;
-                    if (x1 >= map.width()) x1 = map.width() - 1;
-                    
-                    if (x1 >= x0) {
-                        // Longueur exacte sans dépassement de buffer
-                        map.drawFastHLine(x0, y + yOffset, x1 - x0 + 1, color);
+                    // --- LOGIQUE DE DÉCOUPAGE (ANTI-RÉPÉTITION) ---
+                    int drawX0 = (x0 < 0) ? 0 : x0;
+                    int drawX1 = x1;
+                    if (drawX1 >= map.width()) drawX1 = map.width() - 1; // RESTE à 255 MAX
+
+                    if (drawX1 >= drawX0 && drawX0 < map.width()) {
+                    // La longueur doit être telle que drawX0 + len <= 256
+                    int len = drawX1 - drawX0 + 1;
+                    map.drawFastHLine(drawX0, y + yOffset, len, color);
                     }
                 }
             }
@@ -1018,33 +1016,22 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     }
     free(xints);
 }
-    void drawPolygonBorder(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t borderColor, const uint16_t fillColor, const int xOffset, const int yOffset) {
-     if (numPoints < 2) return;
+void drawPolygonBorder(TFT_eSprite &map, const float *px, const float *py, const int numPoints, const uint16_t borderColor, const uint16_t fillColor, const int xOffset, const int yOffset) {
+    if (numPoints < 2) return;
+    int w = map.width();
+    int h = map.height();
 
-     // On utilise map.width() et map.height() pour le clipping dynamique
-     int w = map.width();
-     int h = map.height();
-
-     for (int i = 0; i < numPoints; ++i) {
+    for (int i = 0; i < numPoints; ++i) {
         int j = (i + 1) % numPoints;
-        
-        // On récupère les coordonnées relatives
-        float x0 = (float)px[i];
-        float y0 = (float)py[i];
-        float x1 = (float)px[j];
-        float y1 = (float)py[j];
+        float x0 = px[i], y0 = py[i];
+        float x1 = px[j], y1 = py[j];
 
-        // --- CLIPPING STRICT ---
-        // Si le segment est totalement hors des limites du Sprite, on l'ignore
-        if ((x0 < 0 && x1 < 0) || (x0 >= w && x1 >= w) || 
-            (y0 < 0 && y1 < 0) || (y0 >= h && y1 >= h)) continue;
+        if ((x0 < 0 && x1 < 0) || (x0 >= w && x1 >= w) || (y0 < 0 && y1 < 0) || (y0 >= h && y1 >= h)) continue;
 
-        // On dessine le segment. TFT_eSPI gère le clipping interne, 
-        // mais le fait d'avoir filtré les segments "lointains" stabilise le rendu vertical.
-        map.drawLine((int)x0 + xOffset, (int)y0 + yOffset, (int)x1 + xOffset, (int)y1 + yOffset, borderColor);
+        map.drawLine((int)(x0 + 0.5f) + xOffset, (int)(y0 + 0.5f) + yOffset,
+                     (int)(x1 + 0.5f) + xOffset, (int)(y1 + 0.5f) + yOffset, borderColor);
     }
 }
-
 // === Main Rendering Function ===
 
     static void tileToLonLat(int tileX, int tileY, int zoom, double& lon, double& lat) {
@@ -1067,7 +1054,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 }
 
 bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
-    // Supprime les warnings d'inutilisation des paramètres
+    // Supprime les warnings d'inutilisation
     (void)tileX; (void)tileY; (void)zoom; 
 
     if (!path || path[0] == '\0') return false;
@@ -1084,20 +1071,25 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     file.close();
 
     if (memcmp(data, "NAV1", 4) != 0) { free(data); return false; }
-
     uint16_t feature_count;
     memcpy(&feature_count, data + 4, 2);
 
     initBatchRendering();
     createRenderBatch(getOptimalBatchSize());
+    
+    // On remplit le Sprite en Blanc (Style IceNav)
     map.fillSprite(TFT_WHITE); 
 
+    int mapW = map.width();
+    int mapH = map.height();
     uint32_t last_wdt_ms = millis();
 
+    // RENDU EN 2 PASSES (Z-Order)
     for (int pass = 1; pass <= 2; pass++) {
         uint8_t* p = data + 22; 
         
         for (uint16_t i = 0; i < feature_count; i++) {
+            // Respiration du Watchdog
             if (millis() - last_wdt_ms > 100) {
                 esp_task_wdt_reset();
                 yield();
@@ -1106,65 +1098,88 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
 
             if (p + 12 > data + fileSize) break;
 
+            // --- Lecture du Header (12 octets alignés) ---
             uint8_t type = p[0];
-            uint16_t color; memcpy(&color, p + 1, 2);
-            
+            uint16_t rawColor; memcpy(&rawColor, p + 1, 2);
             uint8_t width = p[4];
             uint16_t count; memcpy(&count, p + 9, 2);
+            
+            // Calcul de la couleur avec Swap pour le T-Deck
+            uint16_t renderColor = (rawColor << 8) | (rawColor >> 8);
             
             uint8_t* coord_ptr = p + 12;
             if (coord_ptr + (count * 4) > data + fileSize) break;
 
+            // --- PASS 1 : POLYGONES (Geometry Type 3) ---
             if (pass == 1 && type == 3 && count >= 3) {
+                // Lecture du suffixe "Rings" pour extraire le contour principal
                 uint8_t* ring_ptr = coord_ptr + (count * 4);
                 uint16_t first_ring_end = count;
-                if (ring_ptr < data + fileSize) {
-                    uint8_t ring_count = ring_ptr[0];
-                    if (ring_count > 0) memcpy(&first_ring_end, ring_ptr + 1, 2);
+                if (ring_ptr < data + fileSize && ring_ptr[0] > 0) {
+                    memcpy(&first_ring_end, ring_ptr + 1, 2);
                 }
 
-                int* px = (int*)ps_malloc(first_ring_end * sizeof(int));
-                int* py = (int*)ps_malloc(first_ring_end * sizeof(int));
+                // Allocation en float pour éviter les décalages de jointures entre tuiles
+                float* px = (float*)ps_malloc(first_ring_end * sizeof(float));
+                float* py = (float*)ps_malloc(first_ring_end * sizeof(float));
+                
                 if (px && py) {
                     for (uint16_t j = 0; j < first_ring_end; j++) {
                         int16_t rx, ry;
                         memcpy(&rx, coord_ptr + (j * 4), 2);
                         memcpy(&ry, coord_ptr + (j * 4) + 2, 2);
-                        px[j] = (rx >> 4) + xOffset;
-                        py[j] = (ry >> 4) + yOffset;
+                        // Conversion en coordonnées Sprite (0.0 - 256.0)
+                        px[j] = (float)rx / 16.0f;
+                        py[j] = (float)ry / 16.0f;
                     }
-                    uint16_t borderColor = darkenRGB565(color, 0.15f);
-                    color = (color << 8) | (color >> 8);
-                    borderColor = (borderColor << 8) | (borderColor >> 8);
+                    
+                    uint16_t rawBorder = darkenRGB565(rawColor, 0.15f);
+                    uint16_t renderBorder = (rawBorder << 8) | (rawBorder >> 8);
+
                     if (fillPolygons) {
-                        fillPolygonGeneral(map, px, py, first_ring_end, color, 0, 0);
+                        fillPolygonGeneral(map, px, py, first_ring_end, renderColor, xOffset, yOffset);
                     }
-                    drawPolygonBorder(map, px, py, first_ring_end, borderColor, color, 0, 0);
+                    drawPolygonBorder(map, px, py, first_ring_end, renderBorder, renderColor, xOffset, yOffset);
                 }
-                // Indentation corrigée pour le compilateur
                 if (px) { free(px); }
                 if (py) { free(py); }
             }
+            // --- PASS 2 : LIGNES ET POINTS ---
             else if (pass == 2 && type != 3) {
-                color = (color << 8) | (color >> 8);
-                if (type == 2 && count >= 2) {
+                if (type == 2 && count >= 2) { // Lignes
                     int16_t prx, pry;
                     memcpy(&prx, coord_ptr, 2); memcpy(&pry, coord_ptr + 2, 2);
+                    
                     for (uint16_t j = 1; j < count; j++) {
                         int16_t rx, ry;
                         memcpy(&rx, coord_ptr + (j * 4), 2); memcpy(&ry, coord_ptr + (j * 4) + 2, 2);
-                        int x0 = (prx >> 4) + xOffset; int y0 = (pry >> 4) + yOffset;
-                        int x1 = (rx >> 4) + xOffset;  int y1 = (ry >> 4) + yOffset;
-                        if (width <= 1) addToBatch(x0, y0, x1, y1, color);
-                        else map.drawWideLine(x0, y0, x1, y1, width, color);
+                        
+                        // Calcul des pixels avec arrondi au centre (+0.5)
+                        int x0 = (int)((float)prx / 16.0f + 0.5f) + xOffset;
+                        int y0 = (int)((float)pry / 16.0f + 0.5f) + yOffset;
+                        int x1 = (int)((float)rx / 16.0f + 0.5f) + xOffset;
+                        int y1 = (int)((float)ry / 16.0f + 0.5f) + yOffset;
+
+                        // Clipping strict pour éviter le "Memory Wrap" sur les bords
+                        if (!((x0 < 0 && x1 < 0) || (x0 >= mapW && x1 >= mapW) ||
+                              (y0 < 0 && y1 < 0) || (y0 >= mapH && y1 >= mapH))) {
+                            if (width <= 1) addToBatch(x0, y0, x1, y1, renderColor);
+                            else map.drawWideLine(x0, y0, x1, y1, width, renderColor);
+                        }
                         prx = rx; pry = ry;
                     }
-                } else if (type == 1) {
+                } else if (type == 1) { // Points
                     int16_t rx, ry;
                     memcpy(&rx, coord_ptr, 2); memcpy(&ry, coord_ptr + 2, 2);
-                    map.fillCircle((rx >> 4) + xOffset, (ry >> 4) + yOffset, 2, color);
+                    int sx = (int)((float)rx / 16.0f + 0.5f) + xOffset;
+                    int sy = (int)((float)ry / 16.0f + 0.5f) + yOffset;
+                    if (sx >= 0 && sx < mapW && sy >= 0 && sy < mapH) {
+                        map.fillCircle(sx, sy, 2, renderColor);
+                    }
                 }
             }
+
+            // --- Avancement du pointeur (Saut Features + Coords + Rings) ---
             p += 12 + (count * 4);
             if (type == 3 && p < data + fileSize) {
                 uint8_t r_count = p[0];
@@ -1175,7 +1190,7 @@ bool renderTile(const char* path, int tileX, int tileY, int zoom, int16_t xOffse
     }
 
     if (activeBatch) {
-        if (activeBatch->segments) delete[] activeBatch->segments;
+        if (activeBatch->segments) { delete[] activeBatch->segments; }
         delete activeBatch;
         activeBatch = nullptr;
     }
