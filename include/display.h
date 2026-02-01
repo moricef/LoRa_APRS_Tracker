@@ -19,9 +19,14 @@
 #ifndef DISPLAY_H_
 #define DISPLAY_H_
 
-#ifndef TFT_BL
-#define TFT_BL 42
-#endif
+// Hardware pins for LILYGO T-Deck Plus (LGFX / Legacy compatibility)
+#define TFT_BL          42
+#define TFT_CS          12
+#define TFT_DC          11
+#define TFT_RST         10
+#define TFT_MISO        38
+#define TFT_MOSI        41
+#define TFT_SCLK        40
 
 #include <Arduino.h>
 
