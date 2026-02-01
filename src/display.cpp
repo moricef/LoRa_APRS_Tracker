@@ -254,7 +254,6 @@ void displaySetup() {
     STATION_Utils::loadIndex(2);    // Screen Brightness value
     #ifdef HAS_TFT
         tft.init();
-        tft.begin();
         #ifdef BOARD_HAS_PSRAM
             // PSRAM is handled automatically by LovyanGFX
         #endif
