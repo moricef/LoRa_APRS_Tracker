@@ -19,6 +19,10 @@
 #ifndef DISPLAY_H_
 #define DISPLAY_H_
 
+#ifndef TFT_BL
+#define TFT_BL 42
+#endif
+
 #include <Arduino.h>
 
 #ifdef HAS_TFT

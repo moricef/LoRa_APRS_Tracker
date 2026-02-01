@@ -42,7 +42,7 @@ public:
             cfg.memory_height    = 320;
             cfg.offset_x         = 0;
             cfg.offset_y         = 0;
-            cfg.rgb_order        = lgfx::rgb_order::rgb;
+            cfg.rgb_order        = lgfx::rgb_order_rgb;
             cfg.invert           = true;
             
             _panel_instance.config(cfg);
