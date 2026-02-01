@@ -818,150 +818,20 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         activeBatch->color = 0;
     }
 
-    // --- Constants and State Variables for Vector Rendering ---
-    static constexpr int VTILE_SIZE = 256;
-    static constexpr int MARGIN_PIXELS = 1;
-    static uint8_t PALETTE[256] = {0};
-    static uint32_t PALETTE_SIZE = 0;
-    static bool fillPolygons = true;
+// --- UTILITAIRES DE RENDU ---
 
-
-    // --- Color Management Utilities ---
-
-    bool loadPalette(const char* palettePath) {
-        FILE* f = nullptr;
-        if (palettePath) {
-            f = fopen(palettePath, "rb");
-        }
-    
-        if (!f) {
-            // Default palette fallback
-            PALETTE[0] = 0x00; // Black
-            PALETTE[1] = 0x25; // Dark Gray (for roads)
-            PALETTE[2] = 0x10; // Green (for parks)
-            PALETTE[3] = 0x02; // Blue (for water)
-            PALETTE_SIZE = 4;
-            Serial.println("[MAP] palette.bin not found, using default fallback palette.");
-            return true;
-        }
-        
-        uint32_t numColors;
-        if (fread(&numColors, 4, 1, f) != 1) {
-            fclose(f);
-            return false;
-        }
-        
-        uint8_t rgb888[3];
-        PALETTE_SIZE = 0;
-        for (uint32_t i = 0; i < numColors && i < 256; i++) {
-            if (fread(rgb888, 3, 1, f) == 1) {
-                uint8_t r332 = rgb888[0] & 0xE0;
-                uint8_t g332 = (rgb888[1] & 0xE0) >> 3;
-                uint8_t b332 = rgb888[2] >> 6;
-                PALETTE[i] = r332 | g332 | b332;
-                PALETTE_SIZE++;
-            }
-        }
-        
-        fclose(f);
-        Serial.printf("[MAP] Loaded palette: %u colors\n", PALETTE_SIZE);
-        return PALETTE_SIZE > 0;
+    // Assombrit une couleur RGB565 (pour les bordures de polygones)
+    uint16_t darkenRGB565(const uint16_t color, const float amount) {
+        uint16_t r = (color >> 11) & 0x1F;
+        uint16_t g = (color >> 5) & 0x3F;
+        uint16_t b = color & 0x1F;
+        r = (uint16_t)(r * (1.0f - amount));
+        g = (uint16_t)(g * (1.0f - amount));
+        b = (uint16_t)(b * (1.0f - amount));
+        return (r << 11) | (g << 5) | b;
     }
 
-    uint8_t paletteToRGB332(const uint32_t idx) {
-        if (idx < PALETTE_SIZE) return PALETTE[idx];
-        return 0xFF; // White
-    }
-
-    uint16_t RGB332ToRGB565(const uint8_t color) {
-        uint8_t r = (color & 0xE0);
-        uint8_t g = (color & 0x1C) << 3;
-        uint8_t b = (color & 0x03) << 6;
-        
-        uint16_t r565 = (r >> 3) & 0x1F;
-        uint16_t g565 = (g >> 2) & 0x3F;
-        uint16_t b565 = (b >> 3) & 0x1F;
-        
-        return (r565 << 11) | (g565 << 5) | b565;
-    }
-
-    uint8_t darkenRGB332(const uint8_t color, const float amount = 0.4f) {
-        uint8_t r = (color & 0xE0) >> 5;
-        uint8_t g = (color & 0x1C) >> 2;
-        uint8_t b = (color & 0x03);
-
-        r = static_cast<uint8_t>(r * (1.0f - amount));
-        g = static_cast<uint8_t>(g * (1.0f - amount));
-        b = static_cast<uint8_t>(b * (1.0f - amount));
-
-        return ((r << 5) | (g << 2) | b);
-    }
-
-    // --- Data Decoding Utilities ---
-
-    uint32_t readVarint(const uint8_t* data, size_t& offset, const size_t dataSize) {
-        uint32_t value = 0;
-        uint8_t shift = 0;
-        while (offset < dataSize && shift < 32) {
-            uint8_t byte = data[offset++];
-            value |= ((uint32_t)(byte & 0x7F)) << shift;
-            if ((byte & 0x80) == 0) break;
-            shift += 7;
-        }
-        if (offset > dataSize) {
-            offset = dataSize;
-            return 0;
-        }
-        return value;
-    }
-
-    int32_t readZigzag(const uint8_t* data, size_t& offset, const size_t dataSize) {
-        if (offset >= dataSize) return 0;
-        const uint32_t encoded = readVarint(data, offset, dataSize);
-        return static_cast<int32_t>((encoded >> 1) ^ (-(int32_t)(encoded & 1)));
-    }
-
-    // --- Geometric and Drawing Primitives ---
-
-    int uint16ToPixel(const int32_t val) {
-        int p = static_cast<int>((val * (long long)VTILE_SIZE) / 65536);
-        if (p < 0) p = 0;
-        if (p >= VTILE_SIZE) p = VTILE_SIZE - 1;
-        return p;
-    }
-
-    bool isPointOnMargin(const int px, const int py) {
-        return (px <= MARGIN_PIXELS || px >= VTILE_SIZE - 1 - MARGIN_PIXELS || 
-                py <= MARGIN_PIXELS || py >= VTILE_SIZE - 1 - MARGIN_PIXELS);
-    }
-
-    bool isNear(int val, int target, int tol = 2) {
-        return abs(val - target) <= tol;
-    }
-
-    bool shouldDrawLine(const int px1, const int py1, const int px2, const int py2) {
-        if ((isNear(px1, 0) && isNear(px2, VTILE_SIZE - 1)) || (isNear(px1, VTILE_SIZE - 1) && isNear(px2, 0))) {
-            if ((isNear(py1, 0) && isNear(py2, VTILE_SIZE - 1)) || (isNear(py1, VTILE_SIZE - 1) && isNear(py2, 0))) return false;
-            if (isNear(py1, py2)) return false;
-        }
-        if ((isNear(py1, 0) && isNear(py2, VTILE_SIZE - 1)) || (isNear(py1, VTILE_SIZE - 1) && isNear(py2, 0))) {
-            if (isNear(px1, px2)) return false;
-        }
-
-        int dx = px2 - px1;
-        int dy = py2 - py1;
-        long len2 = (long)dx*dx + (long)dy*dy;
-        if (len2 > (VTILE_SIZE * VTILE_SIZE * 3)) return false;
-
-        if (isPointOnMargin(px1, py1) && isPointOnMargin(px2, py2)) return false;
-        if ((px1 == px2) && (px1 <= MARGIN_PIXELS || px1 >= VTILE_SIZE - 1 - MARGIN_PIXELS)) return false;
-        if ((py1 == py2) && (py1 <= MARGIN_PIXELS || py1 >= VTILE_SIZE - 1 - MARGIN_PIXELS)) return false;
-        
-        return true;
-    }
-    
-    // Fonction pour couper une ligne aux dimensions du Sprite (0-255)
-    // Retourne false si la ligne est totalement hors-champ
+    // Empêche le Memory Wrap (répétitions Est-Ouest)
     bool clipLine(int &x0, int &y0, int &x1, int &y1, int w, int h) {
         auto getCode = [&](int x, int y) {
             int code = 0;
@@ -969,178 +839,145 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
             if (y < 0) code |= 4; else if (y >= h) code |= 8;
             return code;
         };
-
-     int code0 = getCode(x0, y0), code1 = getCode(x1, y1);
-     while (true) {
-        if (!(code0 | code1)) return true;
-        if (code0 & code1) return false;
-        int codeOut = code0 ? code0 : code1;
-        int x, y;
-        if (codeOut & 8) { x = x0 + (x1 - x0) * (h - 1 - y0) / (y1 - y0); y = h - 1; }
-        else if (codeOut & 4) { x = x0 + (x1 - x0) * (0 - y0) / (y1 - y0); y = 0; }
-        else if (codeOut & 2) { y = y0 + (y1 - y0) * (w - 1 - x0) / (x1 - x0); x = w - 1; }
-        else { y = y0 + (y1 - y0) * (0 - x0) / (x1 - x0); x = 0; }
-        if (codeOut == code0) { x0 = x; y0 = y; code0 = getCode(x0, y0); }
-        else { x1 = x; y1 = y; code1 = getCode(x1, y1); }
-    }
-}
-
-void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
-    if (numPoints < 3) return;
-
-    int iMinY = 255, iMaxY = 0;
-    for (int i = 0; i < numPoints; ++i) {
-        int y_px = (py[i] >> 4);
-        if (y_px < iMinY) iMinY = y_px;
-        if (y_px > iMaxY) iMaxY = y_px;
-    }
-
-    if (iMinY < 0) iMinY = 0;
-    if (iMaxY > 255) iMaxY = 255;
-    if (iMinY > iMaxY) return;
-
-    int* xints = (int*)ps_malloc(numPoints * sizeof(int));
-    if (!xints) return;
-
-    for (int y = iMinY; y <= iMaxY; ++y) {
-        int nodes = 0;
-        int y_grid = (y << 4) + 8; // Centre du pixel dans la grille 4096
-
-        for (int i = 0, j = numPoints - 1; i < numPoints; j = i++) {
-            if ((py[i] < y_grid && py[j] >= y_grid) || (py[j] < y_grid && py[i] >= y_grid)) {
-                if (py[j] != py[i])
-                    xints[nodes++] = px[i] + (y_grid - py[i]) * (px[j] - px[i]) / (py[j] - py[i]);
-            }
+        int code0 = getCode(x0, y0), code1 = getCode(x1, y1);
+        while (true) {
+            if (!(code0 | code1)) return true;
+            if (code0 & code1) return false;
+            int codeOut = code0 ? code0 : code1;
+            int x, y;
+            if (codeOut & 8) { x = x0 + (int32_t)(x1 - x0) * (h - 1 - y0) / (y1 - y0); y = h - 1; }
+            else if (codeOut & 4) { x = x0 + (int32_t)(x1 - x0) * (0 - y0) / (y1 - y0); y = 0; }
+            else if (codeOut & 2) { y = y0 + (int32_t)(y1 - y0) * (w - 1 - x0) / (x1 - x0); x = w - 1; }
+            else { y = y0 + (int32_t)(y1 - y0) * (0 - x0) / (x1 - x0); x = 0; }
+            if (codeOut == code0) { x0 = x; y0 = y; code0 = getCode(x0, y0); }
+            else { x1 = x; y1 = y; code1 = getCode(x1, y1); }
         }
-        
-        if (nodes > 1) {
-            std::sort(xints, xints + nodes);
-            for (int i = 0; i < nodes; i += 2) {
-                if (i + 1 < nodes) {
-                    int x0 = (xints[i] >> 4) + xOffset;
-                    int x1 = (xints[i + 1] >> 4) + xOffset;
-                    if (x0 > 255 || x1 < 0) continue;
-                    int drawX0 = (x0 < 0) ? 0 : x0;
-                    int drawX1 = (x1 > 255) ? 255 : x1;
-                    if (drawX1 >= drawX0) {
-                        map.drawFastHLine(drawX0, y + yOffset, drawX1 - drawX0 + 1, color);
+    }
+
+    // --- FONCTIONS DE DESSIN ---
+
+    void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
+        if (numPoints < 3) return;
+        int iMinY = 255, iMaxY = 0;
+        for (int i = 0; i < numPoints; ++i) {
+            int y_px = (py[i] >> 4);
+            if (y_px < iMinY) iMinY = y_px;
+            if (y_px > iMaxY) iMaxY = y_px;
+        }
+        if (iMinY < 0) iMinY = 0;
+        if (iMaxY > 255) iMaxY = 255;
+        if (iMinY > iMaxY) return;
+        int* xints = (int*)ps_malloc(numPoints * sizeof(int));
+        if (!xints) return;
+        for (int y = iMinY; y <= iMaxY; ++y) {
+            int nodes = 0;
+            int y_grid = (y << 4) + 8;
+            for (int i = 0, j = numPoints - 1; i < numPoints; j = i++) {
+                if ((py[i] < y_grid && py[j] >= y_grid) || (py[j] < y_grid && py[i] >= y_grid)) {
+                    if (py[j] != py[i])
+                        xints[nodes++] = px[i] + (int32_t)(y_grid - py[i]) * (px[j] - px[i]) / (py[j] - py[i]);
+                }
+            }
+            if (nodes > 1) {
+                std::sort(xints, xints + nodes);
+                for (int i = 0; i < nodes; i += 2) {
+                    if (i + 1 < nodes) {
+                        int x0 = (xints[i] >> 4) + xOffset;
+                        int x1 = (xints[i + 1] >> 4) + xOffset;
+                        if (x0 > 255 || x1 < 0) continue;
+                        int dX0 = (x0 < 0) ? 0 : x0;
+                        int dX1 = (x1 > 255) ? 255 : x1;
+                        if (dX1 >= dX0) map.drawFastHLine(dX0, y + yOffset, dX1 - dX0 + 1, color);
                     }
                 }
             }
         }
+        free(xints);
     }
-    free(xints);
-}
 
-void drawPolygonBorder(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t borderColor, const int xOffset, const int yOffset) {
-    if (numPoints < 2) return;
-    int w = map.width(), h = map.height();
-
-    for (int i = 0; i < numPoints; ++i) {
-        int j = (i + 1) % numPoints;
-        int x0 = (px[i] >> 4) + xOffset, y0 = (py[i] >> 4) + yOffset;
-        int x1 = (px[j] >> 4) + xOffset, y1 = (py[j] >> 4) + yOffset;
-
-        // On coupe la ligne manuellement avant de l'envoyer à TFT_eSPI
-        if (clipLine(x0, y0, x1, y1, w, h)) {
-            map.drawLine(x0, y0, x1, y1, borderColor);
+    void drawPolygonBorder(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t borderColor, const int xOffset, const int yOffset) {
+        if (numPoints < 2) return;
+        int w = map.width(), h = map.height();
+        for (int i = 0; i < numPoints; ++i) {
+            int j = (i + 1) % numPoints;
+            int x0 = (px[i] >> 4) + xOffset, y0 = (py[i] >> 4) + yOffset;
+            int x1 = (px[j] >> 4) + xOffset, y1 = (py[j] >> 4) + yOffset;
+            if (clipLine(x0, y0, x1, y1, w, h)) map.drawLine(x0, y0, x1, y1, borderColor);
         }
     }
-}
 
-// === Main Rendering Function ===
+    // --- MOTEUR DE RENDU ---
 
-    [[maybe_unused]] static void tileToLonLat(int tileX, int tileY, int zoom, double& lon, double& lat) {
-        int n = 1 << zoom;
-        lon = tileX / (double)n * 360.0 - 180.0;
-        double lat_rad = atan(sinh(M_PI * (1.0 - 2.0 * tileY / n)));
-        lat = lat_rad * 180.0 / M_PI;
-    }
+    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
+        File file = SD.open(path, FILE_READ);
+        if (!file) return false;
+        size_t fileSize = file.size();
+        uint8_t* data = (uint8_t*)ps_malloc(fileSize);
+        if (!data) { file.close(); return false; }
+        file.read(data, fileSize);
+        file.close();
 
-    uint16_t darkenRGB565(const uint16_t color, const float amount) {
-    uint16_t r = (color >> 11) & 0x1F;
-    uint16_t g = (color >> 5) & 0x3F;
-    uint16_t b = color & 0x1F;
+        if (memcmp(data, "NAV1", 4) != 0) { free(data); return false; }
+        uint16_t feature_count;
+        memcpy(&feature_count, data + 4, 2);
 
-    r = (uint16_t)(r * (1.0f - amount));
-    g = (uint16_t)(g * (1.0f - amount));
-    b = (uint16_t)(b * (1.0f - amount));
+        int mapW = map.width(), mapH = map.height();
+        initBatchRendering();
+        createRenderBatch(getOptimalBatchSize());
+        map.fillSprite(TFT_WHITE); 
 
-    return (r << 11) | (g << 5) | b;
-}
+        uint32_t last_wdt_ms = millis();
+        for (int pass = 1; pass <= 2; pass++) {
+            uint8_t* p = data + 22; 
+            for (uint16_t i = 0; i < feature_count; i++) {
+                if (millis() - last_wdt_ms > 100) { esp_task_wdt_reset(); yield(); last_wdt_ms = millis(); }
+                if (p + 12 > data + fileSize) break;
 
-bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
-    File file = SD.open(path, FILE_READ);
-    if (!file) return false;
-    size_t fileSize = file.size();
-    uint8_t* data = (uint8_t*)ps_malloc(fileSize);
-    if (!data) { file.close(); return false; }
-    file.read(data, fileSize);
-    file.close();
+                uint8_t type = p[0];
+                uint16_t rawColor; memcpy(&rawColor, p + 1, 2);
+                uint16_t renderColor = (rawColor << 8) | (rawColor >> 8);
+                uint8_t width = p[4]; 
+                uint16_t count; memcpy(&count, p + 9, 2);
+                int16_t* pts = (int16_t*)(p + 12);
 
-    if (memcmp(data, "NAV1", 4) != 0) { free(data); return false; }
-    uint16_t feature_count;
-    memcpy(&feature_count, data + 4, 2);
+                if (pass == 1 && type == 3 && count >= 3) {
+                    uint16_t first_ring_end = count;
+                    uint8_t* ring_ptr = (uint8_t*)pts + (count * 4);
+                    if (ring_ptr < data + fileSize && ring_ptr[0] > 0) memcpy(&first_ring_end, ring_ptr + 1, 2);
 
-    initBatchRendering();
-    createRenderBatch(getOptimalBatchSize());
-    map.fillSprite(TFT_WHITE); 
-
-    uint32_t last_wdt_ms = millis();
-
-    for (int pass = 1; pass <= 2; pass++) {
-        uint8_t* p = data + 22; 
-        for (uint16_t i = 0; i < feature_count; i++) {
-            if (millis() - last_wdt_ms > 100) { esp_task_wdt_reset(); yield(); last_wdt_ms = millis(); }
-
-            uint8_t type = p[0];
-            uint16_t rawColor; memcpy(&rawColor, p + 1, 2);
-            uint16_t renderColor = (rawColor << 8) | (rawColor >> 8);
-            uint16_t count; memcpy(&count, p + 9, 2);
-            int16_t* pts = (int16_t*)(p + 12);
-
-            if (pass == 1 && type == 3 && count >= 3) {
-                uint16_t first_ring_end = count;
-                uint8_t* ring_ptr = (uint8_t*)pts + (count * 4);
-                if (ring_ptr < data + fileSize && ring_ptr[0] > 0) memcpy(&first_ring_end, ring_ptr + 1, 2);
-
-                int* px = (int*)ps_malloc(first_ring_end * sizeof(int));
-                int* py = (int*)ps_malloc(first_ring_end * sizeof(int));
-                if (px && py) {
-                    for (uint16_t j = 0; j < first_ring_end; j++) {
-                        px[j] = pts[j*2];     // X brut (0-4096)
-                        py[j] = pts[j*2 + 1]; // Y brut (0-4096)
+                    int* px = (int*)ps_malloc(first_ring_end * sizeof(int));
+                    int* py = (int*)ps_malloc(first_ring_end * sizeof(int));
+                    if (px && py) {
+                        for (uint16_t j = 0; j < first_ring_end; j++) {
+                            px[j] = pts[j*2]; py[j] = pts[j*2 + 1];
+                        }
+                        fillPolygonGeneral(map, px, py, first_ring_end, renderColor, xOffset, yOffset);
+                        uint16_t bColRaw = darkenRGB565(rawColor, 0.15f);
+                        uint16_t renderBorder = (bColRaw << 8) | (bColRaw >> 8);
+                        drawPolygonBorder(map, px, py, first_ring_end, renderBorder, xOffset, yOffset);
                     }
-                    if (fillPolygons) fillPolygonGeneral(map, px, py, first_ring_end, renderColor, xOffset, yOffset);
-                    uint16_t bCol = (darkenRGB565(rawColor, 0.15f) << 8) | (darkenRGB565(rawColor, 0.15f) >> 8);
-                    drawPolygonBorder(map, px, py, first_ring_end, bCol, xOffset, yOffset);
+                    if (px) { free(px); } if (py) { free(py); }
                 }
-                if (px) { free(px); }
-                if (py) { free(py); }
-            }
-            else if (pass == 2 && type == 2 && count >= 2) {
-                for (uint16_t j = 1; j < count; j++) {
-                    int x0 = (pts[(j-1)*2] >> 4) + xOffset;
-                    int y0 = (pts[(j-1)*2+1] >> 4) + yOffset;
-                    int x1 = (pts[j*2] >> 4) + xOffset;
-                    int y1 = (pts[j*2+1] >> 4) + yOffset;
-
-                    // CLIPPING MANUEL POUR LES ROUTES (Empêche le wrap mémoire)
-                    if (clipLine(x0, y0, x1, y1, mapW, mapH)) {
-                        if (width <= 1) addToBatch(x0, y0, x1, y1, renderColor);
-                        else map.drawWideLine(x0, y0, x1, y1, width, renderColor);
+                else if (pass == 2 && type == 2 && count >= 2) {
+                    for (uint16_t j = 1; j < count; j++) {
+                        int x0 = (pts[(j-1)*2] >> 4) + xOffset;
+                        int y0 = (pts[(j-1)*2+1] >> 4) + yOffset;
+                        int x1 = (pts[j*2] >> 4) + xOffset;
+                        int y1 = (pts[j*2+1] >> 4) + yOffset;
+                        if (clipLine(x0, y0, x1, y1, mapW, mapH)) {
+                            if (width <= 1) addToBatch(x0, y0, x1, y1, renderColor);
+                            else map.drawWideLine(x0, y0, x1, y1, width, renderColor);
+                        }
                     }
                 }
+                p += 12 + (count * 4);
+                if (type == 3 && p < data + fileSize) p += 1 + (p[0] * 2);
             }
-            
-            p += 12 + (count * 4);
-            if (type == 3 && p < data + fileSize) p += 1 + (p[0] * 2);
+            if (pass == 2) flushBatch(map);
         }
-        if (pass == 2) flushBatch(map);
+        free(data);
+        return true;
     }
-    free(data);
-    return true;
-}
 
 // =========================================================================
     // =                  END OF VECTOR TILE RENDERING ENGINE                  =
@@ -1819,12 +1656,6 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         discoverAndSetMapRegion();
 
         initBatchRendering();
-        if (!map_current_region.isEmpty()) {
-            String palettePath = "/LoRa_Tracker/VectMaps/" + map_current_region + "/palette.bin";
-            loadPalette(palettePath.c_str());
-        } else {
-            loadPalette(nullptr); // Will trigger fallback
-        }
 
         // Clean up old station buttons if screen is being recreated
         cleanup_station_buttons();
