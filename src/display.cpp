@@ -28,10 +28,10 @@
 
 
 #ifdef HAS_TFT
-    #include <TFT_eSPI.h>
+    #include "LGFX_TDeck.h"
 
-    TFT_eSPI    tft     = TFT_eSPI(); 
-    TFT_eSprite sprite  = TFT_eSprite(&tft);
+    LGFX_TDeck  tft;
+    LGFX_Sprite sprite(&tft);
 
     #ifdef HELTEC_WIRELESS_TRACKER
         #define bigSizeFont     2
@@ -256,7 +256,7 @@ void displaySetup() {
         tft.init();
         tft.begin();
         #ifdef BOARD_HAS_PSRAM
-            tft.setAttribute(PSRAM_ENABLE, true);  // Use PSRAM for sprite buffers
+            // PSRAM is handled automatically by LovyanGFX
         #endif
         if (Config.display.turn180) {
                 tft.setRotation(3);

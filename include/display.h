@@ -21,6 +21,11 @@
 
 #include <Arduino.h>
 
+#ifdef HAS_TFT
+#include "LGFX_TDeck.h"
+extern LGFX_TDeck tft;
+#endif
+
 void displaySetup();
 void displayToggle(bool toggle);
 
