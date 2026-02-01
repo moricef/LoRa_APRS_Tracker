@@ -898,137 +898,161 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
 
     // --- MAIN VECTOR RENDERING ENGINE ---
 
-    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
-        File file = SD.open(path, FILE_READ);
-        if (!file) {
-            Serial.printf("[MAP] Failed to open tile: %s\n", path);
-            return false;
-        }
-        size_t fileSize = file.size();
-        if (fileSize < 22) { // Minimum size for header
-            file.close();
-            return false;
-        }
-        uint8_t* data = (uint8_t*)ps_malloc(fileSize);
-        if (!data) { 
-            file.close(); 
-            Serial.println("[MAP] Failed to allocate memory for tile");
-            return false; 
-        }
-        file.read(data, fileSize);
-        file.close();
-
-        if (memcmp(data, "NAV1", 4) != 0) { 
-            free(data); 
-            Serial.printf("[MAP] Invalid NAV1 magic for tile: %s\n", path);
-            return false; 
-        }
-
-        uint16_t feature_count;
-        memcpy(&feature_count, data + 4, 2);
-
-        map.fillSprite(TFT_WHITE); 
-        map.setClipRect(0, 0, 256, 256); // IMPORTANT: Fixes horizontal overlap bug (Memory Wrap).
-
-        uint32_t last_wdt_ms = millis();
-    
-        uint8_t* p = data + 22; // Start of first feature header
-        for (uint16_t i = 0; i < feature_count; i++) {
-            if (millis() - last_wdt_ms > 100) { 
-                esp_task_wdt_reset(); 
-                yield(); 
-                last_wdt_ms = millis(); 
-            }
-            if (p + 12 > data + fileSize) break; // Bounds check for header
-
-            // Parse feature header (12 bytes)
-            uint8_t geomType = p[0];
-            uint16_t colorRgb565; 
-            memcpy(&colorRgb565, p + 1, 2); // Color is Little-Endian in file
-            uint8_t widthPixels = p[4];
-            uint16_t coordCount; 
-            memcpy(&coordCount, p + 9, 2);
-        
-            p += 12; // Move pointer past header to coordinates
-
-            if (p + (coordCount * 4) > data + fileSize) break; // Bounds check for coordinates
-            int16_t* coords = (int16_t*)p;
-
-            if (geomType == 3 && coordCount >= 3) { // Polygon
-                uint16_t ringCount = 0;
-                uint16_t* ringEnds = nullptr;
-
-                uint8_t* ring_ptr = p + (coordCount * 4);
-                if (ring_ptr + 2 <= data + fileSize) {
-                    memcpy(&ringCount, ring_ptr, 2);
-                    if (ringCount > 0 && ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
-                        ringEnds = (uint16_t*)(ring_ptr + 2);
-                    } else {
-                        ringCount = 0;
-                    }
-                }
-
-                int* px = (int*)ps_malloc(coordCount * sizeof(int));
-                int* py = (int*)ps_malloc(coordCount * sizeof(int));
-
-                if (px && py) {
-                    for (uint16_t j = 0; j < coordCount; j++) {
-                        px[j] = (coords[j * 2] >> 4) + xOffset;
-                        py[j] = (coords[j * 2 + 1] >> 4) + yOffset;
-                    }
-                
-                    if (fillPolygons) {
-                        fillPolygonGeneral(map, px, py, coordCount, colorRgb565, 0, 0, ringCount, ringEnds);
-                    }
-
-                    uint16_t outerRingEnd = (ringCount > 0) ? ringEnds[0] : coordCount;
-                    if (outerRingEnd >= 2) {
-                        uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
-                        for (int k = 0; k < outerRingEnd; k++) {
-                            int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
-                            map.drawLine(px[k], py[k], px[next], py[next], borderColor);
-                        }
-                    }
-                }
-                
-                if (px) {
-                    free(px);
-                }
-                if (py) {
-                    free(py);
-                }
-            } else if (geomType == 2 && coordCount >= 2) { // LineString
-                for (uint16_t j = 1; j < coordCount; j++) {
-                    int x0 = (coords[(j - 1) * 2] >> 4) + xOffset;
-                    int y0 = (coords[(j - 1) * 2 + 1] >> 4) + yOffset;
-                    int x1 = (coords[j * 2] >> 4) + xOffset;
-                    int y1 = (coords[j * 2 + 1] >> 4) + yOffset;
-                
-                    if (widthPixels <= 1) {
-                        map.drawLine(x0, y0, x1, y1, colorRgb565);
-                    } else {
-                        map.drawWideLine(x0, y0, x1, y1, widthPixels, colorRgb565);
-                    }
-                }
-            }
-
-            p += (coordCount * 4); // Move pointer past coordinates
-            if (geomType == 3) { // If polygon, skip ring data from buffer
-                uint16_t ringCount;
-                if (p + 2 <= data + fileSize) {
-                    memcpy(&ringCount, p, 2);
-                    p += 2;
-                    if (p + (ringCount * 2) <= data + fileSize) {
-                        p += (ringCount * 2);
-                    }
-                }
-            }
-        }
-
-        map.clearClipRect();
-        free(data);
-        return true;
+bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
+    File file = SD.open(path, FILE_READ);
+    if (!file) {
+        Serial.printf("[MAP] Failed to open tile: %s\n", path);
+        return false;
     }
+    size_t fileSize = file.size();
+    if (fileSize < 22) { // Minimum size for NAV1 header
+        file.close();
+        return false;
+    }
+    uint8_t* data = (uint8_t*)ps_malloc(fileSize);
+    if (!data) { 
+        file.close(); 
+        Serial.println("[MAP] Failed to allocate memory for tile");
+        return false; 
+    }
+    file.read(data, fileSize);
+    file.close();
+
+    if (memcmp(data, "NAV1", 4) != 0) { 
+        free(data); 
+        Serial.printf("[MAP] Invalid NAV1 magic for tile: %s\n", path);
+        return false; 
+    }
+
+    uint16_t feature_count;
+    memcpy(&feature_count, data + 4, 2);
+
+    map.fillSprite(TFT_WHITE); 
+    map.setClipRect(0, 0, 256, 256); // CRITICAL: Fix for "Memory Wrap" artifacts
+
+    uint32_t last_wdt_ms = millis();
+    
+    // --- PASS 1: RENDER POLYGONS ---
+    uint8_t* p = data + 22;
+    for (uint16_t i = 0; i < feature_count; i++) {
+        if (p + 12 > data + fileSize) break; // Bounds check for feature header
+
+        uint8_t geomType = p[0];
+        uint16_t coordCount; 
+        memcpy(&coordCount, p + 9, 2);
+        
+        uint32_t feature_data_size = coordCount * 4;
+        uint16_t ringCount = 0;
+
+        if (geomType == 3) { // If polygon, calculate size of ring data
+            uint8_t* ring_ptr = p + 12 + feature_data_size;
+            if (ring_ptr + 2 <= data + fileSize) {
+                memcpy(&ringCount, ring_ptr, 2);
+                if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
+                    feature_data_size += 2 + (ringCount * 2);
+                } else {
+                    ringCount = 0;
+                }
+            }
+        }
+        
+        if (p + 12 + feature_data_size > data + fileSize) break;
+
+        if (geomType == 3 && coordCount >= 3) { // Is a valid Polygon
+            uint16_t colorRgb565; 
+            memcpy(&colorRgb565, p + 1, 2);
+            int16_t* coords = (int16_t*)(p + 12);
+            uint16_t* ringEnds = (ringCount > 0) ? (uint16_t*)(p + 12 + coordCount * 4 + 2) : nullptr;
+            
+            int* px = (int*)ps_malloc(coordCount * sizeof(int));
+            int* py = (int*)ps_malloc(coordCount * sizeof(int));
+
+            if (px && py) {
+                for (uint16_t j = 0; j < coordCount; j++) {
+                    px[j] = (coords[j * 2] >> 4) + xOffset;
+                    py[j] = (coords[j * 2 + 1] >> 4) + yOffset;
+                }
+            
+                if (fillPolygons) {
+                    fillPolygonGeneral(map, px, py, coordCount, colorRgb565, 0, 0, ringCount, ringEnds);
+                }
+
+                uint16_t outerRingEnd = (ringCount > 0) ? ringEnds[0] : coordCount;
+                if (outerRingEnd >= 2) {
+                    uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
+                    for (int k = 0; k < outerRingEnd; k++) {
+                        int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
+                        map.drawLine(px[k], py[k], px[next], py[next], borderColor);
+                    }
+                }
+            }
+            if (px) free(px);
+            if (py) free(py);
+        }
+        p += 12 + feature_data_size; // Advance pointer to the next feature
+    }
+
+    // --- PASS 2: RENDER LINES & POINTS ---
+    p = data + 22; // Reset pointer to start of features
+    for (uint16_t i = 0; i < feature_count; i++) {
+        if (millis() - last_wdt_ms > 100) { 
+            esp_task_wdt_reset(); 
+            yield(); 
+            last_wdt_ms = millis(); 
+        }
+        if (p + 12 > data + fileSize) break;
+
+        uint8_t geomType = p[0];
+        uint16_t coordCount; 
+        memcpy(&coordCount, p + 9, 2);
+
+        uint32_t feature_data_size = coordCount * 4;
+        if (geomType == 3) {
+            uint16_t ringCount = 0;
+            uint8_t* ring_ptr = p + 12 + feature_data_size;
+            if (ring_ptr + 2 <= data + fileSize) {
+                memcpy(&ringCount, ring_ptr, 2);
+                 if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
+                    feature_data_size += 2 + (ringCount * 2);
+                }
+            }
+        }
+        
+        if (p + 12 + feature_data_size > data + fileSize) break;
+
+        if (geomType == 2 && coordCount >= 2) { // Is LineString
+            uint16_t colorRgb565; 
+            memcpy(&colorRgb565, p + 1, 2);
+            uint8_t widthPixels = p[4];
+            int16_t* coords = (int16_t*)(p + 12);
+            for (uint16_t j = 1; j < coordCount; j++) {
+                int x0 = (coords[(j - 1) * 2] >> 4) + xOffset;
+                int y0 = (coords[(j - 1) * 2 + 1] >> 4) + yOffset;
+                int x1 = (coords[j * 2] >> 4) + xOffset;
+                int y1 = (coords[j * 2 + 1] >> 4) + yOffset;
+                
+                if (widthPixels <= 1) {
+                    map.drawLine(x0, y0, x1, y1, colorRgb565);
+                } else {
+                    map.drawWideLine(x0, y0, x1, y1, widthPixels, colorRgb565);
+                }
+            }
+        } else if (geomType == 1 && coordCount > 0) { // Is Point
+             uint16_t colorRgb565; 
+             memcpy(&colorRgb565, p + 1, 2);
+             int16_t* coords = (int16_t*)(p + 12);
+             int px = (coords[0] >> 4) + xOffset;
+             int py = (coords[1] >> 4) + yOffset;
+             map.fillCircle(px, py, 3, colorRgb565);
+        }
+
+        p += 12 + feature_data_size; // Advance pointer to the next feature
+    }
+
+    map.clearClipRect();
+    free(data);
+    return true;
+}
 
 // =========================================================================
     // =                  END OF VECTOR TILE RENDERING ENGINE                  =

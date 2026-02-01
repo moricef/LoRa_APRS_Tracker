@@ -49,6 +49,7 @@ public:
             cfg.rgb_order = false; // false = RGB, true = BGR
             cfg.dlen_16bit = false;
             cfg.bus_shared = true;
+            cfg.color_depth = 16;
             _panel_instance.config(cfg);
         }
 
