@@ -952,6 +952,12 @@ bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite 
     // --- PASS 1: RENDER POLYGONS ---
     uint8_t* p = data + 22;
     for (uint16_t i = 0; i < feature_count; i++) {
+        // Add watchdog reset inside the feature loop
+        if (millis() - last_wdt_ms > 100) {
+            esp_task_wdt_reset();
+            yield();
+            last_wdt_ms = millis();
+        }
         if (p + 12 > data + fileSize) break; // Bounds check for feature header
 
         uint8_t geomType = p[0];
