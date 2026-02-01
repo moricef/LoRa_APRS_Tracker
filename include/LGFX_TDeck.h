@@ -46,7 +46,7 @@ public:
             cfg.dummy_read_bits = 2;
             cfg.readable = true;
             cfg.invert = true;
-            cfg.rgb_order = true; // false = RGB, true = BGR
+            cfg.rgb_order = false; // false = RGB, true = BGR
             cfg.dlen_16bit = false;
             cfg.bus_shared = true;
             _panel_instance.config(cfg);
