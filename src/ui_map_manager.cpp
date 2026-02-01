@@ -7,7 +7,7 @@
 #include <Arduino.h>
 #include <FS.h>
 #include <lvgl.h>
-#include <TFT_eSPI.h> // For TFT_eSPI definitions if needed (e.g. for SCREEN_WIDTH/HEIGHT)
+#include <LovyanGFX.hpp>
 #include <TinyGPS++.h>
 #include <JPEGDEC.h>
 // Undefine macros that conflict between PNGdec and JPEGDEC
@@ -715,7 +715,7 @@ namespace UIMapManager {
     }
 
 // Add a rendered tile sprite to the cache
-void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprite* sourceSprite) {
+void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprite* sourceSprite) {
     if (maxCachedTiles == 0 || !sourceSprite) {
         if(sourceSprite) { // Don't leak memory if cache is disabled
             sourceSprite->deleteSprite();
@@ -805,7 +805,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
             activeBatch->color = color;
     }
 
-    static void flushBatch(TFT_eSprite& map) {
+    static void flushBatch(LGFX_Sprite& map) {
         if (!activeBatch || activeBatch->count == 0)
             return;
         
@@ -872,7 +872,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 
     // --- GEOMETRY DRAWING FUNCTIONS ---
 
-    void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
+    void fillPolygonGeneral(LGFX_Sprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
         if (numPoints < 3) return;
         int iMinY = 255;
         int iMaxY = 0;
@@ -916,7 +916,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         free(xints);
     }
 
-    void drawPolygonBorder(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t borderColor, const int xOffset, const int yOffset) {
+    void drawPolygonBorder(LGFX_Sprite &map, const int *px, const int *py, const int numPoints, const uint16_t borderColor, const int xOffset, const int yOffset) {
         if (numPoints < 2) return;
         int w = map.width(), h = map.height();
         for (int i = 0; i < numPoints; ++i) {
@@ -929,7 +929,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 
     // --- MAIN VECTOR RENDERING ENGINE ---
 
-    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
+    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
         File file = SD.open(path, FILE_READ);
         if (!file) return false;
         size_t fileSize = file.size();
@@ -1012,7 +1012,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 
     // Context for decoding JPEG/PNG to a TFT_eSprite
     struct SpriteDecodeContext {
-        TFT_eSprite* sprite;
+        LGFX_Sprite* sprite;
     };
     static SpriteDecodeContext spriteDecodeContext;
 
@@ -1522,7 +1522,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     }
 
 // Helper function to safely copy a sprite to the canvas with clipping
-static void copySpriteToCanvasWithClip(lv_obj_t* canvas, TFT_eSprite* sprite, int offsetX, int offsetY) {
+static void copySpriteToCanvasWithClip(lv_obj_t* canvas, LGFX_Sprite* sprite, int offsetX, int offsetY) {
     if (!canvas || !sprite || sprite->frameBuffer(0) == nullptr) return;
 
     // Calculate source and destination rectangles for clipping
@@ -1577,12 +1577,12 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     char found_path[128] = {0};
     enum { TILE_NONE, TILE_NAV, TILE_PNG, TILE_JPG } found_type = TILE_NONE;
     bool tileRendered = false;
-    TFT_eSprite* newSprite = nullptr;
+    LGFX_Sprite* newSprite = nullptr;
 
     // --- 1. Check cache first ---
     int cacheIdx = findCachedTile(zoom, tileX, tileY);
     if (cacheIdx >= 0) {
-        TFT_eSprite* cachedSprite = tileCache[cacheIdx].sprite;
+        LGFX_Sprite* cachedSprite = tileCache[cacheIdx].sprite;
         copySpriteToCanvasWithClip(canvas, cachedSprite, offsetX, offsetY);
         return true;
     }
@@ -1619,8 +1619,8 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     // --- 4. If a file was found, create sprite and render it ---
     if (found_type != TILE_NONE) {
         Serial.printf("[MAP] Found file: %s\n", found_path);
-        newSprite = new TFT_eSprite(&tft);
-        newSprite->setAttribute(PSRAM_ENABLE, true);
+        newSprite = new LGFX_Sprite(&tft);
+        // setAttribute(PSRAM_ENABLE, true) is not needed with LovyanGFX; it's handled automatically.
         if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr && newSprite->frameBuffer(0) != nullptr) {
             if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 switch (found_type) {

@@ -7,7 +7,7 @@
 #include <APRSPacketLib.h>
 #include <Arduino.h>
 #include <FS.h>
-#include <TFT_eSPI.h>
+#include "LGFX_TDeck.h"
 #include <TinyGPS++.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -99,8 +99,6 @@ extern int mapStationsCount; // Compteur de stations pour la barre d'information
 // LVGL buffer size (use partial buffer to save memory, full buffer in PSRAM)
 #define LVGL_BUF_SIZE (SCREEN_WIDTH * SCREEN_HEIGHT)
 
-// External TFT instance from display.cpp
-extern TFT_eSPI tft;
 
 // External touch module address (found by I2C scan in utils.cpp)
 extern uint8_t touchModuleAddress;
@@ -147,26 +145,10 @@ static bool lvgl_display_initialized = false;
 // Display flush callback
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
                           lv_color_t *color_p) {
-  uint32_t w = (area->x2 - area->x1 + 1);
-  uint32_t h = (area->y2 - area->y1 + 1);
-
-  // Check if Mutex exists AND take it
-  if (spiMutex != NULL &&
-      xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
-    tft.startWrite();
-    tft.setAddrWindow(area->x1, area->y1, w, h);
-    tft.pushColors((uint16_t *)&color_p->full, w * h, true);
-    tft.endWrite();
+  if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
+    tft.pushImage(area->x1, area->y1, area->x2 - area->x1 + 1, area->y2 - area->y1 + 1, (uint16_t *)color_p);
     xSemaphoreGiveRecursive(spiMutex);
-  } else if (spiMutex == NULL) {
-    // If mutex doesn't exist yet (very early at boot),
-    // we write anyway to not block the display
-    tft.startWrite();
-    tft.setAddrWindow(area->x1, area->y1, w, h);
-    tft.pushColors((uint16_t *)&color_p->full, w * h, true);
-    tft.endWrite();
   }
-
   lv_disp_flush_ready(drv);
 }
 
