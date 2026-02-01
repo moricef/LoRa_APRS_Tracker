@@ -35,18 +35,18 @@ public:
             cfg.pin_cs = 12;
             cfg.pin_rst = -1;
             cfg.pin_busy = -1;
-            cfg.panel_width = 240;
-            cfg.panel_height = 320;
-            cfg.memory_width = 240;
-            cfg.memory_height = 320;
+            cfg.panel_width = 320;
+            cfg.panel_height = 240;
+            cfg.memory_width = 320;
+            cfg.memory_height = 240;
             cfg.offset_x = 0;
             cfg.offset_y = 0;
             cfg.offset_rotation = 0;
             cfg.dummy_read_pixel = 16;
             cfg.dummy_read_bits = 2;
             cfg.readable = true;
-            cfg.invert = false;
-            cfg.rgb_order = true; // false = RGB, true = BGR
+            cfg.invert = true;
+            cfg.rgb_order = false; // false = RGB, true = BGR
             cfg.dlen_16bit = false;
             cfg.bus_shared = true;
             _panel_instance.config(cfg);
