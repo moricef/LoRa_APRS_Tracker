@@ -76,15 +76,6 @@ namespace UIMapManager {
         bool valid;
     };
     
-    struct LineSegment { int x0, y0, x1, y1; uint16_t color; };
-    
-    struct RenderBatch
-    {
-        LineSegment* segments;
-        size_t count;
-        size_t capacity;
-        uint16_t color;
-    };
 
     struct tileBounds
     {
@@ -125,7 +116,6 @@ namespace UIMapManager {
     // Function declarations
     void initTileCache();
     void clearTileCache();
-    void initBatchRendering();
     bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map);
     bool loadPalette(const char* palettePath);
     int findCachedTile(int zoom, int tileX, int tileY);

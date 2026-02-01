@@ -745,78 +745,6 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
 }
 
 
-    // --- Batch Rendering System ---
-
-    static RenderBatch* activeBatch = nullptr;
-    static size_t maxBatchSize = 0;
-
-    static size_t getOptimalBatchSize() {
-        return maxBatchSize;
-    }
-
-    void initBatchRendering() {
-        #ifdef BOARD_HAS_PSRAM
-            size_t psramFree = ESP.getFreePsram();
-            if (psramFree >= 4 * 1024 * 1024) 
-                maxBatchSize = 512;
-            else if (psramFree >= 2 * 1024 * 1024)
-                maxBatchSize = 256;
-            else 
-                maxBatchSize = 128;
-        #else
-            maxBatchSize = 64;
-        #endif
-        
-        activeBatch = nullptr;
-    }
-
-    static void createRenderBatch(size_t capacity) {
-        if (activeBatch) {
-            if (activeBatch->segments) 
-                delete[] activeBatch->segments;
-            delete activeBatch;
-            activeBatch = nullptr;
-        }
-        
-        activeBatch = new RenderBatch();
-        activeBatch->segments = new LineSegment[capacity];
-        activeBatch->count = 0;
-        activeBatch->capacity = capacity;
-        activeBatch->color = 0;
-    }
-
-    static bool canBatch(uint16_t color) {
-        if (!activeBatch) 
-            return true;
-        return (activeBatch->count == 0) || (activeBatch->color == color);
-    }
-
-    static void addToBatch(int x0, int y0, int x1, int y1, uint16_t color) {
-        if (!activeBatch)
-            createRenderBatch(maxBatchSize);
-        
-        if (!canBatch(color) || activeBatch->count >= activeBatch->capacity) 
-            return;
-
-        activeBatch->segments[activeBatch->count] = {x0, y0, x1, y1, color};
-        activeBatch->count++;
-        
-        if (activeBatch->count == 1) 
-            activeBatch->color = color;
-    }
-
-    static void flushBatch(LGFX_Sprite& map) {
-        if (!activeBatch || activeBatch->count == 0)
-            return;
-        
-        for (size_t i = 0; i < activeBatch->count; i++) {
-            const LineSegment& segment = activeBatch->segments[i];
-            map.drawLine(segment.x0, segment.y0, segment.x1, segment.y1, segment.color);
-        }
-        
-        activeBatch->count = 0;
-        activeBatch->color = 0;
-    }
 
     // --- RENDERING CONFIGURATION ---
     static bool fillPolygons = true;
@@ -834,168 +762,129 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
         return (r << 11) | (g << 5) | b;
     }
 
-    // Cohen-Sutherland algorithm to clip lines to the 0-255 viewport
-    // Prevents "Memory Wrap" artifacts on TFT_eSPI sprites (East-West repetitions)
-    bool clipLine(int &x0, int &y0, int &x1, int &y1, int w, int h) {
-        auto getCode = [&](int x, int y) {
-            int code = 0;
-            if (x < 0) code |= 1; else if (x >= w) code |= 2;
-            if (y < 0) code |= 4; else if (y >= h) code |= 8;
-            return code;
-        };
-        int code0 = getCode(x0, y0), code1 = getCode(x1, y1);
-        while (true) {
-            if (!(code0 | code1)) return true;
-            if (code0 & code1) return false;
-            int codeOut = code0 ? code0 : code1;
-            int x, y;
-            if (codeOut & 8) { 
-                x = x0 + (int32_t)(x1 - x0) * (h - 1 - y0) / (y1 - y0); 
-                y = h - 1; 
-            } else if (codeOut & 4) { 
-                x = x0 + (int32_t)(x1 - x0) * (0 - y0) / (y1 - y0); 
-                y = 0; 
-            } else if (codeOut & 2) { 
-                y = y0 + (int32_t)(y1 - y0) * (w - 1 - x0) / (x1 - x0); 
-                x = w - 1; 
-            } else { 
-                y = y0 + (int32_t)(y1 - y0) * (0 - x0) / (x1 - x0); 
-                x = 0; 
-            }
-            if (codeOut == code0) { 
-                x0 = x; y0 = y; code0 = getCode(x0, y0); 
-            } else { 
-                x1 = x; y1 = y; code1 = getCode(x1, y1); 
-            }
-        }
-    }
-
     // --- GEOMETRY DRAWING FUNCTIONS ---
-
-    void fillPolygonGeneral(LGFX_Sprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
-        if (numPoints < 3) return;
-        int iMinY = 255;
-        int iMaxY = 0;
-        for (int i = 0; i < numPoints; ++i) {
-            int y_px = (py[i] >> 4);
-            if (y_px < iMinY) iMinY = y_px;
-            if (y_px > iMaxY) iMaxY = y_px;
-        }
-        
-        // Split for strict indentation rules
-        if (iMinY < 0) { iMinY = 0; }
-        if (iMaxY > 255) { iMaxY = 255; }
-        if (iMinY > iMaxY) return;
-
-        int* xints = (int*)ps_malloc(numPoints * sizeof(int));
-        if (!xints) return;
-
-        for (int y = iMinY; y <= iMaxY; ++y) {
-            int nodes = 0;
-            int y_grid = (y << 4) + 8; // Sample at pixel center (Jordi's recommendation)
-            for (int i = 0, j = numPoints - 1; i < numPoints; j = i++) {
-                if ((py[i] < y_grid && py[j] >= y_grid) || (py[j] < y_grid && py[i] >= y_grid)) {
-                    if (py[j] != py[i])
-                        xints[nodes++] = px[i] + (int32_t)(y_grid - py[i]) * (px[j] - px[i]) / (py[j] - py[i]);
-                }
-            }
-            if (nodes > 1) {
-                std::sort(xints, xints + nodes);
-                for (int i = 0; i < nodes; i += 2) {
-                    if (i + 1 < nodes) {
-                        int x0 = (xints[i] >> 4) + xOffset;
-                        int x1 = (xints[i + 1] >> 4) + xOffset;
-                        if (x0 > 255 || x1 < 0) continue;
-                        int dX0 = (x0 < 0) ? 0 : x0;
-                        int dX1 = (x1 > 255) ? 255 : x1;
-                        if (dX1 >= dX0) map.drawFastHLine(dX0, y + yOffset, dX1 - dX0 + 1, color);
-                    }
-                }
-            }
-        }
-        free(xints);
-    }
-
-    void drawPolygonBorder(LGFX_Sprite &map, const int *px, const int *py, const int numPoints, const uint16_t borderColor, const int xOffset, const int yOffset) {
-        if (numPoints < 2) return;
-        int w = map.width(), h = map.height();
-        for (int i = 0; i < numPoints; ++i) {
-            int j = (i + 1) % numPoints;
-            int x0 = (px[i] >> 4) + xOffset, y0 = (py[i] >> 4) + yOffset;
-            int x1 = (px[j] >> 4) + xOffset, y1 = (py[j] >> 4) + yOffset;
-            if (clipLine(x0, y0, x1, y1, w, h)) map.drawLine(x0, y0, x1, y1, borderColor);
-        }
-    }
 
     // --- MAIN VECTOR RENDERING ENGINE ---
 
     bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
         File file = SD.open(path, FILE_READ);
-        if (!file) return false;
+        if (!file) {
+            Serial.printf("[MAP] Failed to open tile: %s\n", path);
+            return false;
+        }
         size_t fileSize = file.size();
+        if (fileSize < 22) { // Minimum size for header
+            file.close();
+            return false;
+        }
         uint8_t* data = (uint8_t*)ps_malloc(fileSize);
-        if (!data) { file.close(); return false; }
+        if (!data) { 
+            file.close(); 
+            Serial.println("[MAP] Failed to allocate memory for tile");
+            return false; 
+        }
         file.read(data, fileSize);
         file.close();
 
-        if (memcmp(data, "NAV1", 4) != 0) { free(data); return false; }
+        if (memcmp(data, "NAV1", 4) != 0) { 
+            free(data); 
+            Serial.printf("[MAP] Invalid NAV1 magic for tile: %s\n", path);
+            return false; 
+        }
+
         uint16_t feature_count;
         memcpy(&feature_count, data + 4, 2);
 
-        int mapW = map.width(), mapH = map.height();
-        initBatchRendering();
-        createRenderBatch(getOptimalBatchSize());
         map.fillSprite(TFT_WHITE); 
+        map.setClipRect(0, 0, 256, 256); // IMPORTANT: Fixes horizontal overlap bug (Memory Wrap).
 
         uint32_t last_wdt_ms = millis();
-        for (int pass = 1; pass <= 2; pass++) {
-            uint8_t* p = data + 22; 
-            for (uint16_t i = 0; i < feature_count; i++) {
-                if (millis() - last_wdt_ms > 100) { esp_task_wdt_reset(); yield(); last_wdt_ms = millis(); }
-                if (p + 12 > data + fileSize) break;
-
-                uint8_t type = p[0];
-                uint16_t rawColor; memcpy(&rawColor, p + 1, 2);
-                uint16_t renderColor = (rawColor << 8) | (rawColor >> 8);
-                uint8_t width = p[4]; 
-                uint16_t count; memcpy(&count, p + 9, 2);
-                int16_t* pts = (int16_t*)(p + 12);
-
-                if (pass == 1 && type == 3 && count >= 3) {
-                    uint16_t first_ring_end = count;
-                    uint8_t* ring_ptr = (uint8_t*)pts + (count * 4);
-                    if (ring_ptr < data + fileSize && ring_ptr[0] > 0) memcpy(&first_ring_end, ring_ptr + 1, 2);
-
-                    int* px = (int*)ps_malloc(first_ring_end * sizeof(int));
-                    int* py = (int*)ps_malloc(first_ring_end * sizeof(int));
-                    if (px && py) {
-                        for (uint16_t j = 0; j < first_ring_end; j++) {
-                            px[j] = pts[j*2]; py[j] = pts[j*2 + 1];
-                        }
-                        if (fillPolygons) fillPolygonGeneral(map, px, py, first_ring_end, renderColor, xOffset, yOffset);
-                        uint16_t bColRaw = darkenRGB565(rawColor, 0.15f);
-                        uint16_t renderBorder = (bColRaw << 8) | (bColRaw >> 8);
-                        drawPolygonBorder(map, px, py, first_ring_end, renderBorder, xOffset, yOffset);
-                    }
-                    if (px) { free(px); } if (py) { free(py); }
-                }
-                else if (pass == 2 && type == 2 && count >= 2) {
-                    for (uint16_t j = 1; j < count; j++) {
-                        int x0 = (pts[(j-1)*2] >> 4) + xOffset;
-                        int y0 = (pts[(j-1)*2+1] >> 4) + yOffset;
-                        int x1 = (pts[j*2] >> 4) + xOffset;
-                        int y1 = (pts[j*2+1] >> 4) + yOffset;
-                        if (clipLine(x0, y0, x1, y1, mapW, mapH)) {
-                            if (width <= 1) addToBatch(x0, y0, x1, y1, renderColor);
-                            else map.drawWideLine(x0, y0, x1, y1, width, renderColor);
-                        }
-                    }
-                }
-                p += 12 + (count * 4);
-                if (type == 3 && p < data + fileSize) p += 1 + (p[0] * 2);
+    
+        uint8_t* p = data + 22; // Start of first feature header
+        for (uint16_t i = 0; i < feature_count; i++) {
+            if (millis() - last_wdt_ms > 100) { 
+                esp_task_wdt_reset(); 
+                yield(); 
+                last_wdt_ms = millis(); 
             }
-            if (pass == 2) flushBatch(map);
+            if (p + 12 > data + fileSize) break; // Bounds check for header
+
+            // Parse feature header (12 bytes)
+            uint8_t geomType = p[0];
+            uint16_t colorRgb565; 
+            memcpy(&colorRgb565, p + 1, 2); // Color is Little-Endian in file
+            uint8_t widthPixels = p[4];
+            uint16_t coordCount; 
+            memcpy(&coordCount, p + 9, 2);
+        
+            p += 12; // Move pointer past header to coordinates
+
+            if (p + (coordCount * 4) > data + fileSize) break; // Bounds check for coordinates
+            int16_t* coords = (int16_t*)p;
+
+            if (geomType == 3 && coordCount >= 3) { // Polygon
+                uint16_t ringCount = 0;
+                uint16_t* ringEnds = nullptr;
+
+                uint8_t* ring_ptr = p + (coordCount * 4);
+                if (ring_ptr + 2 <= data + fileSize) {
+                    memcpy(&ringCount, ring_ptr, 2);
+                    if (ringCount > 0 && ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
+                        ringEnds = (uint16_t*)(ring_ptr + 2);
+                    } else {
+                        ringCount = 0;
+                    }
+                }
+
+                lgfx::Point* points = (lgfx::Point*)ps_malloc(coordCount * sizeof(lgfx::Point));
+                if (points) {
+                    for (uint16_t j = 0; j < coordCount; j++) {
+                        points[j].x = (coords[j * 2] >> 4) + xOffset;
+                        points[j].y = (coords[j * 2 + 1] >> 4) + yOffset;
+                    }
+                
+                    uint16_t outerRingEnd = (ringCount > 0) ? ringEnds[0] : coordCount;
+                
+                    if (fillPolygons && outerRingEnd >= 3) {
+                        map.fillPolygon(points, outerRingEnd, colorRgb565);
+                    }
+
+                    if (outerRingEnd >= 2) {
+                        uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
+                        map.drawPolygon(points, outerRingEnd, borderColor);
+                    }
+
+                    free(points);
+                }
+            } else if (geomType == 2 && coordCount >= 2) { // LineString
+                for (uint16_t j = 1; j < coordCount; j++) {
+                    int x0 = (coords[(j - 1) * 2] >> 4) + xOffset;
+                    int y0 = (coords[(j - 1) * 2 + 1] >> 4) + yOffset;
+                    int x1 = (coords[j * 2] >> 4) + xOffset;
+                    int y1 = (coords[j * 2 + 1] >> 4) + yOffset;
+                
+                    if (widthPixels <= 1) {
+                        map.drawLine(x0, y0, x1, y1, colorRgb565);
+                    } else {
+                        map.drawWideLine(x0, y0, x1, y1, widthPixels, colorRgb565);
+                    }
+                }
+            }
+
+            p += (coordCount * 4); // Move pointer past coordinates
+            if (geomType == 3) { // If polygon, skip ring data from buffer
+                uint16_t ringCount;
+                if (p + 2 <= data + fileSize) {
+                    memcpy(&ringCount, p, 2);
+                    p += 2;
+                    if (p + (ringCount * 2) <= data + fileSize) {
+                        p += (ringCount * 2);
+                    }
+                }
+            }
         }
+
+        map.clearClipRect();
         free(data);
         return true;
     }
@@ -1675,8 +1564,6 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
 
         // Discover and set the map region if it's not already defined
         discoverAndSetMapRegion();
-
-        initBatchRendering();
 
         // Clean up old station buttons if screen is being recreated
         cleanup_station_buttons();
