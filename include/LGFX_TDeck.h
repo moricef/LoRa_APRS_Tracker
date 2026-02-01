@@ -35,10 +35,10 @@ public:
             cfg.pin_cs = 12;
             cfg.pin_rst = -1;
             cfg.pin_busy = -1;
-            cfg.panel_width = 240;
-            cfg.panel_height = 320;
-            cfg.memory_width = 240;
-            cfg.memory_height = 320;
+            cfg.panel_width = 320;
+            cfg.panel_height = 240;
+            cfg.memory_width = 320;
+            cfg.memory_height = 240;
             cfg.offset_x = 0;
             cfg.offset_y = 0;
             cfg.offset_rotation = 0;

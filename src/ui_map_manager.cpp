@@ -1688,7 +1688,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     if (found_type != TILE_NONE) {
         Serial.printf("[MAP] Found file: %s\n", found_path);
         newSprite = new LGFX_Sprite(&tft);
-        // setAttribute(PSRAM_ENABLE, true) is not needed with LovyanGFX; it's handled automatically.
+        newSprite->setPsram(true); // Explicitly use PSRAM for map tiles
         if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr && newSprite->getBuffer() != nullptr) {
             if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 switch (found_type) {
