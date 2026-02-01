@@ -10,7 +10,7 @@
 #include <lvgl.h>
 #include <Arduino.h> // Pour String, millis, etc.
 #include <TinyGPS++.h> // Pour les données GPS
-#include <TFT_eSPI.h>
+#include "LGFX_TDeck.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <cstdint>
@@ -22,7 +22,7 @@ class Configuration;
 // External data sources from lvgl_ui.cpp and other global variables
 extern TinyGPSPlus gps;
 extern Configuration Config;
-extern TFT_eSPI tft;
+extern LGFX_TDeck tft;
 extern uint8_t myBeaconsIndex;
 extern int mapStationsCount;
 extern SemaphoreHandle_t spiMutex; // Declared extern for SPI bus mutex access
@@ -60,7 +60,7 @@ namespace UIMapManager {
     
     struct CachedTile
     {
-        TFT_eSprite* sprite;
+        LGFX_Sprite* sprite;
         uint32_t tileHash;
         uint32_t lastAccess;
         bool isValid;
@@ -126,7 +126,7 @@ namespace UIMapManager {
     void initTileCache();
     void clearTileCache();
     void initBatchRendering();
-    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, TFT_eSprite &map);
+    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map);
     bool loadPalette(const char* palettePath);
     int findCachedTile(int zoom, int tileX, int tileY);
     int findCacheSlot();
