@@ -1018,26 +1018,32 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
     }
     free(xints);
 }
-
     void drawPolygonBorder(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t borderColor, const uint16_t fillColor, const int xOffset, const int yOffset) {
-        if (numPoints < 2) return;
+     if (numPoints < 2) return;
 
-        for (int i = 0; i < numPoints; ++i) {
-            int j = (i + 1) % numPoints;
-            const bool marginA = isPointOnMargin(px[i], py[i]);
-            const bool marginB = isPointOnMargin(px[j], py[j]);
-            const uint16_t color = (marginA && marginB) ? fillColor : borderColor;
+     // On utilise map.width() et map.height() pour le clipping dynamique
+     int w = map.width();
+     int h = map.height();
 
-            const int x0 = px[i] + xOffset;
-            const int y0 = py[i] + yOffset;
-            const int x1 = px[j] + xOffset;
-            const int y1 = py[j] + yOffset;
-            
-            if (!(marginA && marginB)) {
-                map.drawLine(x0, y0, x1, y1, color);
-            }
-        }
+     for (int i = 0; i < numPoints; ++i) {
+        int j = (i + 1) % numPoints;
+        
+        // On récupère les coordonnées relatives
+        float x0 = (float)px[i];
+        float y0 = (float)py[i];
+        float x1 = (float)px[j];
+        float y1 = (float)py[j];
+
+        // --- CLIPPING STRICT ---
+        // Si le segment est totalement hors des limites du Sprite, on l'ignore
+        if ((x0 < 0 && x1 < 0) || (x0 >= w && x1 >= w) || 
+            (y0 < 0 && y1 < 0) || (y0 >= h && y1 >= h)) continue;
+
+        // On dessine le segment. TFT_eSPI gère le clipping interne, 
+        // mais le fait d'avoir filtré les segments "lointains" stabilise le rendu vertical.
+        map.drawLine((int)x0 + xOffset, (int)y0 + yOffset, (int)x1 + xOffset, (int)y1 + yOffset, borderColor);
     }
+}
 
 // === Main Rendering Function ===
 
