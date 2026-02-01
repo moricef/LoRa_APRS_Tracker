@@ -959,6 +959,31 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         
         return true;
     }
+    
+    // Fonction pour couper une ligne aux dimensions du Sprite (0-255)
+    // Retourne false si la ligne est totalement hors-champ
+    bool clipLine(int &x0, int &y0, int &x1, int &y1, int w, int h) {
+        auto getCode = [&](int x, int y) {
+            int code = 0;
+            if (x < 0) code |= 1; else if (x >= w) code |= 2;
+            if (y < 0) code |= 4; else if (y >= h) code |= 8;
+            return code;
+        };
+
+     int code0 = getCode(x0, y0), code1 = getCode(x1, y1);
+     while (true) {
+        if (!(code0 | code1)) return true;
+        if (code0 & code1) return false;
+        int codeOut = code0 ? code0 : code1;
+        int x, y;
+        if (codeOut & 8) { x = x0 + (x1 - x0) * (h - 1 - y0) / (y1 - y0); y = h - 1; }
+        else if (codeOut & 4) { x = x0 + (x1 - x0) * (0 - y0) / (y1 - y0); y = 0; }
+        else if (codeOut & 2) { y = y0 + (y1 - y0) * (w - 1 - x0) / (x1 - x0); x = w - 1; }
+        else { y = y0 + (y1 - y0) * (0 - x0) / (x1 - x0); x = 0; }
+        if (codeOut == code0) { x0 = x; y0 = y; code0 = getCode(x0, y0); }
+        else { x1 = x; y1 = y; code1 = getCode(x1, y1); }
+    }
+}
 
 void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
     if (numPoints < 3) return;
@@ -1009,14 +1034,17 @@ void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const in
 
 void drawPolygonBorder(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t borderColor, const int xOffset, const int yOffset) {
     if (numPoints < 2) return;
+    int w = map.width(), h = map.height();
+
     for (int i = 0; i < numPoints; ++i) {
         int j = (i + 1) % numPoints;
-        int x0 = (px[i] >> 4) + xOffset;
-        int y0 = (py[i] >> 4) + yOffset;
-        int x1 = (px[j] >> 4) + xOffset;
-        int y1 = (py[j] >> 4) + yOffset;
-        if ((x0 < 0 && x1 < 0) || (x0 > 255 && x1 > 255) || (y0 < 0 && y1 < 0) || (y0 > 255 && y1 > 255)) continue;
-        map.drawLine(x0, y0, x1, y1, borderColor);
+        int x0 = (px[i] >> 4) + xOffset, y0 = (py[i] >> 4) + yOffset;
+        int x1 = (px[j] >> 4) + xOffset, y1 = (py[j] >> 4) + yOffset;
+
+        // On coupe la ligne manuellement avant de l'envoyer à TFT_eSPI
+        if (clipLine(x0, y0, x1, y1, w, h)) {
+            map.drawLine(x0, y0, x1, y1, borderColor);
+        }
     }
 }
 
@@ -1096,12 +1124,15 @@ bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, TFT_eSprite 
                     int y0 = (pts[(j-1)*2+1] >> 4) + yOffset;
                     int x1 = (pts[j*2] >> 4) + xOffset;
                     int y1 = (pts[j*2+1] >> 4) + yOffset;
-                    if (!((x0 < 0 && x1 < 0) || (x0 > 255 && x1 > 255) || (y0 < 0 && y1 < 0) || (y0 > 255 && y1 > 255))) {
-                        if (p[4] <= 1) addToBatch(x0, y0, x1, y1, renderColor);
-                        else map.drawWideLine(x0, y0, x1, y1, p[4], renderColor);
+
+                    // CLIPPING MANUEL POUR LES ROUTES (Empêche le wrap mémoire)
+                    if (clipLine(x0, y0, x1, y1, mapW, mapH)) {
+                        if (width <= 1) addToBatch(x0, y0, x1, y1, renderColor);
+                        else map.drawWideLine(x0, y0, x1, y1, width, renderColor);
                     }
                 }
             }
+            
             p += 12 + (count * 4);
             if (type == 3 && p < data + fileSize) p += 1 + (p[0] * 2);
         }
