@@ -45,7 +45,7 @@ namespace UIMapManager {
     // Map state variables
     static const int map_available_zooms[] = {8, 9, 10, 11, 12, 13, 14, 15, 16}; 
     const int map_zoom_count = sizeof(map_available_zooms) / sizeof(map_available_zooms[0]);
-    int map_zoom_index = 4;  // Index in map_available_zooms (starts at zoom 8)
+    int map_zoom_index = 0;  // Index in map_available_zooms (starts at zoom 8)
     int map_current_zoom = map_available_zooms[0]; // Initialize with first available zoom
     float map_center_lat = 0.0f;
     float map_center_lon = 0.0f;
@@ -818,7 +818,10 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         activeBatch->color = 0;
     }
 
-// --- RENDERING UTILITIES ---
+    // --- RENDERING CONFIGURATION ---
+    static bool fillPolygons = true;
+
+    // --- RENDERING UTILITIES ---
 
     // Darkens an RGB565 color by a given amount (0.0 to 1.0)
     uint16_t darkenRGB565(const uint16_t color, const float amount) {
@@ -842,32 +845,46 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         };
         int code0 = getCode(x0, y0), code1 = getCode(x1, y1);
         while (true) {
-            if (!(code0 | code1)) return true; // Segment completely inside
-            if (code0 & code1) return false;    // Segment completely outside
+            if (!(code0 | code1)) return true;
+            if (code0 & code1) return false;
             int codeOut = code0 ? code0 : code1;
             int x, y;
-            if (codeOut & 8) { x = x0 + (int32_t)(x1 - x0) * (h - 1 - y0) / (y1 - y0); y = h - 1; }
-            else if (codeOut & 4) { x = x0 + (int32_t)(x1 - x0) * (0 - y0) / (y1 - y0); y = 0; }
-            else if (codeOut & 2) { y = y0 + (int32_t)(y1 - y0) * (w - 1 - x0) / (x1 - x0); x = w - 1; }
-            else { y = y0 + (int32_t)(y1 - y0) * (0 - x0) / (x1 - x0); x = 0; }
-            if (codeOut == code0) { x0 = x; y0 = y; code0 = getCode(x0, y0); }
-            else { x1 = x; y1 = y; code1 = getCode(x1, y1); }
+            if (codeOut & 8) { 
+                x = x0 + (int32_t)(x1 - x0) * (h - 1 - y0) / (y1 - y0); 
+                y = h - 1; 
+            } else if (codeOut & 4) { 
+                x = x0 + (int32_t)(x1 - x0) * (0 - y0) / (y1 - y0); 
+                y = 0; 
+            } else if (codeOut & 2) { 
+                y = y0 + (int32_t)(y1 - y0) * (w - 1 - x0) / (x1 - x0); 
+                x = w - 1; 
+            } else { 
+                y = y0 + (int32_t)(y1 - y0) * (0 - x0) / (x1 - x0); 
+                x = 0; 
+            }
+            if (codeOut == code0) { 
+                x0 = x; y0 = y; code0 = getCode(x0, y0); 
+            } else { 
+                x1 = x; y1 = y; code1 = getCode(x1, y1); 
+            }
         }
     }
 
     // --- GEOMETRY DRAWING FUNCTIONS ---
 
-    // Scanline polygon filler using 4096-grid units for intersection math
     void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
         if (numPoints < 3) return;
-        int iMinY = 255, iMaxY = 0;
+        int iMinY = 255;
+        int iMaxY = 0;
         for (int i = 0; i < numPoints; ++i) {
             int y_px = (py[i] >> 4);
             if (y_px < iMinY) iMinY = y_px;
             if (y_px > iMaxY) iMaxY = y_px;
         }
-        // Strict vertical clipping
-        if (iMinY < 0) iMinY = 0; if (iMaxY > 255) iMaxY = 255;
+        
+        // Split for strict indentation rules
+        if (iMinY < 0) { iMinY = 0; }
+        if (iMaxY > 255) { iMaxY = 255; }
         if (iMinY > iMaxY) return;
 
         int* xints = (int*)ps_malloc(numPoints * sizeof(int));
@@ -888,7 +905,6 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
                     if (i + 1 < nodes) {
                         int x0 = (xints[i] >> 4) + xOffset;
                         int x1 = (xints[i + 1] >> 4) + xOffset;
-                        // Strict horizontal clipping to prevent Memory Wrap
                         if (x0 > 255 || x1 < 0) continue;
                         int dX0 = (x0 < 0) ? 0 : x0;
                         int dX1 = (x1 > 255) ? 255 : x1;
@@ -913,7 +929,6 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 
     // --- MAIN VECTOR RENDERING ENGINE ---
 
-    // Renders a NAV1 binary tile (16-bit relative coordinates, 12-byte header)
     bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, TFT_eSprite &map) {
         File file = SD.open(path, FILE_READ);
         if (!file) return false;
@@ -933,7 +948,6 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         map.fillSprite(TFT_WHITE); 
 
         uint32_t last_wdt_ms = millis();
-        // Two-pass rendering for Z-order (1: Polygons, 2: Lines/Points)
         for (int pass = 1; pass <= 2; pass++) {
             uint8_t* p = data + 22; 
             for (uint16_t i = 0; i < feature_count; i++) {
@@ -942,7 +956,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
 
                 uint8_t type = p[0];
                 uint16_t rawColor; memcpy(&rawColor, p + 1, 2);
-                uint16_t renderColor = (rawColor << 8) | (rawColor >> 8); // Hardware byte swap
+                uint16_t renderColor = (rawColor << 8) | (rawColor >> 8);
                 uint8_t width = p[4]; 
                 uint16_t count; memcpy(&count, p + 9, 2);
                 int16_t* pts = (int16_t*)(p + 12);
@@ -956,8 +970,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
                     int* py = (int*)ps_malloc(first_ring_end * sizeof(int));
                     if (px && py) {
                         for (uint16_t j = 0; j < first_ring_end; j++) {
-                            px[j] = pts[j*2];     // Raw X (0-4096)
-                            py[j] = pts[j*2 + 1]; // Raw Y (0-4096)
+                            px[j] = pts[j*2]; py[j] = pts[j*2 + 1];
                         }
                         if (fillPolygons) fillPolygonGeneral(map, px, py, first_ring_end, renderColor, xOffset, yOffset);
                         uint16_t bColRaw = darkenRGB565(rawColor, 0.15f);
@@ -968,13 +981,24 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
                 }
                 else if (pass == 2 && type == 2 && count >= 2) {
                     for (uint16_t j = 1; j < count; j++) {
-                        // Bit-shift >> 4 for bit-exact tile alignment
                         int x0 = (pts[(j-1)*2] >> 4) + xOffset;
                         int y0 = (pts[(j-1)*2+1] >> 4) + yOffset;
                         int x1 = (pts[j*2] >> 4) + xOffset;
                         int y1 = (pts[j*2+1] >> 4) + yOffset;
                         if (clipLine(x0, y0, x1, y1, mapW, mapH)) {
-                            if (width <= 1) addToBatch(x0, y0, x1, y1, renderColor)
+                            if (width <= 1) addToBatch(x0, y0, x1, y1, renderColor);
+                            else map.drawWideLine(x0, y0, x1, y1, width, renderColor);
+                        }
+                    }
+                }
+                p += 12 + (count * 4);
+                if (type == 3 && p < data + fileSize) p += 1 + (p[0] * 2);
+            }
+            if (pass == 2) flushBatch(map);
+        }
+        free(data);
+        return true;
+    }
 
 // =========================================================================
     // =                  END OF VECTOR TILE RENDERING ENGINE                  =
