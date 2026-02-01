@@ -15,6 +15,7 @@
 #include <freertos/semphr.h>
 #include <cstdint>
 #include "esp_heap_caps.h"
+#include <vector> // For std::vector
 
 // Forward declarations
 class Configuration;
@@ -74,6 +75,14 @@ namespace UIMapManager {
         uint8_t* data;           // Combined RGB565+Alpha buffer in PSRAM
         uint32_t lastAccess;     // For LRU eviction
         bool valid;
+    };
+    
+    struct Edge {
+        int32_t yMax;
+        int32_t xVal;   // 16.16 fixed-point
+        int32_t slope;  // 16.16 fixed-point
+        int nextInBucket;
+        int nextActive;
     };
     
 
@@ -139,6 +148,7 @@ namespace UIMapManager {
     void btn_map_left_clicked(lv_event_t* e);
     void btn_map_right_clicked(lv_event_t* e);
     void create_map_screen();
+    void fillPolygonGeneral(LGFX_Sprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset, uint16_t ringCount, uint16_t* ringEnds);
 
 } // namespace UIMapManager
 

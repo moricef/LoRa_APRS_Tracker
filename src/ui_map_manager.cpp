@@ -22,6 +22,8 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <vector>
+#include <algorithm> // For std::min/max
+#include <climits>   // For INT_MIN/INT_MAX
 
 #include "ui_map_manager.h"
 #include "configuration.h"
@@ -34,6 +36,10 @@
 
 namespace UIMapManager {
 
+
+    // Static vectors for AEL polygon filler
+    static std::vector<Edge> edgePool;
+    static std::vector<int> edgeBuckets;
 
     // UI elements - Map screen
     lv_obj_t* screen_map = nullptr;
@@ -764,6 +770,132 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
 
     // --- GEOMETRY DRAWING FUNCTIONS ---
 
+    void fillPolygonGeneral(LGFX_Sprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset, uint16_t ringCount, uint16_t* ringEnds)
+    {
+        if (numPoints < 3) return;
+
+        int minY = INT_MAX, maxY = INT_MIN;
+        for (int i = 0; i < numPoints; i++) {
+            if (py[i] < minY) minY = py[i];
+            if (py[i] > maxY) maxY = py[i];
+        }
+
+        if (maxY < 0 || minY >= (int)MAP_TILE_SIZE) return;
+
+        edgePool.clear();
+        int bucketCount = maxY - minY + 1;
+        if (bucketCount < 0) return;
+        edgeBuckets.assign(bucketCount, -1);
+
+        uint16_t count = (ringCount == 0) ? 1 : ringCount;
+        uint16_t defaultEnds[1] = { (uint16_t)numPoints };
+        uint16_t* ends = (ringEnds == nullptr) ? defaultEnds : ringEnds;
+
+        int ringStart = 0;
+        for (uint16_t r = 0; r < count; r++) {
+            int ringEnd = ends[r];
+            int ringNumPoints = ringEnd - ringStart;
+            if (ringNumPoints < 3) {
+                ringStart = ringEnd;
+                continue;
+            }
+
+            for (int i = 0; i < ringNumPoints; i++) {
+                int next = (i + 1) % ringNumPoints;
+                int x1 = px[ringStart + i], y1 = py[ringStart + i];
+                int x2 = px[ringStart + next], y2 = py[ringStart + next];
+                if (y1 == y2) continue;
+
+                Edge e;
+                e.nextActive = -1;
+                if (y1 < y2) {
+                    e.yMax = y2;
+                    e.xVal = x1 << 16;
+                    e.slope = ((x2 - x1) << 16) / (y2 - y1);
+                    if (y1 - minY >= 0 && y1 - minY < edgeBuckets.size()) {
+                        e.nextInBucket = edgeBuckets[y1 - minY];
+                        edgePool.push_back(e);
+                        edgeBuckets[y1 - minY] = edgePool.size() - 1;
+                    }
+                } else {
+                    e.yMax = y1;
+                    e.xVal = x2 << 16;
+                    e.slope = ((x1 - x2) << 16) / (y1 - y2);
+                    if (y2 - minY >= 0 && y2 - minY < edgeBuckets.size()) {
+                        e.nextInBucket = edgeBuckets[y2 - minY];
+                        edgePool.push_back(e);
+                        edgeBuckets[y2 - minY] = edgePool.size() - 1;
+                    }
+                }
+            }
+            ringStart = ringEnd;
+        }
+
+        int activeHead = -1;
+        int startY = std::max(minY, -yOffset);
+        int endY = std::min(maxY, (int)MAP_TILE_SIZE - 1 - yOffset);
+
+        for (int y = startY; y <= endY; y++) {
+            if (y - minY >= 0 && y - minY < edgeBuckets.size()) {
+                int eIdx = edgeBuckets[y - minY];
+                while (eIdx != -1) {
+                    int nextIdx = edgePool[eIdx].nextInBucket;
+                    edgePool[eIdx].nextActive = activeHead;
+                    activeHead = eIdx;
+                    eIdx = nextIdx;
+                }
+            }
+
+            int* pCurrIdx = &activeHead;
+            while (*pCurrIdx != -1) {
+                if (edgePool[*pCurrIdx].yMax <= y) {
+                    *pCurrIdx = edgePool[*pCurrIdx].nextActive;
+                } else {
+                    pCurrIdx = &(edgePool[*pCurrIdx].nextActive);
+                }
+            }
+
+            if (activeHead == -1) continue;
+
+            int sorted = -1;
+            int active = activeHead;
+            while (active != -1) {
+                int nextActive = edgePool[active].nextActive;
+                if (sorted == -1 || edgePool[active].xVal < edgePool[sorted].xVal) {
+                    edgePool[active].nextActive = sorted;
+                    sorted = active;
+                } else {
+                    int s = sorted;
+                    while (edgePool[s].nextActive != -1 && edgePool[edgePool[s].nextActive].xVal < edgePool[active].xVal) {
+                        s = edgePool[s].nextActive;
+                    }
+                    edgePool[active].nextActive = edgePool[s].nextActive;
+                    edgePool[s].nextActive = active;
+                }
+                active = nextActive;
+            }
+            activeHead = sorted;
+
+            int yy = y + yOffset;
+            int left = activeHead;
+            while (left != -1 && edgePool[left].nextActive != -1) {
+                int right = edgePool[left].nextActive;
+                int xStart = (edgePool[left].xVal >> 16) + xOffset;
+                int xEnd = (edgePool[right].xVal >> 16) + xOffset;
+                if (xStart < 0) xStart = 0;
+                if (xEnd > (int)MAP_TILE_SIZE) xEnd = (int)MAP_TILE_SIZE;
+                if (xEnd > xStart) {
+                    map.drawFastHLine(xStart, yy, xEnd - xStart, color);
+                }
+                left = edgePool[right].nextActive;
+            }
+            
+            for (int a = activeHead; a != -1; a = edgePool[a].nextActive) {
+                edgePool[a].xVal += edgePool[a].slope;
+            }
+        }
+    }
+
     // --- MAIN VECTOR RENDERING ENGINE ---
 
     bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
@@ -836,25 +968,34 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
                     }
                 }
 
-                lgfx::Point* points = (lgfx::Point*)ps_malloc(coordCount * sizeof(lgfx::Point));
-                if (points) {
+                int* px = (int*)ps_malloc(coordCount * sizeof(int));
+                int* py = (int*)ps_malloc(coordCount * sizeof(int));
+
+                if (px && py) {
                     for (uint16_t j = 0; j < coordCount; j++) {
-                        points[j].x = (coords[j * 2] >> 4) + xOffset;
-                        points[j].y = (coords[j * 2 + 1] >> 4) + yOffset;
+                        px[j] = (coords[j * 2] >> 4) + xOffset;
+                        py[j] = (coords[j * 2 + 1] >> 4) + yOffset;
                     }
                 
-                    uint16_t outerRingEnd = (ringCount > 0) ? ringEnds[0] : coordCount;
-                
-                    if (fillPolygons && outerRingEnd >= 3) {
-                        map.fillPolygon(points, outerRingEnd, colorRgb565);
+                    if (fillPolygons) {
+                        fillPolygonGeneral(map, px, py, coordCount, colorRgb565, 0, 0, ringCount, ringEnds);
                     }
 
+                    uint16_t outerRingEnd = (ringCount > 0) ? ringEnds[0] : coordCount;
                     if (outerRingEnd >= 2) {
                         uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
-                        map.drawPolygon(points, outerRingEnd, borderColor);
+                        for (int k = 0; k < outerRingEnd; k++) {
+                            int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
+                            map.drawLine(px[k], py[k], px[next], py[next], borderColor);
+                        }
                     }
-
-                    free(points);
+                }
+                
+                if (px) {
+                    free(px);
+                }
+                if (py) {
+                    free(py);
                 }
             } else if (geomType == 2 && coordCount >= 2) { // LineString
                 for (uint16_t j = 1; j < coordCount; j++) {
@@ -917,7 +1058,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
     static int pngSpriteCallback(PNGDRAW* pDraw) {
         if (!spriteDecodeContext.sprite) return 0; // Stop if sprite is not set
         // Get a pointer to the sprite's framebuffer
-        uint16_t* pfb = (uint16_t*)spriteDecodeContext.sprite->frameBuffer(0);
+        uint16_t* pfb = (uint16_t*)spriteDecodeContext.sprite->getBuffer();
         // Calculate the start of the current line in the framebuffer
         uint16_t* pLine = pfb + (pDraw->y * MAP_TILE_SIZE);
         // Decode the line directly into the sprite's framebuffer
@@ -1412,7 +1553,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
 
 // Helper function to safely copy a sprite to the canvas with clipping
 static void copySpriteToCanvasWithClip(lv_obj_t* canvas, LGFX_Sprite* sprite, int offsetX, int offsetY) {
-    if (!canvas || !sprite || sprite->frameBuffer(0) == nullptr) return;
+    if (!canvas || !sprite || sprite->getBuffer() == nullptr) return;
 
     // Calculate source and destination rectangles for clipping
     int src_x = 0;
@@ -1448,7 +1589,7 @@ static void copySpriteToCanvasWithClip(lv_obj_t* canvas, LGFX_Sprite* sprite, in
 
     // If there is anything to draw
     if (copy_w > 0 && copy_h > 0) {
-        uint16_t* fb = (uint16_t*)sprite->frameBuffer(0);
+        uint16_t* fb = (uint16_t*)sprite->getBuffer();
         // Copy scanline by scanline to handle correct source buffer stride
         for (int y = 0; y < copy_h; y++) {
             uint16_t* src_row_ptr = fb + ((src_y + y) * MAP_TILE_SIZE) + src_x;
@@ -1510,7 +1651,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         Serial.printf("[MAP] Found file: %s\n", found_path);
         newSprite = new LGFX_Sprite(&tft);
         // setAttribute(PSRAM_ENABLE, true) is not needed with LovyanGFX; it's handled automatically.
-        if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr && newSprite->frameBuffer(0) != nullptr) {
+        if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr && newSprite->getBuffer() != nullptr) {
             if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 switch (found_type) {
                     case TILE_NAV:
