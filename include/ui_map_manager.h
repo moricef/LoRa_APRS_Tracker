@@ -61,7 +61,7 @@ namespace UIMapManager {
     
     struct CachedTile
     {
-        LGFX_Sprite* sprite;
+        lgfx::LGFX_Sprite* sprite;
         uint32_t tileHash;
         uint32_t lastAccess;
         bool isValid;
@@ -84,6 +84,10 @@ namespace UIMapManager {
         int nextInBucket;
         int nextActive;
     };
+
+    // Static vectors for AEL polygon filler
+    static std::vector<Edge> edgePool;
+    static std::vector<int> edgeBuckets;
     
 
     struct tileBounds
