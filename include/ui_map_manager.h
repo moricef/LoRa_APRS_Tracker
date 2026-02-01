@@ -85,6 +85,18 @@ namespace UIMapManager {
         int nextActive;
     };
 
+    // Request for the background rendering task
+    struct RenderRequest {
+        char path[128];
+        int16_t xOffset;
+        int16_t yOffset;
+        lgfx::LGFX_Sprite* targetSprite;
+    };
+
+    // Handles for the asynchronous rendering system
+    extern QueueHandle_t mapRenderQueue;
+    extern SemaphoreHandle_t spriteMutex;
+
 
     struct tileBounds
     {

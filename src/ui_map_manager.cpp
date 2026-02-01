@@ -37,6 +37,11 @@
 namespace UIMapManager {
 
 
+    // Handles for the asynchronous rendering system
+    QueueHandle_t mapRenderQueue = nullptr;
+    SemaphoreHandle_t spriteMutex = nullptr;
+    static TaskHandle_t mapRenderTaskHandle = nullptr;
+
     // Static vectors for AEL polygon filler
     static std::vector<Edge> edgePool;
     static std::vector<int> edgeBuckets;
@@ -752,6 +757,33 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
 
 
 
+    // LVGL async call to invalidate the map canvas from another thread
+    static void invalidate_map_canvas_cb(void* user_data) {
+        if (map_canvas) {
+            lv_obj_invalidate(map_canvas);
+        }
+    }
+
+    // Background task to render map tiles on Core 0
+    static void mapRenderTask(void* param) {
+        RenderRequest request;
+        Serial.println("[MAP] Render task started on Core 0");
+
+        while (true) {
+            if (xQueueReceive(mapRenderQueue, &request, portMAX_DELAY) == pdTRUE) {
+                if (request.targetSprite) {
+                    // Lock the sprite for drawing
+                    if (xSemaphoreTake(spriteMutex, portMAX_DELAY) == pdTRUE) {
+                        renderTile(request.path, request.xOffset, request.yOffset, *request.targetSprite);
+                        xSemaphoreGive(spriteMutex);
+                    }
+                    // Request a redraw on the LVGL thread
+                    lv_async_call(invalidate_map_canvas_cb, NULL);
+                }
+            }
+        }
+    }
+
     // --- RENDERING CONFIGURATION ---
     static bool fillPolygons = true;
 
@@ -1235,6 +1267,7 @@ bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite 
     // Map back button handler
     void btn_map_back_clicked(lv_event_t* e) {
         Serial.println("[LVGL] MAP BACK button pressed");
+        stopRenderTask();
         destroy_station_pool();
         cleanup_station_buttons();  // Clean up station buttons when leaving map
         map_follow_gps = true;  // Reset to follow GPS when leaving map
@@ -1606,7 +1639,13 @@ bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite 
 
 // Helper function to safely copy a sprite to the canvas with clipping
 static void copySpriteToCanvasWithClip(lv_obj_t* canvas, LGFX_Sprite* sprite, int offsetX, int offsetY) {
-    if (!canvas || !sprite || sprite->getBuffer() == nullptr) return;
+    if (!canvas || !sprite || spriteMutex == NULL) return;
+
+    if (xSemaphoreTake(spriteMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        if (sprite->getBuffer() == nullptr) {
+            xSemaphoreGive(spriteMutex);
+            return;
+        }
 
     // Calculate source and destination rectangles for clipping
     int src_x = 0;
@@ -1649,6 +1688,7 @@ static void copySpriteToCanvasWithClip(lv_obj_t* canvas, LGFX_Sprite* sprite, in
             lv_canvas_copy_buf(canvas, src_row_ptr, dest_x, dest_y + y, copy_w, 1);
         }
     }
+    xSemaphoreGive(spriteMutex);
 }
 
 bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY) {
@@ -1704,31 +1744,25 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         Serial.printf("[MAP] Found file: %s\n", found_path);
         newSprite = new LGFX_Sprite(&tft);
         newSprite->setPsram(true); // Explicitly use PSRAM for map tiles
-        if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr && newSprite->getBuffer() != nullptr) {
-            if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                switch (found_type) {
-                    case TILE_NAV:
-                        tileRendered = renderTile(found_path, 0, 0, *newSprite);
-                        break;
-                    case TILE_PNG:
-                        spriteDecodeContext.sprite = newSprite;
-                        if (png.open(found_path, pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngSpriteCallback) == PNG_SUCCESS && pngFileOpened) {
-                            if (png.decode(NULL, 0) == PNG_SUCCESS) tileRendered = true;
-                            png.close();
-                        }
-                        break;
-                    case TILE_JPG:
-                        spriteDecodeContext.sprite = newSprite;
-                        if (jpeg.open(found_path, jpegOpenFile, jpegCloseFile, jpegReadFile, jpegSeekFile, jpegSpriteCallback) == 1) {
-                            if (jpeg.decode(0, 0, 0) == 1) tileRendered = true;
-                            jpeg.close();
-                        }
-                        break;
-                    default: break;
-                }
-                xSemaphoreGive(spiMutex);
+        if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr) {
+            // --- Asynchronous Rendering ---
+            // Instead of rendering here, send a request to the background task.
+            RenderRequest request;
+            strncpy(request.path, found_path, sizeof(request.path) - 1);
+            request.path[sizeof(request.path) - 1] = '\0';
+            request.xOffset = 0;
+            request.yOffset = 0;
+            request.targetSprite = newSprite;
+
+            if (xQueueSend(mapRenderQueue, &request, 0) == pdPASS) {
+                Serial.printf("[MAP] Queued render request for: %s\n", found_path);
+                addToCache(found_path, zoom, tileX, tileY, newSprite);
+                tileRendered = true; 
             } else {
-                Serial.println("[MAP] ERROR: Could not get SPI Mutex for rendering");
+                Serial.printf("[MAP] ERROR: Render queue full for: %s\n", found_path);
+                newSprite->deleteSprite();
+                delete newSprite;
+                newSprite = nullptr;
             }
         } else {
             Serial.println("[MAP] ERROR: Sprite creation failed (Out of PSRAM?)");
@@ -1750,8 +1784,42 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     return tileRendered;
 }
 
+    void stopRenderTask() {
+        if (mapRenderTaskHandle) {
+            vTaskDelete(mapRenderTaskHandle);
+            mapRenderTaskHandle = nullptr;
+        }
+        if (mapRenderQueue) {
+            vQueueDelete(mapRenderQueue);
+            mapRenderQueue = nullptr;
+        }
+        if (spriteMutex) {
+            vSemaphoreDelete(spriteMutex);
+            spriteMutex = nullptr;
+        }
+        Serial.println("[MAP] Render task stopped.");
+    }
+
+    void startRenderTask() {
+        if (mapRenderTaskHandle) return; // Already running
+
+        spriteMutex = xSemaphoreCreateMutex();
+        mapRenderQueue = xQueueCreate(10, sizeof(RenderRequest));
+
+        xTaskCreatePinnedToCore(
+            mapRenderTask,
+            "MapRender",
+            4096,
+            NULL,
+            1, // Low priority
+            &mapRenderTaskHandle,
+            0  // Core 0
+        );
+    }
+
     // Create map screen
     void create_map_screen() {
+        startRenderTask();
         // Boost CPU to 240 MHz for smooth map rendering
         setCpuFrequencyMhz(240);
         Serial.printf("[MAP] CPU boosted to %d MHz\n", getCpuFrequencyMhz());
