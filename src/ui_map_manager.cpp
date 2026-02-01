@@ -960,7 +960,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         return true;
     }
 
-    void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
+   void fillPolygonGeneral(TFT_eSprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset) {
     if (numPoints < 3) return;
 
     int miny = py[0], maxy = py[0];
@@ -969,26 +969,31 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
         if (py[i] > maxy) maxy = py[i];
     }
 
-    // --- CORRECTION : CLIPPING VERTICAL ---
-    // On ne traite que la zone visible de la tuile (0-255)
-    if (miny < 0) miny = 0;
-    if (maxy > 255) maxy = 255;
-    if (miny > maxy) return; // La forme est totalement hors-tuile
+    // Clipping vertical dynamique basé sur la taille réelle du sprite
+    int clipTop = -yOffset;
+    int clipBottom = map.height() - 1 - yOffset;
+    
+    if (miny < clipTop) miny = clipTop;
+    if (maxy > clipBottom) maxy = clipBottom;
+    if (miny > maxy) return;
 
     int* xints = (int*)ps_malloc(numPoints * sizeof(int));
     if (!xints) return;
 
     for (int y = miny; y <= maxy; ++y) {
-        // Respiration Watchdog pour les polygones très hauts
-        if ((y & 0x1F) == 0) esp_task_wdt_reset(); 
+        // Respiration système
+        if ((y & 0x1F) == 0) {
+            esp_task_wdt_reset();
+            yield();
+        }
 
         int nodes = 0;
+        float y_f = (float)y + 0.5f; // On teste au centre du pixel pour plus de précision
+
         for (int i = 0, j = numPoints - 1; i < numPoints; j = i++) {
-            if ((py[i] < y && py[j] >= y) || (py[j] < y && py[i] >= y)) {
-                if (py[j] - py[i] != 0) {
-                    // Calcul de l'intersection X pour cette ligne Y
-                    xints[nodes++] = px[i] + (y - py[i]) * (px[j] - px[i]) / (py[j] - py[i]);
-                }
+            if (((float)py[i] < y_f && (float)py[j] >= y_f) || ((float)py[j] < y_f && (float)py[i] >= y_f)) {
+                // CALCUL EN FLOAT : Évite les décalages entre tuiles adjacentes
+                xints[nodes++] = (int)((float)px[i] + (y_f - (float)py[i]) * (float)(px[j] - px[i]) / (float)(py[j] - py[i]));
             }
         }
         
@@ -999,11 +1004,12 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, TFT_eSprit
                     int x0 = xints[i] + xOffset;
                     int x1 = xints[i + 1] + xOffset;
                     
-                    // --- CORRECTION : CLIPPING HORIZONTAL ---
+                    // Clipping horizontal dynamique
                     if (x0 < 0) x0 = 0;
-                    if (x1 > 255) x1 = 255;
+                    if (x1 >= map.width()) x1 = map.width() - 1;
                     
                     if (x1 >= x0) {
+                        // Longueur exacte sans dépassement de buffer
                         map.drawFastHLine(x0, y + yOffset, x1 - x0 + 1, color);
                     }
                 }
