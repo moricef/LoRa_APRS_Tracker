@@ -28,16 +28,26 @@ namespace MapEngine {
     static TaskHandle_t mapRenderTaskHandle = nullptr;
     static lv_obj_t* canvas_to_invalidate_ = nullptr;
 
-    // Static vectors for AEL polygon filler
-    static std::vector<UIMapManager::Edge> edgePool;
-    static std::vector<int> edgeBuckets;
+    // Static vectors for AEL polygon filler (internal RAM for speed)
+    static std::vector<UIMapManager::Edge, InternalAllocator<UIMapManager::Edge>> edgePool;
+    static std::vector<int, InternalAllocator<int>> edgeBuckets;
 
-    // Static vectors for coordinate projection (to avoid re-allocation)
-    static std::vector<int> proj32X;
-    static std::vector<int> proj32Y;
+    // Static vectors for coordinate projection (internal RAM, pre-reserved)
+    static std::vector<int, InternalAllocator<int>> proj32X;
+    static std::vector<int, InternalAllocator<int>> proj32Y;
+
+    // Feature index entry for priority-sorted rendering with BBox culling
+    struct FeatureIndex {
+        uint32_t offset;        // Byte offset from start of data
+        uint32_t dataSize;      // Total feature data size (after header)
+        uint8_t geomType;       // 1=Point, 2=Line, 3=Polygon
+        uint8_t priority;       // zoomPriority (0=background, 15=foreground)
+        uint8_t ringCount;      // For polygons
+    };
+    static std::vector<FeatureIndex, InternalAllocator<FeatureIndex>> featureIdx;
 
     // Tile cache system
-    #define TILE_CACHE_SIZE 15  // Number of tiles to cache
+    #define TILE_CACHE_SIZE 40  // Number of tiles to cache (40 × 128KB = 5.2MB PSRAM)
     static std::vector<CachedTile> tileCache;
     static size_t maxCachedTiles = TILE_CACHE_SIZE;
     static uint32_t cacheAccessCounter = 0;
@@ -217,7 +227,7 @@ namespace MapEngine {
         );
     }
 
-    // Initialize tile cache
+    // Initialize tile cache and pre-reserve render buffers
     void initTileCache() {
         for (auto& cachedTile : tileCache) {
             if (cachedTile.sprite) {
@@ -228,7 +238,17 @@ namespace MapEngine {
         tileCache.clear();
         tileCache.reserve(maxCachedTiles);
         cacheAccessCounter = 0;
+
+        // Pre-reserve AEL, projection, and feature index buffers in internal RAM
+        // This avoids repeated allocations during rendering
+        edgePool.reserve(512);
+        edgeBuckets.reserve(256);
+        proj32X.reserve(1024);
+        proj32Y.reserve(1024);
+        featureIdx.reserve(512);
+
         Serial.printf("[MAP] Tile cache initialized with %d tiles capacity\n", maxCachedTiles);
+        Serial.printf("[MAP] Render buffers pre-reserved (internal RAM)\n");
     }
 
     void clearTileCache() {
@@ -516,7 +536,7 @@ namespace MapEngine {
     }
 
     static bool renderNavTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
-        esp_task_wdt_reset(); 
+        esp_task_wdt_reset();
         uint8_t* data = nullptr;
         size_t fileSize = 0;
 
@@ -552,142 +572,181 @@ namespace MapEngine {
         uint16_t feature_count;
         memcpy(&feature_count, data + 4, 2);
 
-        map.fillSprite(TFT_WHITE); 
+        map.fillSprite(TFT_WHITE);
         map.setClipRect(0, 0, 256, 256);
 
-        uint32_t lastYieldMs = millis();
+        // --- Build feature index with BBox culling ---
+        // Pre-scan all features: parse headers, skip features outside viewport
+        featureIdx.clear();
+        if (featureIdx.capacity() < feature_count) featureIdx.reserve(feature_count);
+
         uint8_t* p = data + 22;
         for (uint16_t i = 0; i < feature_count; i++) {
-            uint32_t now = millis();
-            if (now - lastYieldMs > 20) {
-                esp_task_wdt_reset();
-                vTaskDelay(pdMS_TO_TICKS(1));
-                lastYieldMs = now;
-            }
             if (p + 12 > data + fileSize) break;
 
             uint8_t geomType = p[0];
-            uint16_t coordCount; 
+            uint8_t zoomPriority = p[3];
+            uint16_t coordCount;
             memcpy(&coordCount, p + 9, 2);
-            
+
             uint32_t feature_data_size = coordCount * 4;
             uint8_t ringCount = 0;
 
             if (geomType == 3) {
                 uint8_t* ring_ptr = p + 12 + feature_data_size;
-                if (ring_ptr + 1 <= data + fileSize) { // ringCount is 1 byte
-                    ringCount = ring_ptr[0]; // Read uint8_t
+                if (ring_ptr + 1 <= data + fileSize) {
+                    ringCount = ring_ptr[0];
                     if (ring_ptr + 1 + (ringCount * 2) <= data + fileSize) {
                         feature_data_size += 1 + (ringCount * 2);
                     } else {
-                        ringCount = 0; // Invalid ring data, ignore it
+                        ringCount = 0;
                     }
                 }
             }
-            
+
             if (p + 12 + feature_data_size > data + fileSize) break;
 
-            if (geomType == 3 && coordCount >= 3) {
-                uint16_t rawColor;
-                memcpy(&rawColor, p + 1, 2);
-                uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8); // Endianness swap
-                int16_t* coords = (int16_t*)(p + 12);
-                uint16_t* ringEnds = (ringCount > 0) ? (uint16_t*)(p + 12 + coordCount * 4 + 2) : nullptr;
+            // BBox culling: skip features entirely outside the 256x256 sprite viewport
+            // bbox values are in pixel space (0-255) relative to tile origin
+            uint8_t bx1 = p[5], by1 = p[6], bx2 = p[7], by2 = p[8];
+            int fx1 = (int)bx1 + xOffset;
+            int fy1 = (int)by1 + yOffset;
+            int fx2 = (int)bx2 + xOffset;
+            int fy2 = (int)by2 + yOffset;
 
-                if (proj32X.capacity() < coordCount) proj32X.reserve(coordCount);
-                if (proj32Y.capacity() < coordCount) proj32Y.reserve(coordCount);
-                proj32X.resize(coordCount);
-                proj32Y.resize(coordCount);
-
-                int* px_hp = proj32X.data();
-                int* py_hp = proj32Y.data();
-
-                // Store raw high-precision coordinates (0-4096)
-                for (uint16_t j = 0; j < coordCount; j++) {
-                    px_hp[j] = coords[j * 2];
-                    py_hp[j] = coords[j * 2 + 1];
-                }
-            
-                if (fillPolygons) {
-                    // Pass high-precision coordinates and pixel offsets to the filler
-                    fillPolygonGeneral(map, px_hp, py_hp, coordCount, colorRgb565, xOffset, yOffset, ringCount, ringEnds);
-                }
-
-                uint16_t outerRingEnd = (ringCount > 0) ? ringEnds[0] : coordCount;
-                if (outerRingEnd >= 2) {
-                    uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
-                    for (int k = 0; k < outerRingEnd; k++) {
-                        int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
-                        // Scale down to pixels just for drawing the border
-                        int x0 = (px_hp[k] >> 4) + xOffset;
-                        int y0 = (py_hp[k] >> 4) + yOffset;
-                        int x1 = (px_hp[next] >> 4) + xOffset;
-                        int y1 = (py_hp[next] >> 4) + yOffset;
-                        map.drawLine(x0, y0, x1, y1, borderColor);
-                    }
-                }
+            if (fx2 < 0 || fx1 > 255 || fy2 < 0 || fy1 > 255) {
+                // Feature entirely outside viewport — skip
+                p += 12 + feature_data_size;
+                continue;
             }
+
+            FeatureIndex fi;
+            fi.offset = (uint32_t)(p - data);
+            fi.dataSize = feature_data_size;
+            fi.geomType = geomType;
+            fi.priority = zoomPriority;
+            fi.ringCount = ringCount;
+            featureIdx.push_back(fi);
+
             p += 12 + feature_data_size;
         }
 
-        lastYieldMs = millis(); // Reset timer for the second pass
-        p = data + 22;
-        for (uint16_t i = 0; i < feature_count; i++) {
+        // --- Sort features by priority (ascending: 0=background first) ---
+        std::sort(featureIdx.begin(), featureIdx.end(),
+            [](const FeatureIndex& a, const FeatureIndex& b) {
+                return a.priority < b.priority;
+            });
+
+        uint32_t lastYieldMs = millis();
+
+        // --- Pass 1: Polygons (sorted by priority, background first) ---
+        for (const auto& fi : featureIdx) {
+            if (fi.geomType != 3) continue;
+
             uint32_t now = millis();
             if (now - lastYieldMs > 20) {
                 esp_task_wdt_reset();
                 vTaskDelay(pdMS_TO_TICKS(1));
                 lastYieldMs = now;
             }
-            if (p + 12 > data + fileSize) break;
 
-            uint8_t geomType = p[0];
-            uint16_t coordCount; 
-            memcpy(&coordCount, p + 9, 2);
+            uint8_t* fp = data + fi.offset;
+            uint16_t coordCount;
+            memcpy(&coordCount, fp + 9, 2);
 
-            uint32_t feature_data_size = coordCount * 4;
-            if (geomType == 3) {
-                uint8_t ringCount = 0; // Changed to uint8_t
-                uint8_t* ring_ptr = p + 12 + feature_data_size;
-                if (ring_ptr + 1 <= data + fileSize) { // ringCount is 1 byte
-                    ringCount = ring_ptr[0]; // Read uint8_t
-                     if (ring_ptr + 1 + (ringCount * 2) <= data + fileSize) {
-                        feature_data_size += 1 + (ringCount * 2);
-                    }
-                }
-            }
-            
-            if (p + 12 + feature_data_size > data + fileSize) break;
+            if (coordCount < 3) continue;
 
-            if (geomType == 2 && coordCount >= 2) {
-                uint16_t rawColor; 
-                memcpy(&rawColor, p + 1, 2);
-                uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8); // Endianness swap
-                uint8_t widthPixels = p[4];
-                int16_t* coords = (int16_t*)(p + 12);
-                for (uint16_t j = 1; j < coordCount; j++) {
-                    int x0 = (coords[(j - 1) * 2] >> 4) + xOffset;
-                    int y0 = (coords[(j - 1) * 2 + 1] >> 4) + yOffset;
-                    int x1 = (coords[j * 2] >> 4) + xOffset;
-                    int y1 = (coords[j * 2 + 1] >> 4) + yOffset;
-                    
-                    if (widthPixels <= 1) {
-                        map.drawLine(x0, y0, x1, y1, colorRgb565);
-                    } else {
-                        map.drawWideLine(x0, y0, x1, y1, widthPixels, colorRgb565);
-                    }
-                }
-            } else if (geomType == 1 && coordCount > 0) {
-                 uint16_t rawColor; 
-                 memcpy(&rawColor, p + 1, 2);
-                 uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8); // Endianness swap
-                 int16_t* coords = (int16_t*)(p + 12);
-                 int px = (coords[0] >> 4) + xOffset;
-                 int py = (coords[1] >> 4) + yOffset;
-                 map.fillCircle(px, py, 3, colorRgb565);
+            uint16_t rawColor;
+            memcpy(&rawColor, fp + 1, 2);
+            uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8);
+            int16_t* coords = (int16_t*)(fp + 12);
+            uint16_t* ringEnds = (fi.ringCount > 0) ? (uint16_t*)(fp + 12 + coordCount * 4 + 2) : nullptr;
+
+            if (proj32X.capacity() < coordCount) proj32X.reserve(coordCount);
+            if (proj32Y.capacity() < coordCount) proj32Y.reserve(coordCount);
+            proj32X.resize(coordCount);
+            proj32Y.resize(coordCount);
+
+            int* px_hp = proj32X.data();
+            int* py_hp = proj32Y.data();
+
+            for (uint16_t j = 0; j < coordCount; j++) {
+                px_hp[j] = coords[j * 2];
+                py_hp[j] = coords[j * 2 + 1];
             }
 
-            p += 12 + feature_data_size;
+            if (fillPolygons) {
+                fillPolygonGeneral(map, px_hp, py_hp, coordCount, colorRgb565, xOffset, yOffset, fi.ringCount, ringEnds);
+            }
+
+            uint16_t outerRingEnd = (fi.ringCount > 0) ? ringEnds[0] : coordCount;
+            if (outerRingEnd >= 2) {
+                uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
+                for (int k = 0; k < outerRingEnd; k++) {
+                    int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
+                    int x0 = (px_hp[k] >> 4) + xOffset;
+                    int y0 = (py_hp[k] >> 4) + yOffset;
+                    int x1 = (px_hp[next] >> 4) + xOffset;
+                    int y1 = (py_hp[next] >> 4) + yOffset;
+                    map.drawLine(x0, y0, x1, y1, borderColor);
+                }
+            }
+        }
+
+        // --- Pass 2: Lines (sorted by priority, minor roads first) ---
+        for (const auto& fi : featureIdx) {
+            if (fi.geomType != 2) continue;
+
+            uint32_t now = millis();
+            if (now - lastYieldMs > 20) {
+                esp_task_wdt_reset();
+                vTaskDelay(pdMS_TO_TICKS(1));
+                lastYieldMs = now;
+            }
+
+            uint8_t* fp = data + fi.offset;
+            uint16_t coordCount;
+            memcpy(&coordCount, fp + 9, 2);
+
+            if (coordCount < 2) continue;
+
+            uint16_t rawColor;
+            memcpy(&rawColor, fp + 1, 2);
+            uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8);
+            uint8_t widthPixels = fp[4];
+            int16_t* coords = (int16_t*)(fp + 12);
+
+            for (uint16_t j = 1; j < coordCount; j++) {
+                int x0 = (coords[(j - 1) * 2] >> 4) + xOffset;
+                int y0 = (coords[(j - 1) * 2 + 1] >> 4) + yOffset;
+                int x1 = (coords[j * 2] >> 4) + xOffset;
+                int y1 = (coords[j * 2 + 1] >> 4) + yOffset;
+
+                if (widthPixels <= 1) {
+                    map.drawLine(x0, y0, x1, y1, colorRgb565);
+                } else {
+                    map.drawWideLine(x0, y0, x1, y1, widthPixels, colorRgb565);
+                }
+            }
+        }
+
+        // --- Pass 3: Points (on top of everything) ---
+        for (const auto& fi : featureIdx) {
+            if (fi.geomType != 1) continue;
+
+            uint8_t* fp = data + fi.offset;
+            uint16_t coordCount;
+            memcpy(&coordCount, fp + 9, 2);
+
+            if (coordCount < 1) continue;
+
+            uint16_t rawColor;
+            memcpy(&rawColor, fp + 1, 2);
+            uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8);
+            int16_t* coords = (int16_t*)(fp + 12);
+            int px = (coords[0] >> 4) + xOffset;
+            int py = (coords[1] >> 4) + yOffset;
+            map.fillCircle(px, py, 3, colorRgb565);
         }
 
         map.clearClipRect();

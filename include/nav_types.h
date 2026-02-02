@@ -2,6 +2,34 @@
 #define NAV_TYPES_H
 
 #include <cstdint>
+#include <cstdlib>
+#include "esp_heap_caps.h"
+
+// Allocator that forces vectors into internal RAM (fast SRAM)
+// instead of PSRAM (slow, fragmentation-prone).
+// Pattern from IceNav-v3.
+template <typename T>
+struct InternalAllocator {
+    using value_type = T;
+
+    InternalAllocator() noexcept = default;
+    template <typename U>
+    InternalAllocator(const InternalAllocator<U>&) noexcept {}
+
+    T* allocate(std::size_t n) {
+        void* p = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (!p) p = malloc(n * sizeof(T)); // fallback to default heap
+        return static_cast<T*>(p);
+    }
+    void deallocate(T* p, std::size_t) noexcept {
+        heap_caps_free(p);
+    }
+
+    template <typename U>
+    bool operator==(const InternalAllocator<U>&) const noexcept { return true; }
+    template <typename U>
+    bool operator!=(const InternalAllocator<U>&) const noexcept { return false; }
+};
 
 namespace UIMapManager {
 

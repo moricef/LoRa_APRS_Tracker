@@ -69,9 +69,8 @@ namespace UIMapManager {
     static lv_coord_t last_pan_dy = 0;
     #define PAN_THRESHOLD 5  // Minimum pixels to trigger pan
 
-    // Tile cache in PSRAM
-    #define TILE_CACHE_SIZE 15  // Number of tiles to cache
-    #define TILE_DATA_SIZE (MAP_TILE_SIZE * MAP_TILE_SIZE * sizeof(uint16_t))  // 128KB per tile for old raster tiles
+    // Tile data size for old raster tiles
+    #define TILE_DATA_SIZE (MAP_TILE_SIZE * MAP_TILE_SIZE * sizeof(uint16_t))  // 128KB per tile
 
     // Symbol cache in PSRAM
     #define SYMBOL_CACHE_SIZE 10  // Cache for frequently used symbols
@@ -698,25 +697,27 @@ namespace UIMapManager {
             return true;
         }
 
-        // 2. Find file path (NAV, then PNG, then JPG)
+        // 2. Find file path (NAV, then PNG, then JPG) — under SPI mutex
         char path[128];
         char found_path[128] = {0};
         bool found = false;
 
-        // Path finding does not need a mutex if we only use SD.exists()
-        if (STORAGE_Utils::isSDAvailable()) {
-            const char* region = map_current_region.c_str();
+        if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+            if (STORAGE_Utils::isSDAvailable()) {
+                const char* region = map_current_region.c_str();
 
-            snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav", region, zoom, tileX, tileY);
-            if (SD.exists(path)) { strcpy(found_path, path); found = true; }
-            else {
-                snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
+                snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav", region, zoom, tileX, tileY);
                 if (SD.exists(path)) { strcpy(found_path, path); found = true; }
                 else {
-                    snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
+                    snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
                     if (SD.exists(path)) { strcpy(found_path, path); found = true; }
+                    else {
+                        snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
+                        if (SD.exists(path)) { strcpy(found_path, path); found = true; }
+                    }
                 }
             }
+            xSemaphoreGive(spiMutex);
         }
 
         if (!found) {
@@ -1083,13 +1084,21 @@ namespace UIMapManager {
                 lv_coord_t dx = point.x - touch_start_x;
                 lv_coord_t dy = point.y - touch_start_y;
 
-                // Convert pixel movement to lat/lon change
-                int n = 1 << map_current_zoom;
-                float degrees_per_pixel = 360.0f / n / MAP_TILE_SIZE;
+                // Convert pixel movement to lat/lon change using Mercator projection
+                double n_d = pow(2.0, map_current_zoom);
+                double degrees_per_pixel_lon = 360.0 / n_d / MAP_TILE_SIZE;
 
-                // Update map center (drag right = view moves right = lon increases)
-                map_center_lon = drag_start_lon - (dx * degrees_per_pixel);
-                map_center_lat = drag_start_lat + (dy * degrees_per_pixel);
+                // Longitude: linear in Mercator (correct as-is)
+                map_center_lon = drag_start_lon - (dx * degrees_per_pixel_lon);
+
+                // Latitude: inverse Mercator for correct N/S displacement
+                double start_lat_rad = drag_start_lat * PI / 180.0;
+                double center_y_world = (1.0 - log(tan(start_lat_rad) + 1.0 / cos(start_lat_rad)) / PI) / 2.0;
+                double new_y_world = center_y_world + (double)dy / (n_d * MAP_TILE_SIZE);
+                // Clamp to valid Mercator range
+                if (new_y_world < 0.0) new_y_world = 0.0;
+                if (new_y_world > 1.0) new_y_world = 1.0;
+                map_center_lat = atan(sinh(PI * (1.0 - 2.0 * new_y_world))) * 180.0 / PI;
 
                 Serial.printf("[MAP] Touch pan end: %.4f,%.4f -> %.4f,%.4f\n",
                               drag_start_lat, drag_start_lon, map_center_lat, map_center_lon);
