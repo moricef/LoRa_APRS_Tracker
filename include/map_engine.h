@@ -9,6 +9,7 @@
 #include <lvgl.h>
 #include "LGFX_TDeck.h"
 #include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <vector>
 #include "nav_types.h"
@@ -44,7 +45,9 @@ namespace MapEngine {
     void stopRenderTask();
     void initTileCache();
     void clearTileCache();
-    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map);
+    bool renderNavViewport(float centerLat, float centerLon, uint8_t zoom,
+                           LGFX_Sprite &map, const char* region);
+    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map, uint8_t zoom = 0);
     int findCachedTile(int zoom, int tileX, int tileY);
     void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprite* sourceSprite);
     void copySpriteToCanvasWithClip(lv_obj_t* canvas, LGFX_Sprite* sprite, int offsetX, int offsetY);

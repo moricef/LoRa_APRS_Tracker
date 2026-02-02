@@ -16,6 +16,7 @@
 #include <esp_task_wdt.h>
 #include <algorithm>
 #include <climits>
+#include <cmath>
 
 // Global sprite pointer for raster decoder callbacks
 static LGFX_Sprite* targetSprite_ = nullptr;
@@ -36,15 +37,17 @@ namespace MapEngine {
     static std::vector<int, InternalAllocator<int>> proj32X;
     static std::vector<int, InternalAllocator<int>> proj32Y;
 
-    // Feature index entry for priority-sorted rendering with BBox culling
-    struct FeatureIndex {
-        uint32_t offset;        // Byte offset from start of data
-        uint32_t dataSize;      // Total feature data size (after header)
+    // Feature reference for zero-copy rendering (IceNav-v3 pattern: pointer into tile buffer)
+    struct FeatureRef {
+        uint8_t* ptr;           // Pointer to feature header in data buffer
         uint8_t geomType;       // 1=Point, 2=Line, 3=Polygon
-        uint8_t priority;       // zoomPriority (0=background, 15=foreground)
-        uint8_t ringCount;      // For polygons
+        uint16_t ringCount;     // For polygons (uint16_t per NAV1 format)
+        uint16_t coordCount;    // Number of coordinates
+        int16_t tileOffsetX;    // Pixel offset of tile top-left in viewport (IceNav: tilePixelOffsetX)
+        int16_t tileOffsetY;    // Pixel offset of tile top-left in viewport (IceNav: tilePixelOffsetY)
     };
-    static std::vector<FeatureIndex, InternalAllocator<FeatureIndex>> featureIdx;
+    // 16 priority layers (IceNav-v3 pattern: dispatch by getPriority() low nibble)
+    static std::vector<FeatureRef, InternalAllocator<FeatureRef>> globalLayers[16];
 
     // Tile cache system
     #define TILE_CACHE_SIZE 40  // Number of tiles to cache (40 × 128KB = 5.2MB PSRAM)
@@ -170,7 +173,7 @@ namespace MapEngine {
                     // We only need to lock when accessing the shared sprite, which renderTile does internally.
                     // No, wait, renderTile takes a reference to the sprite. We should lock here.
                     if (xSemaphoreTake(spriteMutex, portMAX_DELAY) == pdTRUE) {
-                        success = renderTile(request.path, request.xOffset, request.yOffset, *request.targetSprite);
+                        success = renderTile(request.path, request.xOffset, request.yOffset, *request.targetSprite, (uint8_t)request.zoom);
                         xSemaphoreGive(spriteMutex);
                     }
 
@@ -219,7 +222,7 @@ namespace MapEngine {
         xTaskCreatePinnedToCore(
             mapRenderTask,
             "MapRender",
-            8192,
+            16384,  // Increased for feature index + sort + AEL
             NULL,
             1, // Low priority
             &mapRenderTaskHandle,
@@ -245,7 +248,7 @@ namespace MapEngine {
         edgeBuckets.reserve(256);
         proj32X.reserve(1024);
         proj32Y.reserve(1024);
-        featureIdx.reserve(512);
+        for (int i = 0; i < 16; i++) globalLayers[i].reserve(256);
 
         Serial.printf("[MAP] Tile cache initialized with %d tiles capacity\n", maxCachedTiles);
         Serial.printf("[MAP] Render buffers pre-reserved (internal RAM)\n");
@@ -384,9 +387,11 @@ namespace MapEngine {
         return (r << 11) | (g << 5) | b;
     }
 
+    // AEL polygon filler with fast-forward optimization (IceNav-v3 pattern).
+    // Takes high-precision (HP) coordinates (0-4096), iterates pixel-space scanlines (0-255).
+    // Supports multi-ring polygons (exterior + holes).
     void fillPolygonGeneral(LGFX_Sprite &map, const int *px_hp, const int *py_hp, const int numPoints, const uint16_t color, const int xOffset, const int yOffset, uint16_t ringCount, uint16_t* ringEnds)
     {
-        // This AEL implementation takes high-precision (HP) coordinates (0-4096) and iterates over pixel-space scanlines (0-255)
         if (numPoints < 3) return;
 
         // 1. Find Y bounds in pixel space
@@ -397,7 +402,8 @@ namespace MapEngine {
             if (y_px > maxY_px) maxY_px = y_px;
         }
 
-        if (maxY_px < 0 || minY_px >= MAP_TILE_SIZE) return;
+        int spriteH = map.height();
+        if (maxY_px < 0 || minY_px >= spriteH) return;
 
         // 2. Set up pixel-space edge buckets
         edgePool.clear();
@@ -423,18 +429,18 @@ namespace MapEngine {
                 int next = (i + 1) % ringNumPoints;
                 int x1_hp = px_hp[ringStart + i], y1_hp = py_hp[ringStart + i];
                 int x2_hp = px_hp[ringStart + next], y2_hp = py_hp[ringStart + next];
-                
+
                 int y1_px = y1_hp >> 4;
                 int y2_px = y2_hp >> 4;
 
-                if (y1_px == y2_px) continue; // Skip horizontal lines in pixel space
+                if (y1_px == y2_px) continue;
 
                 UIMapManager::Edge e;
                 e.nextActive = -1;
 
                 if (y1_hp < y2_hp) {
-                    e.yMax = y2_px; // Max Y in pixels
-                    e.slope = ((int64_t)(x2_hp - x1_hp) << 16) / (y2_hp - y1_hp); // HP slope
+                    e.yMax = y2_px;
+                    e.slope = ((int64_t)(x2_hp - x1_hp) << 16) / (y2_hp - y1_hp);
                     e.xVal = ((int64_t)x1_hp << 16);
                     if (y1_px - minY_px >= 0 && (size_t)(y1_px - minY_px) < edgeBuckets.size()) {
                         e.nextInBucket = edgeBuckets[y1_px - minY_px];
@@ -456,22 +462,45 @@ namespace MapEngine {
         }
 
         int activeHead = -1;
-        // Loop iterates over PIXEL scanlines, clipped to the sprite
+        int spriteW = map.width();
         int startY_px = std::max(minY_px, 0);
-        int endY_px = std::min(maxY_px, MAP_TILE_SIZE - 1);
-        
-        uint32_t lastYieldMs = millis();
+        int endY_px = std::min(maxY_px, spriteH - 1);
 
+        // 4. Fast-forward: process buckets before visible range, jump edge xVal
+        //    directly to startY_px (IceNav-v3 pattern — skip invisible scanlines)
+        if (startY_px > minY_px) {
+            for (int y = minY_px; y < startY_px; y++) {
+                if ((size_t)(y - minY_px) >= edgeBuckets.size()) break;
+                int eIdx = edgeBuckets[y - minY_px];
+                while (eIdx != -1) {
+                    int nextIdx = edgePool[eIdx].nextInBucket;
+                    // Jump xVal to startY_px: (startY_px - y) pixel scanlines × 16 HP units each
+                    edgePool[eIdx].xVal += (int64_t)edgePool[eIdx].slope * 16 * (startY_px - y);
+                    edgePool[eIdx].nextActive = activeHead;
+                    activeHead = eIdx;
+                    eIdx = nextIdx;
+                }
+            }
+            // Remove edges that finish before reaching the visible range
+            int* pCurrIdx = &activeHead;
+            while (*pCurrIdx != -1) {
+                if (edgePool[*pCurrIdx].yMax <= startY_px)
+                    *pCurrIdx = edgePool[*pCurrIdx].nextActive;
+                else
+                    pCurrIdx = &(edgePool[*pCurrIdx].nextActive);
+            }
+        }
+
+        // 5. Main scanline loop (visible range only)
+        int scanlineCount = 0;
         for (int y_px = startY_px; y_px <= endY_px; y_px++) {
-            uint32_t now = millis();
-            if (now - lastYieldMs > 20) { // Yield every 20ms of continuous work
+            if (++scanlineCount >= 32) {
                 esp_task_wdt_reset();
-                vTaskDelay(pdMS_TO_TICKS(1)); // Force context switch
-                lastYieldMs = now;
+                scanlineCount = 0;
             }
 
-            // 4. Add new edges from bucket to Active Edge List (AEL)
-            if (y_px - minY_px >= 0 && (size_t)(y_px - minY_px) < edgeBuckets.size()) {
+            // Add new edges from bucket
+            if ((size_t)(y_px - minY_px) < edgeBuckets.size()) {
                 int eIdx = edgeBuckets[y_px - minY_px];
                 while (eIdx != -1) {
                     int nextIdx = edgePool[eIdx].nextInBucket;
@@ -481,19 +510,18 @@ namespace MapEngine {
                 }
             }
 
-            // 5. Remove finished edges from AEL
+            // Remove finished edges
             int* pCurrIdx = &activeHead;
             while (*pCurrIdx != -1) {
-                if (edgePool[*pCurrIdx].yMax <= y_px) {
+                if (edgePool[*pCurrIdx].yMax <= y_px)
                     *pCurrIdx = edgePool[*pCurrIdx].nextActive;
-                } else {
+                else
                     pCurrIdx = &(edgePool[*pCurrIdx].nextActive);
-                }
             }
 
             if (activeHead == -1) continue;
 
-            // 6. Sort AEL by xVal
+            // Sort AEL by xVal (insertion sort into linked list)
             int sorted = -1;
             int active = activeHead;
             while (active != -1) {
@@ -503,9 +531,8 @@ namespace MapEngine {
                     sorted = active;
                 } else {
                     int s = sorted;
-                    while (edgePool[s].nextActive != -1 && edgePool[edgePool[s].nextActive].xVal < edgePool[active].xVal) {
+                    while (edgePool[s].nextActive != -1 && edgePool[edgePool[s].nextActive].xVal < edgePool[active].xVal)
                         s = edgePool[s].nextActive;
-                    }
                     edgePool[active].nextActive = edgePool[s].nextActive;
                     edgePool[s].nextActive = active;
                 }
@@ -513,33 +540,279 @@ namespace MapEngine {
             }
             activeHead = sorted;
 
-            // 7. Draw horizontal spans
+            // Draw horizontal spans
             int left = activeHead;
             while (left != -1 && edgePool[left].nextActive != -1) {
                 int right = edgePool[left].nextActive;
-                
-                // Scale HP fixed-point xVal down to pixels JUST before drawing
                 int xStart = (edgePool[left].xVal >> 16) >> 4;
                 int xEnd = (edgePool[right].xVal >> 16) >> 4;
-                
-                if (xEnd > xStart) {
+                if (xStart < 0) xStart = 0;
+                if (xEnd > spriteW) xEnd = spriteW;
+                if (xEnd > xStart)
                     map.drawFastHLine(xStart + xOffset, y_px + yOffset, xEnd - xStart, color);
-                }
                 left = edgePool[right].nextActive;
             }
-            
-            // 8. Update xVal for next PIXEL scanline (step is 16 HP units)
-            for (int a = activeHead; a != -1; a = edgePool[a].nextActive) {
+
+            // Update xVal for next pixel scanline (step = slope × 16 HP units)
+            for (int a = activeHead; a != -1; a = edgePool[a].nextActive)
                 edgePool[a].xVal += (int64_t)edgePool[a].slope * 16;
-            }
         }
     }
 
-    static bool renderNavTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
+    // =========================================================================
+    // Viewport-based NAV rendering (IceNav-v3 renderNavViewport pattern).
+    // Loads ALL visible tiles, dispatches features to 16 priority layers,
+    // renders in a single pass with per-feature setClipRect to tile boundaries.
+    // This ensures correct z-ordering across tile boundaries.
+    // =========================================================================
+    bool renderNavViewport(float centerLat, float centerLon, uint8_t zoom,
+                           LGFX_Sprite &map, const char* region) {
+        esp_task_wdt_reset();
+
+        int viewportW = map.width();
+        int viewportH = map.height();
+
+        // Compute tile grid (IceNav-v3 pattern: maps.cpp:1478-1494)
+        const double latRad = (double)centerLat * M_PI / 180.0;
+        const double n = pow(2.0, (double)zoom);
+        const float centerTileX = (float)((centerLon + 180.0) / 360.0 * n);
+        const float centerTileY = (float)((1.0 - log(tan(latRad) + 1.0 / cos(latRad)) / M_PI) / 2.0 * n);
+
+        const int centerTileIdxX = (int)floorf(centerTileX);
+        const int centerTileIdxY = (int)floorf(centerTileY);
+
+        // Sub-tile pixel offset (fractional part → pixel position within center tile)
+        float fracX = centerTileX - centerTileIdxX;
+        float fracY = centerTileY - centerTileIdxY;
+        int centerTileOriginX = viewportW / 2 - (int)(fracX * MAP_TILE_SIZE);
+        int centerTileOriginY = viewportH / 2 - (int)(fracY * MAP_TILE_SIZE);
+
+        // Determine tile range to cover entire viewport
+        int minDx = -(centerTileOriginX / MAP_TILE_SIZE + 1);
+        int maxDx = (viewportW - centerTileOriginX + MAP_TILE_SIZE - 1) / MAP_TILE_SIZE;
+        int minDy = -(centerTileOriginY / MAP_TILE_SIZE + 1);
+        int maxDy = (viewportH - centerTileOriginY + MAP_TILE_SIZE - 1) / MAP_TILE_SIZE;
+
+        map.fillSprite(TFT_WHITE);
+
+        // --- Load all tiles and dispatch features (IceNav-v3 pattern: maps.cpp:1498-1543) ---
+        std::vector<uint8_t*> tileBuffers;
+        for (int i = 0; i < 16; i++) globalLayers[i].clear();
+
+        for (int dy = minDy; dy <= maxDy; dy++) {
+            for (int dx = minDx; dx <= maxDx; dx++) {
+                esp_task_wdt_reset();
+
+                int tileX = centerTileIdxX + dx;
+                int tileY = centerTileIdxY + dy;
+
+                // Pixel offset of this tile's top-left in the viewport
+                int16_t tileOffsetX = (int16_t)(centerTileOriginX + dx * MAP_TILE_SIZE);
+                int16_t tileOffsetY = (int16_t)(centerTileOriginY + dy * MAP_TILE_SIZE);
+
+                // Skip tiles entirely outside viewport
+                if (tileOffsetX + MAP_TILE_SIZE < 0 || tileOffsetX > viewportW ||
+                    tileOffsetY + MAP_TILE_SIZE < 0 || tileOffsetY > viewportH) continue;
+
+                char tilePath[128];
+                snprintf(tilePath, sizeof(tilePath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
+                         region, zoom, tileX, tileY);
+
+                // Read tile file under SPI mutex
+                uint8_t* data = nullptr;
+                size_t fileSize = 0;
+
+                if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    File file = SD.open(tilePath, FILE_READ);
+                    if (file) {
+                        fileSize = file.size();
+                        if (fileSize >= 22) {
+                            data = (uint8_t*)ps_malloc(fileSize);
+                            if (data) file.read(data, fileSize);
+                        }
+                        file.close();
+                    }
+                    xSemaphoreGiveRecursive(spiMutex);
+                }
+
+                if (!data) continue;
+                if (memcmp(data, "NAV1", 4) != 0) { free(data); continue; }
+
+                tileBuffers.push_back(data);
+
+                uint16_t feature_count;
+                memcpy(&feature_count, data + 4, 2);
+
+                // Parse features and dispatch to priority layers (IceNav-v3 zero-copy pattern)
+                uint8_t* p = data + 22;
+                for (uint16_t i = 0; i < feature_count; i++) {
+                    if ((i & 63) == 0) esp_task_wdt_reset();
+                    if (p + 12 > data + fileSize) break;
+
+                    uint8_t geomType = p[0];
+                    uint8_t zoomPriority = p[3];
+                    uint16_t coordCount;
+                    memcpy(&coordCount, p + 9, 2);
+
+                    uint32_t feature_data_size = coordCount * 4;
+                    uint16_t ringCount = 0;
+
+                    if (geomType == 3) {
+                        uint8_t* ring_ptr = p + 12 + feature_data_size;
+                        if (ring_ptr + 2 <= data + fileSize) {
+                            ringCount = ring_ptr[0] | (ring_ptr[1] << 8);
+                            if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize)
+                                feature_data_size += 2 + (ringCount * 2);
+                            else
+                                ringCount = 0;
+                        }
+                    }
+
+                    if (p + 12 + feature_data_size > data + fileSize) break;
+
+                    // Zoom filtering (IceNav-v3 NavReader pattern)
+                    uint8_t minZoom = zoomPriority >> 4;
+                    if (minZoom > zoom) {
+                        p += 12 + feature_data_size;
+                        continue;
+                    }
+
+                    uint8_t priority = zoomPriority & 0x0F;
+                    if (priority >= 16) priority = 15;
+
+                    FeatureRef ref;
+                    ref.ptr = p;
+                    ref.geomType = geomType;
+                    ref.ringCount = ringCount;
+                    ref.coordCount = coordCount;
+                    ref.tileOffsetX = tileOffsetX;
+                    ref.tileOffsetY = tileOffsetY;
+                    globalLayers[priority].push_back(ref);
+
+                    p += 12 + feature_data_size;
+                }
+            }
+        }
+
+        // --- Render all layers (IceNav-v3 pattern: maps.cpp:1546-1569) ---
+        map.startWrite();
+
+        for (int pri = 0; pri < 16; pri++) {
+            if (globalLayers[pri].empty()) continue;
+
+            for (const auto& ref : globalLayers[pri]) {
+                uint8_t* fp = ref.ptr;
+
+                // Per-feature setClipRect to tile boundaries (IceNav-v3: maps.cpp:1561)
+                map.setClipRect(ref.tileOffsetX, ref.tileOffsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
+
+                // BBox culling against viewport (IceNav-v3: maps.cpp:1554-1559)
+                uint8_t bx1 = fp[5], by1 = fp[6], bx2 = fp[7], by2 = fp[8];
+                int16_t minX = ref.tileOffsetX + bx1;
+                int16_t minY = ref.tileOffsetY + by1;
+                int16_t maxX = ref.tileOffsetX + bx2;
+                int16_t maxY = ref.tileOffsetY + by2;
+                if (maxX < 0 || minX > viewportW || maxY < 0 || minY > viewportH) continue;
+
+                uint16_t rawColor;
+                memcpy(&rawColor, fp + 1, 2);
+                uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8);
+
+                // Render feature by geometry type (mixed per layer)
+                switch (ref.geomType) {
+                    case 3: { // Polygon
+                        if (ref.coordCount < 3) break;
+                        int16_t* coords = (int16_t*)(fp + 12);
+                        uint16_t* ringEnds = (ref.ringCount > 0)
+                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 2) : nullptr;
+
+                        if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount);
+                        if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount);
+                        proj32X.resize(ref.coordCount);
+                        proj32Y.resize(ref.coordCount);
+
+                        int* px_hp = proj32X.data();
+                        int* py_hp = proj32Y.data();
+
+                        for (uint16_t j = 0; j < ref.coordCount; j++) {
+                            px_hp[j] = coords[j * 2];
+                            py_hp[j] = coords[j * 2 + 1];
+                        }
+
+                        if (fillPolygons) {
+                            fillPolygonGeneral(map, px_hp, py_hp, ref.coordCount,
+                                colorRgb565, ref.tileOffsetX, ref.tileOffsetY,
+                                ref.ringCount, ringEnds);
+                        }
+
+                        uint16_t outerRingEnd = (ref.ringCount > 0) ? ringEnds[0] : ref.coordCount;
+                        if (outerRingEnd >= 2) {
+                            uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
+                            for (int k = 0; k < outerRingEnd; k++) {
+                                int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
+                                int x0 = (px_hp[k] >> 4) + ref.tileOffsetX;
+                                int y0 = (py_hp[k] >> 4) + ref.tileOffsetY;
+                                int x1 = (px_hp[next] >> 4) + ref.tileOffsetX;
+                                int y1 = (py_hp[next] >> 4) + ref.tileOffsetY;
+                                map.drawLine(x0, y0, x1, y1, borderColor);
+                            }
+                        }
+                        break;
+                    }
+                    case 2: { // LineString
+                        if (ref.coordCount < 2) break;
+                        uint8_t widthPixels = fp[4];
+                        int16_t* coords = (int16_t*)(fp + 12);
+
+                        for (uint16_t j = 1; j < ref.coordCount; j++) {
+                            int x0 = (coords[(j - 1) * 2] >> 4) + ref.tileOffsetX;
+                            int y0 = (coords[(j - 1) * 2 + 1] >> 4) + ref.tileOffsetY;
+                            int x1 = (coords[j * 2] >> 4) + ref.tileOffsetX;
+                            int y1 = (coords[j * 2 + 1] >> 4) + ref.tileOffsetY;
+
+                            if (widthPixels <= 1)
+                                map.drawLine(x0, y0, x1, y1, colorRgb565);
+                            else
+                                map.drawWideLine(x0, y0, x1, y1, widthPixels, colorRgb565);
+                        }
+                        break;
+                    }
+                    case 1: { // Point
+                        if (ref.coordCount < 1) break;
+                        int16_t* coords = (int16_t*)(fp + 12);
+                        int px = (coords[0] >> 4) + ref.tileOffsetX;
+                        int py = (coords[1] >> 4) + ref.tileOffsetY;
+                        map.fillCircle(px, py, 3, colorRgb565);
+                        break;
+                    }
+                }
+            }
+            globalLayers[pri].clear();
+            taskYIELD();
+        }
+
+        map.clearClipRect();
+        map.endWrite();
+
+        // Free all tile buffers (IceNav-v3: maps.cpp:1574-1577)
+        for (auto* buf : tileBuffers) free(buf);
+
+        return !tileBuffers.empty();
+    }
+
+    // Render a NAV1 vector tile using IceNav-v3 patterns:
+    // - 16 priority layers (dispatch by low nibble of zoomPriority)
+    // - Mixed geometry types per layer (not separated by type)
+    // - Per-feature setClipRect to tile boundaries
+    // - startWrite()/endWrite() for SPI batching
+    // - taskYIELD() between priority layers
+    // - ringCount read as uint16_t (2 bytes, per NAV1 format)
+    static bool renderNavTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map, uint8_t currentZoom) {
         esp_task_wdt_reset();
         uint8_t* data = nullptr;
         size_t fileSize = 0;
 
+        // Read tile file under SPI mutex
         if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             File file = SD.open(path, FILE_READ);
             if (file) {
@@ -559,9 +832,7 @@ namespace MapEngine {
             xSemaphoreGiveRecursive(spiMutex);
         }
 
-        if (!data) {
-            return false;
-        }
+        if (!data) return false;
 
         if (memcmp(data, "NAV1", 4) != 0) {
             free(data);
@@ -573,15 +844,13 @@ namespace MapEngine {
         memcpy(&feature_count, data + 4, 2);
 
         map.fillSprite(TFT_WHITE);
-        map.setClipRect(0, 0, 256, 256);
 
-        // --- Build feature index with BBox culling ---
-        // Pre-scan all features: parse headers, skip features outside viewport
-        featureIdx.clear();
-        if (featureIdx.capacity() < feature_count) featureIdx.reserve(feature_count);
+        // --- Dispatch features to 16 priority layers (IceNav-v3 pattern) ---
+        for (int i = 0; i < 16; i++) globalLayers[i].clear();
 
         uint8_t* p = data + 22;
         for (uint16_t i = 0; i < feature_count; i++) {
+            if ((i & 63) == 0) esp_task_wdt_reset();
             if (p + 12 > data + fileSize) break;
 
             uint8_t geomType = p[0];
@@ -590,14 +859,16 @@ namespace MapEngine {
             memcpy(&coordCount, p + 9, 2);
 
             uint32_t feature_data_size = coordCount * 4;
-            uint8_t ringCount = 0;
+            uint16_t ringCount = 0;
 
+            // Polygon ring data: uint16_t ringCount (2 bytes) + ringCount × uint16_t ringEnds
+            // (per NAV1 format, matching IceNav-v3 NavReader)
             if (geomType == 3) {
                 uint8_t* ring_ptr = p + 12 + feature_data_size;
-                if (ring_ptr + 1 <= data + fileSize) {
-                    ringCount = ring_ptr[0];
-                    if (ring_ptr + 1 + (ringCount * 2) <= data + fileSize) {
-                        feature_data_size += 1 + (ringCount * 2);
+                if (ring_ptr + 2 <= data + fileSize) {
+                    ringCount = ring_ptr[0] | (ring_ptr[1] << 8);  // uint16_t LE
+                    if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
+                        feature_data_size += 2 + (ringCount * 2);
                     } else {
                         ringCount = 0;
                     }
@@ -606,159 +877,136 @@ namespace MapEngine {
 
             if (p + 12 + feature_data_size > data + fileSize) break;
 
-            // BBox culling: skip features entirely outside the 256x256 sprite viewport
-            // bbox values are in pixel space (0-255) relative to tile origin
-            uint8_t bx1 = p[5], by1 = p[6], bx2 = p[7], by2 = p[8];
-            int fx1 = (int)bx1 + xOffset;
-            int fy1 = (int)by1 + yOffset;
-            int fx2 = (int)bx2 + xOffset;
-            int fy2 = (int)by2 + yOffset;
-
-            if (fx2 < 0 || fx1 > 255 || fy2 < 0 || fy1 > 255) {
-                // Feature entirely outside viewport — skip
+            // Zoom filtering (IceNav-v3 NavReader pattern):
+            // High nibble = minZoom required. Skip features too detailed for current zoom.
+            uint8_t minZoom = zoomPriority >> 4;
+            if (currentZoom > 0 && minZoom > currentZoom) {
                 p += 12 + feature_data_size;
                 continue;
             }
 
-            FeatureIndex fi;
-            fi.offset = (uint32_t)(p - data);
-            fi.dataSize = feature_data_size;
-            fi.geomType = geomType;
-            fi.priority = zoomPriority;
-            fi.ringCount = ringCount;
-            featureIdx.push_back(fi);
+            // Dispatch to priority layer (low nibble, IceNav-v3 getPriority() pattern)
+            uint8_t priority = zoomPriority & 0x0F;
+            if (priority >= 16) priority = 15;
+
+            FeatureRef ref;
+            ref.ptr = p;
+            ref.geomType = geomType;
+            ref.ringCount = ringCount;
+            ref.coordCount = coordCount;
+            globalLayers[priority].push_back(ref);
 
             p += 12 + feature_data_size;
         }
 
-        // --- Sort features by priority (ascending: 0=background first) ---
-        std::sort(featureIdx.begin(), featureIdx.end(),
-            [](const FeatureIndex& a, const FeatureIndex& b) {
-                return a.priority < b.priority;
-            });
+        // --- Render all layers (IceNav-v3 pattern) ---
+        map.startWrite();
 
-        uint32_t lastYieldMs = millis();
+        for (int pri = 0; pri < 16; pri++) {
+            if (globalLayers[pri].empty()) continue;
 
-        // --- Pass 1: Polygons (sorted by priority, background first) ---
-        for (const auto& fi : featureIdx) {
-            if (fi.geomType != 3) continue;
+            for (const auto& ref : globalLayers[pri]) {
+                uint8_t* fp = ref.ptr;
 
-            uint32_t now = millis();
-            if (now - lastYieldMs > 20) {
-                esp_task_wdt_reset();
-                vTaskDelay(pdMS_TO_TICKS(1));
-                lastYieldMs = now;
-            }
+                // Per-feature setClipRect to tile boundaries (IceNav-v3 pattern)
+                map.setClipRect(0, 0, MAP_TILE_SIZE, MAP_TILE_SIZE);
 
-            uint8_t* fp = data + fi.offset;
-            uint16_t coordCount;
-            memcpy(&coordCount, fp + 9, 2);
+                // BBox culling against viewport
+                uint8_t bx1 = fp[5], by1 = fp[6], bx2 = fp[7], by2 = fp[8];
+                if ((int)bx2 + xOffset < 0 || (int)bx1 + xOffset > MAP_TILE_SIZE - 1 ||
+                    (int)by2 + yOffset < 0 || (int)by1 + yOffset > MAP_TILE_SIZE - 1) continue;
 
-            if (coordCount < 3) continue;
+                uint16_t rawColor;
+                memcpy(&rawColor, fp + 1, 2);
+                uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8);
 
-            uint16_t rawColor;
-            memcpy(&rawColor, fp + 1, 2);
-            uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8);
-            int16_t* coords = (int16_t*)(fp + 12);
-            uint16_t* ringEnds = (fi.ringCount > 0) ? (uint16_t*)(fp + 12 + coordCount * 4 + 2) : nullptr;
+                // Render feature by geometry type (mixed per layer, IceNav-v3 pattern)
+                switch (ref.geomType) {
+                    case 3: { // Polygon
+                        if (ref.coordCount < 3) break;
+                        int16_t* coords = (int16_t*)(fp + 12);
+                        // ringEnds is after coords + 2-byte ringCount
+                        uint16_t* ringEnds = (ref.ringCount > 0)
+                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 2)
+                            : nullptr;
 
-            if (proj32X.capacity() < coordCount) proj32X.reserve(coordCount);
-            if (proj32Y.capacity() < coordCount) proj32Y.reserve(coordCount);
-            proj32X.resize(coordCount);
-            proj32Y.resize(coordCount);
+                        if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount);
+                        if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount);
+                        proj32X.resize(ref.coordCount);
+                        proj32Y.resize(ref.coordCount);
 
-            int* px_hp = proj32X.data();
-            int* py_hp = proj32Y.data();
+                        int* px_hp = proj32X.data();
+                        int* py_hp = proj32Y.data();
 
-            for (uint16_t j = 0; j < coordCount; j++) {
-                px_hp[j] = coords[j * 2];
-                py_hp[j] = coords[j * 2 + 1];
-            }
+                        for (uint16_t j = 0; j < ref.coordCount; j++) {
+                            px_hp[j] = coords[j * 2];
+                            py_hp[j] = coords[j * 2 + 1];
+                        }
 
-            if (fillPolygons) {
-                fillPolygonGeneral(map, px_hp, py_hp, coordCount, colorRgb565, xOffset, yOffset, fi.ringCount, ringEnds);
-            }
+                        if (fillPolygons) {
+                            fillPolygonGeneral(map, px_hp, py_hp, ref.coordCount,
+                                colorRgb565, xOffset, yOffset, ref.ringCount, ringEnds);
+                        }
 
-            uint16_t outerRingEnd = (fi.ringCount > 0) ? ringEnds[0] : coordCount;
-            if (outerRingEnd >= 2) {
-                uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
-                for (int k = 0; k < outerRingEnd; k++) {
-                    int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
-                    int x0 = (px_hp[k] >> 4) + xOffset;
-                    int y0 = (py_hp[k] >> 4) + yOffset;
-                    int x1 = (px_hp[next] >> 4) + xOffset;
-                    int y1 = (py_hp[next] >> 4) + yOffset;
-                    map.drawLine(x0, y0, x1, y1, borderColor);
+                        // Draw outline for exterior ring
+                        uint16_t outerRingEnd = (ref.ringCount > 0) ? ringEnds[0] : ref.coordCount;
+                        if (outerRingEnd >= 2) {
+                            uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
+                            for (int k = 0; k < outerRingEnd; k++) {
+                                int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
+                                int x0 = (px_hp[k] >> 4) + xOffset;
+                                int y0 = (py_hp[k] >> 4) + yOffset;
+                                int x1 = (px_hp[next] >> 4) + xOffset;
+                                int y1 = (py_hp[next] >> 4) + yOffset;
+                                map.drawLine(x0, y0, x1, y1, borderColor);
+                            }
+                        }
+                        break;
+                    }
+                    case 2: { // LineString
+                        if (ref.coordCount < 2) break;
+                        uint8_t widthPixels = fp[4];
+                        int16_t* coords = (int16_t*)(fp + 12);
+
+                        for (uint16_t j = 1; j < ref.coordCount; j++) {
+                            int x0 = (coords[(j - 1) * 2] >> 4) + xOffset;
+                            int y0 = (coords[(j - 1) * 2 + 1] >> 4) + yOffset;
+                            int x1 = (coords[j * 2] >> 4) + xOffset;
+                            int y1 = (coords[j * 2 + 1] >> 4) + yOffset;
+
+                            if (widthPixels <= 1)
+                                map.drawLine(x0, y0, x1, y1, colorRgb565);
+                            else
+                                map.drawWideLine(x0, y0, x1, y1, widthPixels, colorRgb565);
+                        }
+                        break;
+                    }
+                    case 1: { // Point
+                        if (ref.coordCount < 1) break;
+                        int16_t* coords = (int16_t*)(fp + 12);
+                        int px = (coords[0] >> 4) + xOffset;
+                        int py = (coords[1] >> 4) + yOffset;
+                        map.fillCircle(px, py, 3, colorRgb565);
+                        break;
+                    }
                 }
             }
-        }
-
-        // --- Pass 2: Lines (sorted by priority, minor roads first) ---
-        for (const auto& fi : featureIdx) {
-            if (fi.geomType != 2) continue;
-
-            uint32_t now = millis();
-            if (now - lastYieldMs > 20) {
-                esp_task_wdt_reset();
-                vTaskDelay(pdMS_TO_TICKS(1));
-                lastYieldMs = now;
-            }
-
-            uint8_t* fp = data + fi.offset;
-            uint16_t coordCount;
-            memcpy(&coordCount, fp + 9, 2);
-
-            if (coordCount < 2) continue;
-
-            uint16_t rawColor;
-            memcpy(&rawColor, fp + 1, 2);
-            uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8);
-            uint8_t widthPixels = fp[4];
-            int16_t* coords = (int16_t*)(fp + 12);
-
-            for (uint16_t j = 1; j < coordCount; j++) {
-                int x0 = (coords[(j - 1) * 2] >> 4) + xOffset;
-                int y0 = (coords[(j - 1) * 2 + 1] >> 4) + yOffset;
-                int x1 = (coords[j * 2] >> 4) + xOffset;
-                int y1 = (coords[j * 2 + 1] >> 4) + yOffset;
-
-                if (widthPixels <= 1) {
-                    map.drawLine(x0, y0, x1, y1, colorRgb565);
-                } else {
-                    map.drawWideLine(x0, y0, x1, y1, widthPixels, colorRgb565);
-                }
-            }
-        }
-
-        // --- Pass 3: Points (on top of everything) ---
-        for (const auto& fi : featureIdx) {
-            if (fi.geomType != 1) continue;
-
-            uint8_t* fp = data + fi.offset;
-            uint16_t coordCount;
-            memcpy(&coordCount, fp + 9, 2);
-
-            if (coordCount < 1) continue;
-
-            uint16_t rawColor;
-            memcpy(&rawColor, fp + 1, 2);
-            uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8);
-            int16_t* coords = (int16_t*)(fp + 12);
-            int px = (coords[0] >> 4) + xOffset;
-            int py = (coords[1] >> 4) + yOffset;
-            map.fillCircle(px, py, 3, colorRgb565);
+            globalLayers[pri].clear();
+            taskYIELD();  // Yield between priority layers (IceNav-v3 pattern)
         }
 
         map.clearClipRect();
+        map.endWrite();
+
         free(data);
         return true;
     }
 
     // Public render dispatcher
-    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
+    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map, uint8_t zoom) {
         String pathStr(path);
         if (pathStr.endsWith(".nav")) {
-            return renderNavTile(path, xOffset, yOffset, map);
+            return renderNavTile(path, xOffset, yOffset, map, zoom);
         } else if (pathStr.endsWith(".png")) {
             return renderPNGRaster(path, map);
         } else if (pathStr.endsWith(".jpg")) {

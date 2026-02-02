@@ -734,7 +734,7 @@ namespace UIMapManager {
         }
 
         // 4. Render the tile directly (synchronous call). The render function handles its own mutex.
-        bool success = MapEngine::renderTile(found_path, 0, 0, *newSprite);
+        bool success = MapEngine::renderTile(found_path, 0, 0, *newSprite, (uint8_t)zoom);
 
         // 5. If rendering is successful, add to cache
         if (success) {
@@ -870,22 +870,56 @@ namespace UIMapManager {
 
         Serial.printf("[MAP] Center tile: %d/%d, sub-tile offset: %d,%d\n", centerTileX, centerTileY, subTileOffsetX, subTileOffsetY);
 
-        // Load tiles
+        // Load tiles — two paths:
+        // 1) NAV viewport (IceNav-v3 pattern): loads ALL tiles, renders in single z-ordered pass
+        // 2) Raster per-tile (PNG/JPG): loads tiles individually via cache
         bool hasTiles = false;
         if (STORAGE_Utils::isSDAvailable()) {
-            for (int dy = -1; dy <= 1; dy++) {
-                for (int dx = -1; dx <= 1; dx++) {
-                    int tileX = centerTileX + dx;
-                    int tileY = centerTileY + dy;
-                    int offsetX = MAP_CANVAS_WIDTH / 2 - subTileOffsetX + dx * MAP_TILE_SIZE;
-                    int offsetY = MAP_CANVAS_HEIGHT / 2 - subTileOffsetY + dy * MAP_TILE_SIZE;
+            // Check if center tile exists as .nav → viewport rendering path
+            char navCheckPath[128];
+            bool isNavMode = false;
+            if (!map_current_region.isEmpty()) {
+                snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
+                         map_current_region.c_str(), map_current_zoom, centerTileX, centerTileY);
+                if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+                    isNavMode = SD.exists(navCheckPath);
+                    xSemaphoreGive(spiMutex);
+                }
+            }
 
-                    if (dx == 0 && dy == 0) {
-                        Serial.printf("[MAP] Center tile offset: %d,%d\n", offsetX, offsetY);
+            if (isNavMode) {
+                // NAV viewport rendering (IceNav-v3 pattern)
+                // Create a viewport sprite matching the canvas dimensions
+                LGFX_Sprite viewportSprite(&tft);
+                viewportSprite.setPsram(true);
+                if (viewportSprite.createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) != nullptr) {
+                    hasTiles = MapEngine::renderNavViewport(
+                        map_center_lat, map_center_lon, (uint8_t)map_current_zoom,
+                        viewportSprite, map_current_region.c_str());
+
+                    if (hasTiles) {
+                        // Copy viewport sprite to LVGL canvas buffer (row by row)
+                        uint16_t* src = (uint16_t*)viewportSprite.getBuffer();
+                        if (src && map_canvas_buf) {
+                            memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
+                        }
                     }
+                    viewportSprite.deleteSprite();
+                } else {
+                    Serial.println("[MAP] Failed to create viewport sprite for NAV rendering");
+                }
+            } else {
+                // Raster per-tile rendering (PNG/JPG via cache)
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int tileX = centerTileX + dx;
+                        int tileY = centerTileY + dy;
+                        int offsetX = MAP_CANVAS_WIDTH / 2 - subTileOffsetX + dx * MAP_TILE_SIZE;
+                        int offsetY = MAP_CANVAS_HEIGHT / 2 - subTileOffsetY + dy * MAP_TILE_SIZE;
 
-                    if (loadTileFromSD(tileX, tileY, map_current_zoom, map_canvas, offsetX, offsetY)) {
-                        hasTiles = true;
+                        if (loadTileFromSD(tileX, tileY, map_current_zoom, map_canvas, offsetX, offsetY)) {
+                            hasTiles = true;
+                        }
                     }
                 }
             }
