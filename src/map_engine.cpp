@@ -209,7 +209,7 @@ namespace MapEngine {
         xTaskCreatePinnedToCore(
             mapRenderTask,
             "MapRender",
-            4096,
+            8192,
             NULL,
             1, // Low priority
             &mapRenderTaskHandle,
@@ -584,8 +584,9 @@ namespace MapEngine {
             if (p + 12 + feature_data_size > data + fileSize) break;
 
             if (geomType == 3 && coordCount >= 3) {
-                uint16_t colorRgb565;
-                memcpy(&colorRgb565, p + 1, 2);
+                uint16_t rawColor;
+                memcpy(&rawColor, p + 1, 2);
+                uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8); // Endianness swap
                 int16_t* coords = (int16_t*)(p + 12);
                 uint16_t* ringEnds = (ringCount > 0) ? (uint16_t*)(p + 12 + coordCount * 4 + 2) : nullptr;
 
@@ -653,8 +654,9 @@ namespace MapEngine {
             if (p + 12 + feature_data_size > data + fileSize) break;
 
             if (geomType == 2 && coordCount >= 2) {
-                uint16_t colorRgb565; 
-                memcpy(&colorRgb565, p + 1, 2);
+                uint16_t rawColor; 
+                memcpy(&rawColor, p + 1, 2);
+                uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8); // Endianness swap
                 uint8_t widthPixels = p[4];
                 int16_t* coords = (int16_t*)(p + 12);
                 for (uint16_t j = 1; j < coordCount; j++) {
@@ -670,8 +672,9 @@ namespace MapEngine {
                     }
                 }
             } else if (geomType == 1 && coordCount > 0) {
-                 uint16_t colorRgb565; 
-                 memcpy(&colorRgb565, p + 1, 2);
+                 uint16_t rawColor; 
+                 memcpy(&rawColor, p + 1, 2);
+                 uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8); // Endianness swap
                  int16_t* coords = (int16_t*)(p + 12);
                  int px = (coords[0] >> 4) + xOffset;
                  int py = (coords[1] >> 4) + yOffset;

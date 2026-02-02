@@ -1244,6 +1244,13 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         request.tileX = tileX;
         request.tileY = tileY;
 
+        if (MapEngine::mapRenderQueue == nullptr) {
+            Serial.println("[MAP] ERROR: Render queue is null. Task not started?");
+            newSprite->deleteSprite();
+            delete newSprite;
+            return false;
+        }
+
         if (xQueueSend(MapEngine::mapRenderQueue, &request, 0) == pdPASS) {
             return true; // Request queued successfully
         } else {
@@ -1371,6 +1378,11 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         if (map_canvas_buf) {
             map_canvas = lv_canvas_create(map_container);
             lv_canvas_set_buffer(map_canvas, map_canvas_buf, MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT, LV_IMG_CF_TRUE_COLOR);
+
+            // Start the background render task now that the canvas exists.
+            // This is critical to ensure the queue is ready before loadTileFromSD is called.
+            MapEngine::startRenderTask(map_canvas);
+
             // Position canvas with negative margin so visible area is centered
             lv_obj_set_pos(map_canvas, -MAP_CANVAS_MARGIN, -MAP_CANVAS_MARGIN);
 
@@ -1524,7 +1536,6 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         // Start tile preload task on Core 1 for directional preloading during touch pan
         startTilePreloadTask();
 
-        MapEngine::startRenderTask(map_canvas);
         Serial.println("[LVGL] Map screen created");
     }
 
