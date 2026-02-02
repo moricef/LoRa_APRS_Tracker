@@ -52,8 +52,12 @@ namespace UIMapManager {
     float map_center_lat = 0.0f;
     float map_center_lon = 0.0f;
     String map_current_region = "";
-    static String cachedMapsPath = "";      // Cached maps path (avoid repeated SD access)
     bool map_follow_gps = true;  // Follow GPS or free panning mode
+
+    // Negative cache for tiles not found on SD to prevent repeated lookups
+    #define NOT_FOUND_CACHE_SIZE 128
+    static std::vector<uint32_t> notFoundCache;
+    static int notFoundCacheIndex = 0;
 
     // Touch pan state
     static bool touch_dragging = false;
@@ -754,27 +758,27 @@ namespace UIMapManager {
 
     // Convert lat/lon to pixel position on screen (relative to center)
     void latLonToPixel(float lat, float lon, float centerLat, float centerLon, int zoom, int* pixelX, int* pixelY) {
-        int centerTileX, centerTileY;
-        latLonToTile(centerLat, centerLon, zoom, &centerTileX, &centerTileY);
+        double n = pow(2.0, zoom);
 
-        int targetTileX, targetTileY;
-        latLonToTile(lat, lon, zoom, &targetTileX, &targetTileY);
+        // Calculate world coordinates (0.0 to 1.0) for target and center using Web Mercator projection
+        double target_x_world = (lon + 180.0) / 360.0;
+        double target_lat_rad = lat * PI / 180.0;
+        double target_y_world = (1.0 - log(tan(target_lat_rad) + 1.0 / cos(target_lat_rad)) / PI) / 2.0;
 
-        // Calculate sub-tile position
-        int n = 1 << zoom;
-        float subX = ((lon + 180.0f) / 360.0f * n) - targetTileX;
-        float subY = ((1.0f - log(tan(lat * PI / 180.0f) + 1.0f / cos(lat * PI / 180.0f)) / PI) / 2.0f * n) - targetTileY;
+        double center_x_world = (centerLon + 180.0) / 360.0;
+        double center_lat_rad = centerLat * PI / 180.0;
+        double center_y_world = (1.0 - log(tan(center_lat_rad) + 1.0 / cos(center_lat_rad)) / PI) / 2.0;
 
-        float centerSubX = ((centerLon + 180.0f) / 360.0f * n) - centerTileX;
-        float centerSubY = ((1.0f - log(tan(centerLat * PI / 180.0f) + 1.0f / cos(centerLat * PI / 180.0f)) / PI) / 2.0f * n) - centerTileY;
+        // Calculate delta in world coordinates, scale by total map size in pixels at this zoom
+        double delta_x_px = (target_x_world - center_x_world) * n * MAP_TILE_SIZE;
+        double delta_y_px = (target_y_world - center_y_world) * n * MAP_TILE_SIZE;
 
-        *pixelX = MAP_CANVAS_WIDTH / 2 + (int)(((targetTileX - centerTileX) + (subX - centerSubX)) * MAP_TILE_SIZE);
-        *pixelY = MAP_CANVAS_HEIGHT / 2 + (int)(((targetTileY - centerTileY) + (subY - centerSubY)) * MAP_TILE_SIZE);
+        // Position relative to canvas center
+        *pixelX = (int)(MAP_CANVAS_WIDTH / 2.0 + delta_x_px);
+        *pixelY = (int)(MAP_CANVAS_HEIGHT / 2.0 + delta_y_px);
     }
 
 
-    // Track map station click - stores callsign to prefill compose screen
-    static String map_prefill_callsign = "";
 
 /*    // Station click handler - opens compose screen with prefilled callsign
     void map_station_clicked(lv_event_t* e) {
@@ -1167,13 +1171,10 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         Serial.println("[MAP] ERROR: spiMutex is NULL. Skipping SD access.");
         return false;
     }
-    char path[128];
-    char found_path[128] = {0};
-    enum { TILE_NONE, TILE_NAV, TILE_PNG, TILE_JPG } found_type = TILE_NONE;
-    bool tileRendered = false;
-    LGFX_Sprite* newSprite = nullptr;
 
-    // --- 1. Check cache first ---
+    uint32_t tileHash = (static_cast<uint32_t>(zoom) << 28) | (static_cast<uint32_t>(tileX) << 14) | static_cast<uint32_t>(tileY);
+
+    // --- 1. Check positive cache first ---
     int cacheIdx = MapEngine::findCachedTile(zoom, tileX, tileY);
     if (cacheIdx >= 0) {
         LGFX_Sprite* cachedSprite = MapEngine::getCachedTileSprite(cacheIdx);
@@ -1181,27 +1182,34 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         return true;
     }
 
-    // --- 2. Check for a valid region before proceeding ---
+    // --- 2. Check negative cache ---
+    for (const auto& hash : notFoundCache) {
+        if (hash == tileHash) {
+            return false; // Tile is known to be missing, don't scan SD
+        }
+    }
+
+    // --- 3. Find a valid tile file on SD card ---
+    char path[128];
+    char found_path[128] = {0};
+    bool found = false;
+    
     if (map_current_region.isEmpty()) {
         return false;
     }
 
-    // --- 3. Find a valid tile file on SD card (with SPI Mutex) ---
     if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         if (STORAGE_Utils::isSDAvailable()) {
             const char* region = map_current_region.c_str();
 
             snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav", region, zoom, tileX, tileY);
-            File f = SD.open(path);
-            if (f) { f.close(); strcpy(found_path, path); found_type = TILE_NAV; }
+            if (SD.exists(path)) { strcpy(found_path, path); found = true; }
             else {
                 snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
-                f = SD.open(path);
-                if (f) { f.close(); strcpy(found_path, path); found_type = TILE_PNG; }
+                if (SD.exists(path)) { strcpy(found_path, path); found = true; }
                 else {
                     snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
-                    f = SD.open(path);
-                    if (f) { f.close(); strcpy(found_path, path); found_type = TILE_JPG; }
+                    if (SD.exists(path)) { strcpy(found_path, path); found = true; }
                 }
             }
         }
@@ -1210,55 +1218,45 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         Serial.println("[MAP] ERROR: Could not get SPI Mutex for SD access");
     }
 
-    // --- 4. If a file was found, create sprite and render it ---
-    if (found_type != TILE_NONE) {
-        Serial.printf("[MAP] Found file: %s\n", found_path);
-        newSprite = new LGFX_Sprite(&tft);
-        newSprite->setPsram(true); // Explicitly use PSRAM for map tiles
-        if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr) {
-            // --- Asynchronous Rendering ---
-            // Instead of rendering here, send a request to the background task.
-            MapEngine::RenderRequest request;
-            strncpy(request.path, found_path, sizeof(request.path) - 1);
-            request.path[sizeof(request.path) - 1] = '\0';
-            request.xOffset = 0;
-            request.yOffset = 0;
-            request.targetSprite = newSprite;
-            request.zoom = zoom;
-            request.tileX = tileX;
-            request.tileY = tileY;
-
-            if (xQueueSend(MapEngine::mapRenderQueue, &request, 0) == pdPASS) {
-                Serial.printf("[MAP] Queued render request for: %s\n", found_path);
-                // Caching is now handled by the render task. Do NOT cache here.
-                tileRendered = true; 
-            } else {
-                Serial.printf("[MAP] ERROR: Render queue full for: %s\n", found_path);
-                newSprite->deleteSprite();
-                delete newSprite;
-                newSprite = nullptr;
-            }
+    // --- 4. If file not found, add to negative cache and return ---
+    if (!found) {
+        if (notFoundCache.size() < NOT_FOUND_CACHE_SIZE) {
+            notFoundCache.push_back(tileHash);
         } else {
-            Serial.println("[MAP] ERROR: Sprite creation failed (Out of PSRAM?)");
+            // Overwrite oldest entry (circular buffer)
+            notFoundCache[notFoundCacheIndex] = tileHash;
+            notFoundCacheIndex = (notFoundCacheIndex + 1) % NOT_FOUND_CACHE_SIZE;
+        }
+        return false;
+    }
+
+    // --- 5. If a file was found, create sprite and queue for rendering ---
+    LGFX_Sprite* newSprite = new LGFX_Sprite(&tft);
+    newSprite->setPsram(true);
+    if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr) {
+        MapEngine::RenderRequest request;
+        strncpy(request.path, found_path, sizeof(request.path) - 1);
+        request.path[sizeof(request.path) - 1] = '\0';
+        request.xOffset = 0;
+        request.yOffset = 0;
+        request.targetSprite = newSprite;
+        request.zoom = zoom;
+        request.tileX = tileX;
+        request.tileY = tileY;
+
+        if (xQueueSend(MapEngine::mapRenderQueue, &request, 0) == pdPASS) {
+            return true; // Request queued successfully
+        } else {
+            Serial.printf("[MAP] ERROR: Render queue full for: %s\n", found_path);
+            newSprite->deleteSprite();
             delete newSprite;
             return false;
         }
-    }
-
-    // --- 5. If a render task was queued, copy the (initially empty) sprite to canvas ---
-    // The sprite will be populated by the background task, and the canvas will be invalidated.
-    if (tileRendered && newSprite) {
-        // Don't copy here. The invalidate callback will trigger a redraw where the updated
-        // sprite will be copied from cache. For the first load, this tile will be blank
-        // until the render task completes. This is the correct async behavior.
-        // MapEngine::copySpriteToCanvasWithClip(canvas, newSprite, offsetX, offsetY);
-    } else if (newSprite) {
-        // Cleanup if rendering failed or sprite wasn't added to cache
-        newSprite->deleteSprite();
+    } else {
+        Serial.println("[MAP] ERROR: Sprite creation failed (Out of PSRAM?)");
         delete newSprite;
+        return false;
     }
-    
-    return tileRendered;
 }
 
 

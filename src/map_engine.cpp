@@ -338,10 +338,14 @@ namespace MapEngine {
             }
 
             if (copy_w > 0 && copy_h > 0) {
-                uint16_t* fb = (uint16_t*)sprite->getBuffer();
+                uint16_t* src_buf = (uint16_t*)sprite->getBuffer();
+                lv_color_t* dest_buf = UIMapManager::map_canvas_buf;
+
+                // Use memcpy for fast row-by-row buffer copy
                 for (int y = 0; y < copy_h; y++) {
-                    uint16_t* src_row_ptr = fb + ((src_y + y) * MAP_TILE_SIZE) + src_x;
-                    lv_canvas_copy_buf(canvas, src_row_ptr, dest_x, dest_y + y, copy_w, 1);
+                    uint16_t* src_ptr = src_buf + ((src_y + y) * MAP_TILE_SIZE) + src_x;
+                    lv_color_t* dest_ptr = dest_buf + ((dest_y + y) * MAP_CANVAS_WIDTH) + dest_x;
+                    memcpy(dest_ptr, src_ptr, copy_w * sizeof(lv_color_t));
                 }
             }
             xSemaphoreGive(spriteMutex);
