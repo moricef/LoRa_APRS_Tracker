@@ -697,7 +697,8 @@ namespace UIMapManager {
             return true;
         }
 
-        // 2. Find file path (NAV, then PNG, then JPG) — under SPI mutex
+        // 2. Find file path (PNG, then JPG) — under SPI mutex
+        // NAV tiles are NOT cached per-tile; they use renderNavViewport() exclusively.
         char path[128];
         char found_path[128] = {0};
         bool found = false;
@@ -706,15 +707,11 @@ namespace UIMapManager {
             if (STORAGE_Utils::isSDAvailable()) {
                 const char* region = map_current_region.c_str();
 
-                snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav", region, zoom, tileX, tileY);
+                snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
                 if (SD.exists(path)) { strcpy(found_path, path); found = true; }
                 else {
-                    snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
+                    snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
                     if (SD.exists(path)) { strcpy(found_path, path); found = true; }
-                    else {
-                        snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
-                        if (SD.exists(path)) { strcpy(found_path, path); found = true; }
-                    }
                 }
             }
             xSemaphoreGive(spiMutex);
@@ -1241,19 +1238,17 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         return false;
     }
 
+    // NAV tiles are NOT loaded per-tile; they use renderNavViewport() exclusively.
+    // Only search for raster tiles (PNG, JPG).
     if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
         if (STORAGE_Utils::isSDAvailable()) {
             const char* region = map_current_region.c_str();
 
-            snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav", region, zoom, tileX, tileY);
+            snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
             if (SD.exists(path)) { strcpy(found_path, path); found = true; }
             else {
-                snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
+                snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
                 if (SD.exists(path)) { strcpy(found_path, path); found = true; }
-                else {
-                    snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
-                    if (SD.exists(path)) { strcpy(found_path, path); found = true; }
-                }
             }
         }
         xSemaphoreGive(spiMutex);
@@ -1458,21 +1453,50 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
             // Try to load tiles from SD card
             bool hasTiles = false;
             if (STORAGE_Utils::isSDAvailable()) {
-                // Load center tile and surrounding tiles (3x3 grid, or more if needed)
-                for (int dy = -1; dy <= 1; dy++) {
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int tileX = centerTileX + dx;
-                        int tileY = centerTileY + dy;
-                        // Apply sub-tile offset so center point is at screen center
-                        int offsetX = MAP_CANVAS_WIDTH / 2 - subTileOffsetX + dx * MAP_TILE_SIZE;
-                        int offsetY = MAP_CANVAS_HEIGHT / 2 - subTileOffsetY + dy * MAP_TILE_SIZE;
+                // Check if NAV tiles are available → viewport rendering path
+                char navCheckPath[128];
+                bool isNavMode = false;
+                if (!map_current_region.isEmpty()) {
+                    snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
+                             map_current_region.c_str(), map_current_zoom, centerTileX, centerTileY);
+                    if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+                        isNavMode = SD.exists(navCheckPath);
+                        xSemaphoreGive(spiMutex);
+                    }
+                }
 
-                        if (dx == 0 && dy == 0) {
-                            Serial.printf("[MAP] Center tile offset: %d,%d\n", offsetX, offsetY);
+                if (isNavMode) {
+                    // NAV viewport rendering (IceNav-v3 pattern)
+                    LGFX_Sprite viewportSprite(&tft);
+                    viewportSprite.setPsram(true);
+                    if (viewportSprite.createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) != nullptr) {
+                        hasTiles = MapEngine::renderNavViewport(
+                            map_center_lat, map_center_lon, (uint8_t)map_current_zoom,
+                            viewportSprite, map_current_region.c_str());
+                        if (hasTiles && map_canvas_buf) {
+                            uint16_t* src = (uint16_t*)viewportSprite.getBuffer();
+                            if (src) {
+                                memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
+                            }
                         }
+                        viewportSprite.deleteSprite();
+                    }
+                } else {
+                    // Raster per-tile rendering (PNG/JPG via cache)
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            int tileX = centerTileX + dx;
+                            int tileY = centerTileY + dy;
+                            int offsetX = MAP_CANVAS_WIDTH / 2 - subTileOffsetX + dx * MAP_TILE_SIZE;
+                            int offsetY = MAP_CANVAS_HEIGHT / 2 - subTileOffsetY + dy * MAP_TILE_SIZE;
 
-                        if (loadTileFromSD(tileX, tileY, map_current_zoom, map_canvas, offsetX, offsetY)) {
-                            hasTiles = true;
+                            if (dx == 0 && dy == 0) {
+                                Serial.printf("[MAP] Center tile offset: %d,%d\n", offsetX, offsetY);
+                            }
+
+                            if (loadTileFromSD(tileX, tileY, map_current_zoom, map_canvas, offsetX, offsetY)) {
+                                hasTiles = true;
+                            }
                         }
                     }
                 }
