@@ -34,6 +34,9 @@ namespace MapEngine {
     static std::vector<int, InternalAllocator<int>> edgeBuckets;
 
     // Static vectors for coordinate projection (internal RAM, pre-reserved)
+    // IceNav-v3 pattern: separate int16_t buffers for lines, int buffers for polygons
+    static std::vector<int16_t, InternalAllocator<int16_t>> proj16X;
+    static std::vector<int16_t, InternalAllocator<int16_t>> proj16Y;
     static std::vector<int, InternalAllocator<int>> proj32X;
     static std::vector<int, InternalAllocator<int>> proj32Y;
 
@@ -243,9 +246,11 @@ namespace MapEngine {
         cacheAccessCounter = 0;
 
         // Pre-reserve AEL, projection, and feature index buffers in internal RAM
-        // This avoids repeated allocations during rendering
-        edgePool.reserve(512);
-        edgeBuckets.reserve(256);
+        // (IceNav-v3 constructor pattern: maps.cpp:57-63)
+        edgePool.reserve(1024);
+        edgeBuckets.reserve(768);
+        proj16X.reserve(1024);
+        proj16Y.reserve(1024);
         proj32X.reserve(1024);
         proj32Y.reserve(1024);
         for (int i = 0; i < 16; i++) globalLayers[i].reserve(256);
@@ -463,8 +468,9 @@ namespace MapEngine {
 
         int activeHead = -1;
         int spriteW = map.width();
-        int startY_px = std::max(minY_px, 0);
-        int endY_px = std::min(maxY_px, spriteH - 1);
+        // Clip Y range accounting for offset (IceNav-v3 pattern: maps.cpp:953-954)
+        int startY_px = std::max(minY_px, -yOffset);
+        int endY_px = std::min(maxY_px, spriteH - 1 - yOffset);
 
         // 4. Fast-forward: process buckets before visible range, jump edge xVal
         //    directly to startY_px (IceNav-v3 pattern — skip invisible scanlines)
@@ -697,10 +703,14 @@ namespace MapEngine {
         // --- Render all layers (IceNav-v3 pattern: maps.cpp:1546-1569) ---
         map.startWrite();
 
+        int featureCount = 0;
         for (int pri = 0; pri < 16; pri++) {
             if (globalLayers[pri].empty()) continue;
 
             for (const auto& ref : globalLayers[pri]) {
+                // WDT reset every 32 features during rendering (prevents WDT timeout)
+                if ((++featureCount & 31) == 0) esp_task_wdt_reset();
+
                 uint8_t* fp = ref.ptr;
 
                 // Per-feature setClipRect to tile boundaries (IceNav-v3: maps.cpp:1561)
@@ -714,20 +724,20 @@ namespace MapEngine {
                 int16_t maxY = ref.tileOffsetY + by2;
                 if (maxX < 0 || minX > viewportW || maxY < 0 || minY > viewportH) continue;
 
-                uint16_t rawColor;
-                memcpy(&rawColor, fp + 1, 2);
-                uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8);
+                // Read colorRgb565 directly (LE, no byte swap — IceNav-v3 pattern)
+                uint16_t colorRgb565;
+                memcpy(&colorRgb565, fp + 1, 2);
 
                 // Render feature by geometry type (mixed per layer)
                 switch (ref.geomType) {
-                    case 3: { // Polygon
+                    case 3: { // Polygon (IceNav-v3: renderNavPolygon)
                         if (ref.coordCount < 3) break;
                         int16_t* coords = (int16_t*)(fp + 12);
                         uint16_t* ringEnds = (ref.ringCount > 0)
                             ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 2) : nullptr;
 
-                        if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount);
-                        if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount);
+                        if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount * 3 / 2);
+                        if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount * 3 / 2);
                         proj32X.resize(ref.coordCount);
                         proj32Y.resize(ref.coordCount);
 
@@ -745,10 +755,12 @@ namespace MapEngine {
                                 ref.ringCount, ringEnds);
                         }
 
+                        // Draw outline for exterior ring (IceNav-v3: renderNavPolygon L1392-1401)
                         uint16_t outerRingEnd = (ref.ringCount > 0) ? ringEnds[0] : ref.coordCount;
-                        if (outerRingEnd >= 2) {
+                        if (outerRingEnd >= 3) {
                             uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
                             for (int k = 0; k < outerRingEnd; k++) {
+                                if ((k & 63) == 0) esp_task_wdt_reset();
                                 int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
                                 int x0 = (px_hp[k] >> 4) + ref.tileOffsetX;
                                 int y0 = (py_hp[k] >> 4) + ref.tileOffsetY;
@@ -759,30 +771,65 @@ namespace MapEngine {
                         }
                         break;
                     }
-                    case 2: { // LineString
+                    case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
                         if (ref.coordCount < 2) break;
                         uint8_t widthPixels = fp[4];
+                        if (widthPixels == 0) widthPixels = 1;
                         int16_t* coords = (int16_t*)(fp + 12);
 
-                        for (uint16_t j = 1; j < ref.coordCount; j++) {
-                            int x0 = (coords[(j - 1) * 2] >> 4) + ref.tileOffsetX;
-                            int y0 = (coords[(j - 1) * 2 + 1] >> 4) + ref.tileOffsetY;
-                            int x1 = (coords[j * 2] >> 4) + ref.tileOffsetX;
-                            int y1 = (coords[j * 2 + 1] >> 4) + ref.tileOffsetY;
+                        // Pre-project all coords with dedup (IceNav-v3: renderNavLineString L1287-1324)
+                        size_t numCoords = ref.coordCount;
+                        if (proj16X.capacity() < numCoords) proj16X.reserve(numCoords * 3 / 2);
+                        if (proj16Y.capacity() < numCoords) proj16Y.reserve(numCoords * 3 / 2);
+                        proj16X.resize(numCoords);
+                        proj16Y.resize(numCoords);
 
-                            if (widthPixels <= 1)
-                                map.drawLine(x0, y0, x1, y1, colorRgb565);
+                        int16_t* pxArr = proj16X.data();
+                        int16_t* pyArr = proj16Y.data();
+
+                        int16_t minPx = INT16_MAX, maxPx = INT16_MIN;
+                        int16_t minPy = INT16_MAX, maxPy = INT16_MIN;
+                        size_t validPoints = 0;
+                        int16_t lastPx = -32768, lastPy = -32768;
+
+                        for (size_t j = 0; j < numCoords; j++) {
+                            int16_t px = (coords[j * 2] >> 4) + ref.tileOffsetX;
+                            int16_t py = (coords[j * 2 + 1] >> 4) + ref.tileOffsetY;
+
+                            // Skip consecutive duplicate pixels (IceNav-v3 L1310-1311)
+                            if (validPoints > 0 && px == lastPx && py == lastPy) continue;
+
+                            pxArr[validPoints] = px;
+                            pyArr[validPoints] = py;
+                            if (px < minPx) minPx = px;
+                            if (px > maxPx) maxPx = px;
+                            if (py < minPy) minPy = py;
+                            if (py > maxPy) maxPy = py;
+                            lastPx = px;
+                            lastPy = py;
+                            validPoints++;
+                        }
+
+                        // Bbox check on projected line (IceNav-v3 L1326)
+                        if (validPoints < 2 || maxPx < 0 || minPx >= viewportW ||
+                            maxPy < 0 || minPy >= viewportH) break;
+
+                        for (size_t j = 1; j < validPoints; j++) {
+                            if (widthPixels == 1)
+                                map.drawLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], colorRgb565);
                             else
-                                map.drawWideLine(x0, y0, x1, y1, widthPixels, colorRgb565);
+                                map.drawWideLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
                         }
                         break;
                     }
-                    case 1: { // Point
+                    case 1: { // Point (IceNav-v3: renderNavPoint with bounds check)
                         if (ref.coordCount < 1) break;
                         int16_t* coords = (int16_t*)(fp + 12);
                         int px = (coords[0] >> 4) + ref.tileOffsetX;
                         int py = (coords[1] >> 4) + ref.tileOffsetY;
-                        map.fillCircle(px, py, 3, colorRgb565);
+                        // Bounds check (IceNav-v3: renderNavPoint L1418)
+                        if (px >= 0 && px < viewportW && py >= 0 && py < viewportH)
+                            map.fillCircle(px, py, 3, colorRgb565);
                         break;
                     }
                 }
@@ -880,7 +927,7 @@ namespace MapEngine {
             // Zoom filtering (IceNav-v3 NavReader pattern):
             // High nibble = minZoom required. Skip features too detailed for current zoom.
             uint8_t minZoom = zoomPriority >> 4;
-            if (currentZoom > 0 && minZoom > currentZoom) {
+            if (minZoom > currentZoom) {
                 p += 12 + feature_data_size;
                 continue;
             }
@@ -902,36 +949,39 @@ namespace MapEngine {
         // --- Render all layers (IceNav-v3 pattern) ---
         map.startWrite();
 
+        int featureCount = 0;
         for (int pri = 0; pri < 16; pri++) {
             if (globalLayers[pri].empty()) continue;
 
             for (const auto& ref : globalLayers[pri]) {
+                // WDT reset every 32 features during rendering (prevents WDT timeout)
+                if ((++featureCount & 31) == 0) esp_task_wdt_reset();
+
                 uint8_t* fp = ref.ptr;
 
                 // Per-feature setClipRect to tile boundaries (IceNav-v3 pattern)
                 map.setClipRect(0, 0, MAP_TILE_SIZE, MAP_TILE_SIZE);
 
-                // BBox culling against viewport
+                // BBox culling against tile
                 uint8_t bx1 = fp[5], by1 = fp[6], bx2 = fp[7], by2 = fp[8];
                 if ((int)bx2 + xOffset < 0 || (int)bx1 + xOffset > MAP_TILE_SIZE - 1 ||
                     (int)by2 + yOffset < 0 || (int)by1 + yOffset > MAP_TILE_SIZE - 1) continue;
 
-                uint16_t rawColor;
-                memcpy(&rawColor, fp + 1, 2);
-                uint16_t colorRgb565 = (rawColor << 8) | (rawColor >> 8);
+                // Read colorRgb565 directly (LE, no byte swap — IceNav-v3 pattern)
+                uint16_t colorRgb565;
+                memcpy(&colorRgb565, fp + 1, 2);
 
                 // Render feature by geometry type (mixed per layer, IceNav-v3 pattern)
                 switch (ref.geomType) {
                     case 3: { // Polygon
                         if (ref.coordCount < 3) break;
                         int16_t* coords = (int16_t*)(fp + 12);
-                        // ringEnds is after coords + 2-byte ringCount
                         uint16_t* ringEnds = (ref.ringCount > 0)
                             ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 2)
                             : nullptr;
 
-                        if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount);
-                        if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount);
+                        if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount * 3 / 2);
+                        if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount * 3 / 2);
                         proj32X.resize(ref.coordCount);
                         proj32Y.resize(ref.coordCount);
 
@@ -948,11 +998,12 @@ namespace MapEngine {
                                 colorRgb565, xOffset, yOffset, ref.ringCount, ringEnds);
                         }
 
-                        // Draw outline for exterior ring
+                        // Draw outline for exterior ring (IceNav-v3 L1392-1401)
                         uint16_t outerRingEnd = (ref.ringCount > 0) ? ringEnds[0] : ref.coordCount;
-                        if (outerRingEnd >= 2) {
+                        if (outerRingEnd >= 3) {
                             uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
                             for (int k = 0; k < outerRingEnd; k++) {
+                                if ((k & 63) == 0) esp_task_wdt_reset();
                                 int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
                                 int x0 = (px_hp[k] >> 4) + xOffset;
                                 int y0 = (py_hp[k] >> 4) + yOffset;
@@ -963,36 +1014,66 @@ namespace MapEngine {
                         }
                         break;
                     }
-                    case 2: { // LineString
+                    case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
                         if (ref.coordCount < 2) break;
                         uint8_t widthPixels = fp[4];
+                        if (widthPixels == 0) widthPixels = 1;
                         int16_t* coords = (int16_t*)(fp + 12);
 
-                        for (uint16_t j = 1; j < ref.coordCount; j++) {
-                            int x0 = (coords[(j - 1) * 2] >> 4) + xOffset;
-                            int y0 = (coords[(j - 1) * 2 + 1] >> 4) + yOffset;
-                            int x1 = (coords[j * 2] >> 4) + xOffset;
-                            int y1 = (coords[j * 2 + 1] >> 4) + yOffset;
+                        // Pre-project with dedup (IceNav-v3 pattern)
+                        size_t numCoords = ref.coordCount;
+                        if (proj16X.capacity() < numCoords) proj16X.reserve(numCoords * 3 / 2);
+                        if (proj16Y.capacity() < numCoords) proj16Y.reserve(numCoords * 3 / 2);
+                        proj16X.resize(numCoords);
+                        proj16Y.resize(numCoords);
 
-                            if (widthPixels <= 1)
-                                map.drawLine(x0, y0, x1, y1, colorRgb565);
+                        int16_t* pxArr = proj16X.data();
+                        int16_t* pyArr = proj16Y.data();
+
+                        int16_t minPx = INT16_MAX, maxPx = INT16_MIN;
+                        int16_t minPy = INT16_MAX, maxPy = INT16_MIN;
+                        size_t validPoints = 0;
+                        int16_t lastPx = -32768, lastPy = -32768;
+
+                        for (size_t j = 0; j < numCoords; j++) {
+                            int16_t px = (coords[j * 2] >> 4) + xOffset;
+                            int16_t py = (coords[j * 2 + 1] >> 4) + yOffset;
+                            if (validPoints > 0 && px == lastPx && py == lastPy) continue;
+                            pxArr[validPoints] = px;
+                            pyArr[validPoints] = py;
+                            if (px < minPx) minPx = px;
+                            if (px > maxPx) maxPx = px;
+                            if (py < minPy) minPy = py;
+                            if (py > maxPy) maxPy = py;
+                            lastPx = px;
+                            lastPy = py;
+                            validPoints++;
+                        }
+
+                        if (validPoints < 2 || maxPx < 0 || minPx >= MAP_TILE_SIZE ||
+                            maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
+
+                        for (size_t j = 1; j < validPoints; j++) {
+                            if (widthPixels == 1)
+                                map.drawLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], colorRgb565);
                             else
-                                map.drawWideLine(x0, y0, x1, y1, widthPixels, colorRgb565);
+                                map.drawWideLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
                         }
                         break;
                     }
-                    case 1: { // Point
+                    case 1: { // Point (IceNav-v3: renderNavPoint with bounds check)
                         if (ref.coordCount < 1) break;
                         int16_t* coords = (int16_t*)(fp + 12);
                         int px = (coords[0] >> 4) + xOffset;
                         int py = (coords[1] >> 4) + yOffset;
-                        map.fillCircle(px, py, 3, colorRgb565);
+                        if (px >= 0 && px < MAP_TILE_SIZE && py >= 0 && py < MAP_TILE_SIZE)
+                            map.fillCircle(px, py, 3, colorRgb565);
                         break;
                     }
                 }
             }
             globalLayers[pri].clear();
-            taskYIELD();  // Yield between priority layers (IceNav-v3 pattern)
+            taskYIELD();
         }
 
         map.clearClipRect();
