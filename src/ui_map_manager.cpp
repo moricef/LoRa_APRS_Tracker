@@ -289,14 +289,14 @@ namespace UIMapManager {
         if (stationDisplayPoolInitialized || !map_container) return;
 
         for (int i = 0; i < STATION_POOL_SIZE; i++) {
-            // Container for positioning (transparent, no layout)
+            // Container for positioning (transparent, no layout, click-through)
             stationDisplayPool[i].container = lv_obj_create(map_container);
             lv_obj_set_size(stationDisplayPool[i].container, 80, 40);
             lv_obj_set_style_bg_opa(stationDisplayPool[i].container, LV_OPA_TRANSP, 0);
             lv_obj_set_style_border_width(stationDisplayPool[i].container, 0, 0);
             lv_obj_set_style_pad_all(stationDisplayPool[i].container, 0, 0);
-            lv_obj_clear_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_add_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_IGNORE_LAYOUT);
+            lv_obj_clear_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_EVENT_BUBBLE);
 
             // Icon: lv_img for APRS symbol PNG (24x24)
             stationDisplayPool[i].icon = lv_img_create(stationDisplayPool[i].container);
@@ -1452,6 +1452,8 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         map_canvas_buf = (lv_color_t*)heap_caps_malloc(MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
         if (map_canvas_buf) {
             map_canvas = lv_canvas_create(map_container);
+            lv_obj_clear_flag(map_canvas, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_flag(map_canvas, LV_OBJ_FLAG_EVENT_BUBBLE);
             lv_canvas_set_buffer(map_canvas, map_canvas_buf, MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT, LV_IMG_CF_TRUE_COLOR);
 
             // Start the background render task now that the canvas exists.
