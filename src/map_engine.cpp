@@ -8,8 +8,8 @@
 #include "storage_utils.h"
 #include <SD.h>
 #include <esp_task_wdt.h>
-#include <algorithm> // For std::min/max
-#include <climits>   // For INT_MIN/INT_MAX
+#include <algorithm>
+#include <climits>
 
 namespace MapEngine {
 
@@ -79,7 +79,7 @@ namespace MapEngine {
     }
 
     void startRenderTask(lv_obj_t* canvas_to_invalidate) {
-        if (mapRenderTaskHandle) return; // Already running
+        if (mapRenderTaskHandle) return;
 
         canvas_to_invalidate_ = canvas_to_invalidate;
         spriteMutex = xSemaphoreCreateMutex();
