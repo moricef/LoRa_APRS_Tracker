@@ -16,6 +16,7 @@
 #include <cstdint>
 #include "esp_heap_caps.h"
 #include <vector> // For std::vector
+#include "nav_types.h"
 
 // Forward declarations
 class Configuration;
@@ -77,14 +78,6 @@ namespace UIMapManager {
         bool valid;
     };
     
-    struct Edge {
-        int32_t yMax;
-        int32_t xVal;   // 16.16 fixed-point
-        int32_t slope;  // 16.16 fixed-point
-        int nextInBucket;
-        int nextActive;
-    };
-
     // Request for the background rendering task
     struct RenderRequest {
         char path[128];
