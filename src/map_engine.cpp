@@ -571,12 +571,12 @@ namespace MapEngine {
 
             if (geomType == 3) {
                 uint8_t* ring_ptr = p + 12 + feature_data_size;
-                if (ring_ptr + 2 <= data + fileSize) {
-                    memcpy(&ringCount, ring_ptr, 2);
-                    if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
-                        feature_data_size += 2 + (ringCount * 2);
+                if (ring_ptr + 1 <= data + fileSize) { // ringCount is 1 byte
+                    ringCount = ring_ptr[0]; // Read uint8_t
+                    if (ring_ptr + 1 + (ringCount * 2) <= data + fileSize) {
+                        feature_data_size += 1 + (ringCount * 2);
                     } else {
-                        ringCount = 0;
+                        ringCount = 0; // Invalid ring data, ignore it
                     }
                 }
             }
@@ -640,12 +640,12 @@ namespace MapEngine {
 
             uint32_t feature_data_size = coordCount * 4;
             if (geomType == 3) {
-                uint16_t ringCount = 0;
+                uint8_t ringCount = 0; // Changed to uint8_t
                 uint8_t* ring_ptr = p + 12 + feature_data_size;
-                if (ring_ptr + 2 <= data + fileSize) {
-                    memcpy(&ringCount, ring_ptr, 2);
-                     if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
-                        feature_data_size += 2 + (ringCount * 2);
+                if (ring_ptr + 1 <= data + fileSize) { // ringCount is 1 byte
+                    ringCount = ring_ptr[0]; // Read uint8_t
+                     if (ring_ptr + 1 + (ringCount * 2) <= data + fileSize) {
+                        feature_data_size += 1 + (ringCount * 2);
                     }
                 }
             }
