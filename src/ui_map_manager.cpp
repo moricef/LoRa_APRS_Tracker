@@ -42,6 +42,7 @@ namespace UIMapManager {
     lv_obj_t* map_canvas = nullptr;
     lv_color_t* map_canvas_buf = nullptr;
     lv_obj_t* map_title_label = nullptr;
+    lv_obj_t* map_info_label = nullptr;
     lv_obj_t* map_container = nullptr;
 
     // Map state variables
@@ -953,6 +954,14 @@ namespace UIMapManager {
         // Update station LVGL objects (own position + received stations)
         update_station_objects();
 
+        // Update info bar with current coordinates and station count
+        if (map_info_label) {
+            char info_text[64];
+            snprintf(info_text, sizeof(info_text), "%.4f, %.4f  Stn: %d",
+                     map_center_lat, map_center_lon, mapStationsCount);
+            lv_label_set_text(map_info_label, info_text);
+        }
+
         // Recenter canvas after drawing new tiles (avoids visual jump)
         lv_obj_set_pos(map_canvas, -MAP_CANVAS_MARGIN, -MAP_CANVAS_MARGIN);
 
@@ -1148,9 +1157,14 @@ namespace UIMapManager {
                 // Finger up after pan - finish pan
                 touch_dragging = false;
 
-                // Calculate final displacement from last drag_start position
+                // Calculate final displacement (clamped to same range as preview)
                 lv_coord_t dx = point.x - touch_start_x;
                 lv_coord_t dy = point.y - touch_start_y;
+                lv_coord_t max_pan = MAP_CANVAS_MARGIN - 10;
+                if (dx > max_pan) dx = max_pan;
+                if (dx < -max_pan) dx = -max_pan;
+                if (dy > max_pan) dy = max_pan;
+                if (dy < -max_pan) dy = -max_pan;
 
                 // Convert pixel movement to lat/lon change using Mercator projection
                 double n_d = pow(2.0, map_current_zoom);
@@ -1629,15 +1643,15 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         lv_obj_set_style_radius(info_bar, 0, 0);
         lv_obj_set_style_pad_all(info_bar, 2, 0);
 
-        // Display coordinates
-        lv_obj_t* lbl_coords = lv_label_create(info_bar);
+        // Display coordinates and station count (updated in redraw_map_canvas)
+        map_info_label = lv_label_create(info_bar);
         char coords_text[64];
-        snprintf(coords_text, sizeof(coords_text), "Center: %.4f, %.4f  Stations: %d",
+        snprintf(coords_text, sizeof(coords_text), "%.4f, %.4f  Stn: %d",
                  map_center_lat, map_center_lon, mapStationsCount);
-        lv_label_set_text(lbl_coords, coords_text);
-        lv_obj_set_style_text_color(lbl_coords, lv_color_hex(0xaaaaaa), 0);
-        lv_obj_set_style_text_font(lbl_coords, &lv_font_montserrat_14, 0);
-        lv_obj_center(lbl_coords);
+        lv_label_set_text(map_info_label, coords_text);
+        lv_obj_set_style_text_color(map_info_label, lv_color_hex(0xaaaaaa), 0);
+        lv_obj_set_style_text_font(map_info_label, &lv_font_montserrat_14, 0);
+        lv_obj_center(map_info_label);
 
         // Create periodic refresh timer for stations (10 seconds)
         if (map_refresh_timer) {
