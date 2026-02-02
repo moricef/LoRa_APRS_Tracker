@@ -149,7 +149,7 @@ namespace UIMapManager {
                 if (mainThreadLoading) continue;
 
                 // Check if tile already in cache
-                int cacheIdx = findCachedTile(req.zoom, req.tileX, req.tileY);
+                int cacheIdx = MapEngine::findCachedTile(req.zoom, req.tileX, req.tileY);
                 if (cacheIdx < 0) {
                     // Not in cache - preload it
                     Serial.printf("[MAP-ASYNC] Preloading tile %d/%d/%d\n", req.zoom, req.tileX, req.tileY);
@@ -655,98 +655,6 @@ namespace UIMapManager {
 // =========================================================================
     // =                  END OF VECTOR TILE RENDERING ENGINE                  =
     // =========================================================================
-
-    // JPEG decoder for map tiles
-    static JPEGDEC jpeg;
-
-    // PNG decoder for map tiles
-    static PNG png;
-
-    // Context for decoding JPEG/PNG to a TFT_eSprite
-    struct SpriteDecodeContext {
-        LGFX_Sprite* sprite;
-    };
-    static SpriteDecodeContext spriteDecodeContext;
-
-    // JPEGDEC callback to draw MCU blocks directly to the sprite
-    static int jpegSpriteCallback(JPEGDRAW* pDraw) {
-        if (!spriteDecodeContext.sprite) return 0; // Stop if sprite is not set
-        // pushImage is the fastest way to draw the decoded block to the sprite
-        spriteDecodeContext.sprite->pushImage(pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight, pDraw->pPixels);
-        return 1; // Continue decoding
-    }
-
-    // PNGdec callback to draw scanlines directly into the sprite's framebuffer
-    static int pngSpriteCallback(PNGDRAW* pDraw) {
-        if (!spriteDecodeContext.sprite) return 0; // Stop if sprite is not set
-        // Get a pointer to the sprite's framebuffer
-        uint16_t* pfb = (uint16_t*)spriteDecodeContext.sprite->getBuffer();
-        // Calculate the start of the current line in the framebuffer
-        uint16_t* pLine = pfb + (pDraw->y * MAP_TILE_SIZE);
-        // Decode the line directly into the sprite's framebuffer
-        png.getLineAsRGB565(pDraw, pLine, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
-        return 1; // Continue decoding
-    }
-
-    // PNG file callbacks
-    static void* pngOpenFile(const char* filename, int32_t* size) {
-        pngFileOpened = false;
-        File* file = new File(SD.open(filename, FILE_READ));
-        if (!file || !*file) {
-            delete file;
-            return nullptr;
-        }
-        *size = file->size();
-        pngFileOpened = true;
-        return file;
-    }
-
-    static void pngCloseFile(void* handle) {
-        File* file = (File*)handle;
-        if (file) {
-            file->close();
-            delete file;
-        }
-    }
-
-    static int32_t pngReadFile(PNGFILE* pFile, uint8_t* pBuf, int32_t iLen) {
-        File* file = (File*)pFile->fHandle;
-        return file->read(pBuf, iLen);
-    }
-
-    static int32_t pngSeekFile(PNGFILE* pFile, int32_t iPosition) {
-        File* file = (File*)pFile->fHandle;
-        return file->seek(iPosition);
-    }
-
-    // JPEG file callbacks
-    static void* jpegOpenFile(const char* filename, int32_t* size) {
-        File* file = new File(SD.open(filename, FILE_READ));
-        if (!file || !*file) {
-            delete file;
-            return nullptr;
-        }
-        *size = file->size();
-        return file;
-    }
-
-    static void jpegCloseFile(void* handle) {
-        File* file = (File*)handle;
-        if (file) {
-            file->close();
-            delete file;
-        }
-    }
-
-    static int32_t jpegReadFile(JPEGFILE* pFile, uint8_t* pBuf, int32_t iLen) {
-        File* file = (File*)pFile->fHandle;
-        return file->read(pBuf, iLen);
-    }
-
-    static int32_t jpegSeekFile(JPEGFILE* pFile, int32_t iPosition) {
-        File* file = (File*)pFile->fHandle;
-        return file->seek(iPosition);
-    }
 
     // Preload a tile into cache (no canvas drawing) - called from Core 1 task
     bool preloadTileToCache(int tileX, int tileY, int zoom) {

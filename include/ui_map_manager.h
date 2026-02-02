@@ -42,6 +42,18 @@ extern SemaphoreHandle_t spiMutex; // Declared extern for SPI bus mutex access
 #define SCREEN_WIDTH  320
 #define SCREEN_HEIGHT 240
 
+// Map constants
+#define MAP_TILE_SIZE 256
+#define MAP_CANVAS_WIDTH   600
+#define MAP_CANVAS_HEIGHT  520
+#define MAP_VISIBLE_WIDTH 320  // Visible area on screen
+#define MAP_VISIBLE_HEIGHT 200
+#define MAP_CANVAS_MARGIN 128  // Margin on each side (half tile)
+
+// Dimensions de l'affichage
+#define SCREEN_WIDTH  320
+#define SCREEN_HEIGHT 240
+
 namespace UIMapManager {
 
     struct MapTile
