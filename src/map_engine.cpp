@@ -441,7 +441,7 @@ namespace MapEngine {
         int endY_px = std::min(maxY_px, MAP_TILE_SIZE - 1);
 
         for (int y_px = startY_px; y_px <= endY_px; y_px++) {
-            if ((y_px & 0x1F) == 0) { 
+            if ((y_px & 0x0F) == 0) { // Yield every 16 lines instead of 32
                 esp_task_wdt_reset(); 
                 vTaskDelay(pdMS_TO_TICKS(1)); 
             }
@@ -551,14 +551,11 @@ namespace MapEngine {
         map.fillSprite(TFT_WHITE); 
         map.setClipRect(0, 0, 256, 256);
 
-        uint32_t last_wdt_ms = millis();
-        
         uint8_t* p = data + 22;
         for (uint16_t i = 0; i < feature_count; i++) {
-            if (millis() - last_wdt_ms > 100) {
+            if (i % 20 == 0) { // Yield more frequently based on feature count
                 esp_task_wdt_reset();
-                yield();
-                last_wdt_ms = millis();
+                vTaskDelay(pdMS_TO_TICKS(1));
             }
             if (p + 12 > data + fileSize) break;
 
@@ -567,7 +564,7 @@ namespace MapEngine {
             memcpy(&coordCount, p + 9, 2);
             
             uint32_t feature_data_size = coordCount * 4;
-            uint16_t ringCount = 0;
+            uint8_t ringCount = 0;
 
             if (geomType == 3) {
                 uint8_t* ring_ptr = p + 12 + feature_data_size;
@@ -628,10 +625,9 @@ namespace MapEngine {
 
         p = data + 22;
         for (uint16_t i = 0; i < feature_count; i++) {
-            if (millis() - last_wdt_ms > 100) { 
-                esp_task_wdt_reset(); 
-                yield(); 
-                last_wdt_ms = millis(); 
+            if (i % 20 == 0) { // Yield more frequently based on feature count
+                esp_task_wdt_reset();
+                vTaskDelay(pdMS_TO_TICKS(1));
             }
             if (p + 12 > data + fileSize) break;
 

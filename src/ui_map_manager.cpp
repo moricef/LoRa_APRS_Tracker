@@ -1254,7 +1254,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         if (xQueueSend(MapEngine::mapRenderQueue, &request, 0) == pdPASS) {
             return true; // Request queued successfully
         } else {
-            Serial.printf("[MAP] ERROR: Render queue full for: %s\n", found_path);
+            Serial.printf("[MAP] ERROR: Render queue full for: %s. Discarding tile.\n", found_path);
             newSprite->deleteSprite();
             delete newSprite;
             return false;
