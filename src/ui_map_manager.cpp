@@ -504,6 +504,37 @@ namespace UIMapManager {
     static int32_t pngSeekFile(PNGFILE* pFile, int32_t iPosition);
     static bool pngFileOpened = false;  // Track if PNG file actually opened
 
+    // PNG file callbacks implementation
+    static void* pngOpenFile(const char* filename, int32_t* size) {
+        pngFileOpened = false;
+        File* file = new File(SD.open(filename, FILE_READ));
+        if (!file || !*file) {
+            delete file;
+            return nullptr;
+        }
+        *size = file->size();
+        pngFileOpened = true;
+        return file;
+    }
+
+    static void pngCloseFile(void* handle) {
+        File* file = (File*)handle;
+        if (file) {
+            file->close();
+            delete file;
+        }
+    }
+
+    static int32_t pngReadFile(PNGFILE* pFile, uint8_t* pBuf, int32_t iLen) {
+        File* file = (File*)pFile->fHandle;
+        return file->read(pBuf, iLen);
+    }
+
+    static int32_t pngSeekFile(PNGFILE* pFile, int32_t iPosition) {
+        File* file = (File*)pFile->fHandle;
+        return file->seek(iPosition);
+    }
+
     // PNG draw callback for symbols - stores alpha channel info
     static uint8_t* symbolCombinedBuffer = nullptr;  // Target combined buffer
     static PNG symbolPNG;  // PNG decoder instance for symbols
