@@ -689,10 +689,58 @@ namespace UIMapManager {
 
     // Preload a tile into cache (no canvas drawing) - called from Core 1 task
     bool preloadTileToCache(int tileX, int tileY, int zoom) {
-        // TODO: Re-implement for new cache logic.
-        // The old implementation decoded raster tiles to a raw buffer, which is incompatible
-        // with the new sprite-based cache for vector tiles.
-        return false;
+        // 1. Check if already in cache
+        if (MapEngine::findCachedTile(zoom, tileX, tileY) >= 0) {
+            return true;
+        }
+
+        // 2. Find file path (NAV, then PNG, then JPG)
+        char path[128];
+        char found_path[128] = {0};
+        bool found = false;
+
+        // Path finding does not need a mutex if we only use SD.exists()
+        if (STORAGE_Utils::isSDAvailable()) {
+            const char* region = map_current_region.c_str();
+
+            snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav", region, zoom, tileX, tileY);
+            if (SD.exists(path)) { strcpy(found_path, path); found = true; }
+            else {
+                snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png", region, zoom, tileX, tileY);
+                if (SD.exists(path)) { strcpy(found_path, path); found = true; }
+                else {
+                    snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg", region, zoom, tileX, tileY);
+                    if (SD.exists(path)) { strcpy(found_path, path); found = true; }
+                }
+            }
+        }
+
+        if (!found) {
+            return false;
+        }
+
+        // 3. Allocate a new sprite for the tile
+        LGFX_Sprite* newSprite = new LGFX_Sprite(&tft);
+        newSprite->setPsram(true);
+        if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) == nullptr) {
+            Serial.println("[PRELOAD] Sprite creation failed");
+            delete newSprite;
+            return false;
+        }
+
+        // 4. Render the tile directly (synchronous call). The render function handles its own mutex.
+        bool success = MapEngine::renderTile(found_path, 0, 0, *newSprite);
+
+        // 5. If rendering is successful, add to cache
+        if (success) {
+            MapEngine::addToCache(found_path, zoom, tileX, tileY, newSprite);
+        } else {
+            // Cleanup on failure
+            newSprite->deleteSprite();
+            delete newSprite;
+        }
+        
+        return success;
     }
 
 
@@ -1176,10 +1224,13 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
             request.xOffset = 0;
             request.yOffset = 0;
             request.targetSprite = newSprite;
+            request.zoom = zoom;
+            request.tileX = tileX;
+            request.tileY = tileY;
 
             if (xQueueSend(MapEngine::mapRenderQueue, &request, 0) == pdPASS) {
                 Serial.printf("[MAP] Queued render request for: %s\n", found_path);
-                MapEngine::addToCache(found_path, zoom, tileX, tileY, newSprite);
+                // Caching is now handled by the render task. Do NOT cache here.
                 tileRendered = true; 
             } else {
                 Serial.printf("[MAP] ERROR: Render queue full for: %s\n", found_path);
@@ -1194,10 +1245,13 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         }
     }
 
-    // --- 5. If rendering successful, update cache and draw on canvas ---
+    // --- 5. If a render task was queued, copy the (initially empty) sprite to canvas ---
+    // The sprite will be populated by the background task, and the canvas will be invalidated.
     if (tileRendered && newSprite) {
-        MapEngine::copySpriteToCanvasWithClip(canvas, newSprite, offsetX, offsetY);
-        MapEngine::addToCache(found_path, zoom, tileX, tileY, newSprite); // Cache takes ownership
+        // Don't copy here. The invalidate callback will trigger a redraw where the updated
+        // sprite will be copied from cache. For the first load, this tile will be blank
+        // until the render task completes. This is the correct async behavior.
+        // MapEngine::copySpriteToCanvasWithClip(canvas, newSprite, offsetX, offsetY);
     } else if (newSprite) {
         // Cleanup if rendering failed or sprite wasn't added to cache
         newSprite->deleteSprite();

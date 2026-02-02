@@ -30,6 +30,9 @@ namespace MapEngine {
         int16_t xOffset;
         int16_t yOffset;
         lgfx::LGFX_Sprite* targetSprite;
+        int zoom;   // For caching
+        int tileX;  // For caching
+        int tileY;  // For caching
     };
 
     // Handles for the asynchronous rendering system

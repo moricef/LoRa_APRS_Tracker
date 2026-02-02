@@ -5,11 +5,20 @@
 
 #include "map_engine.h"
 #include "ui_map_manager.h"
+#include <JPEGDEC.h>
+#undef INTELSHORT
+#undef INTELLONG
+#undef MOTOSHORT
+#undef MOTOLONG
+#include <PNGdec.h>
 #include "storage_utils.h"
 #include <SD.h>
 #include <esp_task_wdt.h>
 #include <algorithm>
 #include <climits>
+
+// Global sprite pointer for raster decoder callbacks
+static LGFX_Sprite* targetSprite_ = nullptr;
 
 namespace MapEngine {
 
@@ -41,6 +50,99 @@ namespace MapEngine {
         }
     }
 
+    // --- RASTER DECODING ENGINE ---
+    static PNG png;
+    static JPEGDEC jpeg;
+
+    // Generic file callbacks for raster decoders
+    static void* rasterOpenFile(const char* filename, int32_t* size) {
+        File* file = new File(SD.open(filename, FILE_READ));
+        if (!file || !*file) {
+            delete file;
+            return nullptr;
+        }
+        *size = file->size();
+        return file;
+    }
+
+    static void rasterCloseFile(void* handle) {
+        File* file = (File*)handle;
+        if (file) {
+            file->close();
+            delete file;
+        }
+    }
+
+    static int32_t rasterReadFile(void* handle, uint8_t* pBuf, int32_t iLen) {
+        File* file = (File*)handle;
+        return file->read(pBuf, iLen);
+    }
+    
+    static int32_t rasterReadFileJPEG(JPEGFILE* pFile, uint8_t* pBuf, int32_t iLen) {
+        return rasterReadFile(pFile->fHandle, pBuf, iLen);
+    }
+
+    static int32_t rasterReadFilePNG(PNGFILE* pFile, uint8_t* pBuf, int32_t iLen) {
+        return rasterReadFile(pFile->fHandle, pBuf, iLen);
+    }
+
+    static int32_t rasterSeekFile(void* handle, int32_t iPosition) {
+        File* file = (File*)handle;
+        return file->seek(iPosition);
+    }
+
+    static int32_t rasterSeekFileJPEG(JPEGFILE* pFile, int32_t iPosition) {
+        return rasterSeekFile(pFile->fHandle, iPosition);
+    }
+
+    // JPEG draw callback
+    static int jpegDrawCallback(JPEGDRAW* pDraw) {
+        if (!targetSprite_) return 0;
+        targetSprite_->pushImage(pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight, pDraw->pPixels);
+        return 1;
+    }
+
+    // PNG draw callback
+    static int pngDrawCallback(PNGDRAW* pDraw) {
+        if (!targetSprite_) return 0;
+        uint16_t* pfb = (uint16_t*)targetSprite_->getBuffer();
+        if(pfb) {
+            uint16_t* pLine = pfb + (pDraw->y * MAP_TILE_SIZE);
+            png.getLineAsRGB565(pDraw, pLine, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+        }
+        return 1;
+    }
+
+    // Raster renderers
+    static bool renderJPGRaster(const char* path, LGFX_Sprite& map) {
+        targetSprite_ = &map;
+        bool success = false;
+        if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            if (jpeg.open(path, rasterOpenFile, rasterCloseFile, rasterReadFileJPEG, rasterSeekFileJPEG, jpegDrawCallback) == 1) {
+                jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
+                if (jpeg.decode(0, 0, 0) == 1) success = true;
+                jpeg.close();
+            }
+            xSemaphoreGiveRecursive(spiMutex);
+        }
+        targetSprite_ = nullptr;
+        return success;
+    }
+
+    static bool renderPNGRaster(const char* path, LGFX_Sprite& map) {
+        targetSprite_ = &map;
+        bool success = false;
+        if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            if (png.open(path, rasterOpenFile, rasterCloseFile, rasterReadFilePNG, rasterSeekFile, pngDrawCallback) == 1) {
+                if (png.decode(nullptr, 0) == 1) success = true;
+                png.close();
+            }
+            xSemaphoreGiveRecursive(spiMutex);
+        }
+        targetSprite_ = nullptr;
+        return success;
+    }
+
     // Background task to render map tiles on Core 0
     static void mapRenderTask(void* param) {
         RenderRequest request;
@@ -49,12 +151,27 @@ namespace MapEngine {
         while (true) {
             if (xQueueReceive(mapRenderQueue, &request, portMAX_DELAY) == pdTRUE) {
                 if (request.targetSprite) {
-                    // Lock the sprite for drawing
+                    bool success = false;
+                    // The renderTile function handles its own mutex for file access.
+                    // We only need to lock when accessing the shared sprite, which renderTile does internally.
+                    // No, wait, renderTile takes a reference to the sprite. We should lock here.
                     if (xSemaphoreTake(spriteMutex, portMAX_DELAY) == pdTRUE) {
-                        renderTile(request.path, request.xOffset, request.yOffset, *request.targetSprite);
+                        success = renderTile(request.path, request.xOffset, request.yOffset, *request.targetSprite);
                         xSemaphoreGive(spriteMutex);
                     }
-                    // Request a redraw on the LVGL thread
+
+                    if (success) {
+                        // Caching is done here, after the sprite is successfully rendered
+                        addToCache(request.path, request.zoom, request.tileX, request.tileY, request.targetSprite);
+                    } else {
+                        // If render failed, delete the sprite to prevent memory leaks
+                        Serial.printf("[MAP] Render failed for %s, cleaning up sprite.\n", request.path);
+                        request.targetSprite->deleteSprite();
+                        delete request.targetSprite;
+                    }
+
+                    // Request a redraw on the LVGL thread regardless of success
+                    // to show either the new tile or a cleared area.
                     lv_async_call(invalidate_map_canvas_cb, canvas_to_invalidate_);
                 }
             }
@@ -386,7 +503,7 @@ namespace MapEngine {
         }
     }
 
-    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
+    static bool renderNavTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
         esp_task_wdt_reset(); 
         uint8_t* data = nullptr;
         size_t fileSize = 0;
@@ -560,5 +677,20 @@ namespace MapEngine {
         free(data);
         return true;
     }
+
+    // Public render dispatcher
+    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map) {
+        String pathStr(path);
+        if (pathStr.endsWith(".nav")) {
+            return renderNavTile(path, xOffset, yOffset, map);
+        } else if (pathStr.endsWith(".png")) {
+            return renderPNGRaster(path, map);
+        } else if (pathStr.endsWith(".jpg")) {
+            return renderJPGRaster(path, map);
+        }
+        Serial.printf("[MAP] Unknown tile type for path: %s\n", path);
+        return false;
+    }
+
 }
 #endif
