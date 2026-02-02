@@ -116,9 +116,11 @@ namespace STATION_Utils {
             mapStations[i].longitude = 0.0;
             mapStations[i].symbol    = "";
             mapStations[i].overlay   = "";
-            mapStations[i].rssi      = 0;
-            mapStations[i].lastTime  = 0;
-            mapStations[i].valid     = false;
+            mapStations[i].rssi       = 0;
+            mapStations[i].lastTime   = 0;
+            mapStations[i].valid      = false;
+            mapStations[i].traceCount = 0;
+            mapStations[i].traceHead  = 0;
         }
         mapStationsCount = 0;
     }
@@ -131,6 +133,17 @@ namespace STATION_Utils {
         // Check if station already exists (update it)
         for (int i = 0; i < MAP_STATIONS_MAX; i++) {
             if (mapStations[i].valid && mapStations[i].callsign == callsign) {
+                // Record old position in trace if station moved (delta > ~11m)
+                float dlat = fabs(mapStations[i].latitude - lat);
+                float dlon = fabs(mapStations[i].longitude - lon);
+                if (dlat > 0.0001f || dlon > 0.0001f) {
+                    mapStations[i].trace[mapStations[i].traceHead].lat = mapStations[i].latitude;
+                    mapStations[i].trace[mapStations[i].traceHead].lon = mapStations[i].longitude;
+                    mapStations[i].traceHead = (mapStations[i].traceHead + 1) % TRACE_MAX_POINTS;
+                    if (mapStations[i].traceCount < TRACE_MAX_POINTS) {
+                        mapStations[i].traceCount++;
+                    }
+                }
                 mapStations[i].latitude  = lat;
                 mapStations[i].longitude = lon;
                 mapStations[i].symbol    = symbol;
@@ -154,8 +167,10 @@ namespace STATION_Utils {
                 mapStations[i].symbol    = symbol;
                 mapStations[i].overlay   = overlay;
                 mapStations[i].rssi      = rssi;
-                mapStations[i].lastTime  = millis();
-                mapStations[i].valid     = true;
+                mapStations[i].lastTime   = millis();
+                mapStations[i].valid      = true;
+                mapStations[i].traceCount = 0;
+                mapStations[i].traceHead  = 0;
                 mapStationsCount++;
                 return;
             }
@@ -171,9 +186,11 @@ namespace STATION_Utils {
         mapStations[oldestIndex].longitude = lon;
         mapStations[oldestIndex].symbol    = symbol;
         mapStations[oldestIndex].overlay   = overlay;
-        mapStations[oldestIndex].rssi      = rssi;
-        mapStations[oldestIndex].lastTime  = millis();
-        mapStations[oldestIndex].valid     = true;
+        mapStations[oldestIndex].rssi       = rssi;
+        mapStations[oldestIndex].lastTime   = millis();
+        mapStations[oldestIndex].valid      = true;
+        mapStations[oldestIndex].traceCount = 0;
+        mapStations[oldestIndex].traceHead  = 0;
     }
 
     // Clean old map stations (older than rememberStationTime)
@@ -181,8 +198,10 @@ namespace STATION_Utils {
         uint32_t timeout = Config.rememberStationTime * 60 * 1000;
         for (int i = 0; i < MAP_STATIONS_MAX; i++) {
             if (mapStations[i].valid && (millis() - mapStations[i].lastTime > timeout)) {
-                mapStations[i].valid = false;
-                mapStations[i].callsign = "";
+                mapStations[i].valid      = false;
+                mapStations[i].callsign   = "";
+                mapStations[i].traceCount = 0;
+                mapStations[i].traceHead  = 0;
                 mapStationsCount--;
             }
         }

@@ -23,16 +23,25 @@
 
 // Structure for stations to display on map
 #define MAP_STATIONS_MAX 15
+#define TRACE_MAX_POINTS 20
+
+struct TracePoint {
+    float lat;
+    float lon;
+};
 
 struct MapStation {
-    String   callsign;
-    float    latitude;
-    float    longitude;
-    String   symbol;
-    String   overlay;
-    int      rssi;
-    uint32_t lastTime;
-    bool     valid;
+    String     callsign;
+    float      latitude;
+    float      longitude;
+    String     symbol;
+    String     overlay;
+    int        rssi;
+    uint32_t   lastTime;
+    bool       valid;
+    TracePoint trace[TRACE_MAX_POINTS];
+    uint8_t    traceCount;
+    uint8_t    traceHead;
 };
 
 extern MapStation mapStations[MAP_STATIONS_MAX];

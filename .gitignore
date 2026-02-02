@@ -18,6 +18,4 @@ Claude*
 METHODOLOGIE.md
 VERSIONING.md
 TOUCH_PAN_ANALYSIS.md
-!IceNav-v3/maps.cpp
-!IceNav-v3/maps.hpp
-!IceNav-v3/mapVars.h
+!IceNav-v3/*

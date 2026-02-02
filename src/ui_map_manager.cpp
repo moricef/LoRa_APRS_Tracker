@@ -839,6 +839,44 @@ namespace UIMapManager {
         schedule_map_reload();
     }
 
+    // Draw GPS traces for mobile stations on the canvas
+    void draw_station_traces() {
+        if (!map_canvas) return;
+
+        lv_draw_line_dsc_t line_dsc;
+        lv_draw_line_dsc_init(&line_dsc);
+        line_dsc.color = lv_color_hex(0x0055FF);
+        line_dsc.width = 2;
+        line_dsc.opa   = LV_OPA_COVER;
+
+        for (int s = 0; s < MAP_STATIONS_MAX; s++) {
+            MapStation* station = STATION_Utils::getMapStation(s);
+            if (!station || !station->valid || station->traceCount < 1) continue;
+
+            // Build points array: trace history + current position
+            int totalPts = station->traceCount + 1;
+            lv_point_t pts[TRACE_MAX_POINTS + 1];
+
+            for (int i = 0; i < station->traceCount; i++) {
+                int idx = (station->traceHead - station->traceCount + i + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
+                int px, py;
+                latLonToPixel(station->trace[idx].lat, station->trace[idx].lon,
+                              map_center_lat, map_center_lon, map_current_zoom, &px, &py);
+                pts[i].x = px;
+                pts[i].y = py;
+            }
+
+            // Current position as last point
+            int cx, cy;
+            latLonToPixel(station->latitude, station->longitude,
+                          map_center_lat, map_center_lon, map_current_zoom, &cx, &cy);
+            pts[station->traceCount].x = cx;
+            pts[station->traceCount].y = cy;
+
+            lv_canvas_draw_line(map_canvas, pts, totalPts, &line_dsc);
+        }
+    }
+
     // Redraw only canvas content without recreating screen (for zoom)
     void redraw_map_canvas() {
         if (!map_canvas || !map_canvas_buf || !map_title_label) {
@@ -950,6 +988,9 @@ namespace UIMapManager {
             lv_canvas_draw_text(map_canvas, 40, MAP_CANVAS_HEIGHT / 2 - 30, 240, &label_dsc,
                 "No offline tiles available.");
         }
+
+        // Draw GPS traces for mobile stations (on canvas, under station icons)
+        draw_station_traces();
 
         // Update station LVGL objects (own position + received stations)
         update_station_objects();
@@ -1570,6 +1611,9 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                 lv_canvas_draw_text(map_canvas, 40, MAP_CANVAS_HEIGHT / 2 - 30, 240, &label_dsc,
                     "No offline tiles available.\nDownload OSM tiles and copy to:\nSD:/LoRa_Tracker/Maps/REGION/z/x/y.png");
             }
+
+            // Draw GPS traces for mobile stations (on canvas, under station icons)
+            draw_station_traces();
 
             // Update station LVGL objects (own position + received stations)
             update_station_objects();
