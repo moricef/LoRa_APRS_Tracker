@@ -239,20 +239,24 @@ namespace MapEngine {
         return (r << 11) | (g << 5) | b;
     }
 
-    void fillPolygonGeneral(LGFX_Sprite &map, const int *px, const int *py, const int numPoints, const uint16_t color, const int xOffset, const int yOffset, uint16_t ringCount, uint16_t* ringEnds)
+    void fillPolygonGeneral(LGFX_Sprite &map, const int *px_hp, const int *py_hp, const int numPoints, const uint16_t color, const int xOffset, const int yOffset, uint16_t ringCount, uint16_t* ringEnds)
     {
+        // This AEL implementation takes high-precision (HP) coordinates (0-4096) and iterates over pixel-space scanlines (0-255)
         if (numPoints < 3) return;
 
-        int minY = INT_MAX, maxY = INT_MIN;
+        // 1. Find Y bounds in pixel space
+        int minY_px = INT_MAX, maxY_px = INT_MIN;
         for (int i = 0; i < numPoints; i++) {
-            if (py[i] < minY) minY = py[i];
-            if (py[i] > maxY) maxY = py[i];
+            int y_px = py_hp[i] >> 4;
+            if (y_px < minY_px) minY_px = y_px;
+            if (y_px > maxY_px) maxY_px = y_px;
         }
 
-        if (maxY < 0 || minY >= MAP_TILE_SIZE) return;
+        if (maxY_px < 0 || minY_px >= MAP_TILE_SIZE) return;
 
+        // 2. Set up pixel-space edge buckets
         edgePool.clear();
-        int bucketCount = maxY - minY + 1;
+        int bucketCount = maxY_px - minY_px + 1;
         if (bucketCount <= 0) return;
         edgeBuckets.assign(bucketCount, -1);
 
@@ -269,31 +273,37 @@ namespace MapEngine {
                 continue;
             }
 
+            // 3. Populate buckets with edges using HP math for precision
             for (int i = 0; i < ringNumPoints; i++) {
                 int next = (i + 1) % ringNumPoints;
-                int x1 = px[ringStart + i], y1 = py[ringStart + i];
-                int x2 = px[ringStart + next], y2 = py[ringStart + next];
-                if (y1 == y2) continue;
+                int x1_hp = px_hp[ringStart + i], y1_hp = py_hp[ringStart + i];
+                int x2_hp = px_hp[ringStart + next], y2_hp = py_hp[ringStart + next];
+                
+                int y1_px = y1_hp >> 4;
+                int y2_px = y2_hp >> 4;
+
+                if (y1_px == y2_px) continue; // Skip horizontal lines in pixel space
 
                 UIMapManager::Edge e;
                 e.nextActive = -1;
-                if (y1 < y2) {
-                    e.yMax = y2;
-                    e.xVal = x1 << 16;
-                    e.slope = ((x2 - x1) << 16) / (y2 - y1);
-                    if (y1 - minY >= 0 && y1 - minY < edgeBuckets.size()) {
-                        e.nextInBucket = edgeBuckets[y1 - minY];
+
+                if (y1_hp < y2_hp) {
+                    e.yMax = y2_px; // Max Y in pixels
+                    e.slope = ((int64_t)(x2_hp - x1_hp) << 16) / (y2_hp - y1_hp); // HP slope
+                    e.xVal = ((int64_t)x1_hp << 16);
+                    if (y1_px - minY_px >= 0 && (size_t)(y1_px - minY_px) < edgeBuckets.size()) {
+                        e.nextInBucket = edgeBuckets[y1_px - minY_px];
                         edgePool.push_back(e);
-                        edgeBuckets[y1 - minY] = edgePool.size() - 1;
+                        edgeBuckets[y1_px - minY_px] = edgePool.size() - 1;
                     }
                 } else {
-                    e.yMax = y1;
-                    e.xVal = x2 << 16;
-                    e.slope = ((x1 - x2) << 16) / (y1 - y2);
-                    if (y2 - minY >= 0 && y2 - minY < edgeBuckets.size()) {
-                        e.nextInBucket = edgeBuckets[y2 - minY];
+                    e.yMax = y1_px;
+                    e.slope = ((int64_t)(x1_hp - x2_hp) << 16) / (y1_hp - y2_hp);
+                    e.xVal = ((int64_t)x2_hp << 16);
+                    if (y2_px - minY_px >= 0 && (size_t)(y2_px - minY_px) < edgeBuckets.size()) {
+                        e.nextInBucket = edgeBuckets[y2_px - minY_px];
                         edgePool.push_back(e);
-                        edgeBuckets[y2 - minY] = edgePool.size() - 1;
+                        edgeBuckets[y2_px - minY_px] = edgePool.size() - 1;
                     }
                 }
             }
@@ -301,39 +311,19 @@ namespace MapEngine {
         }
 
         int activeHead = -1;
-        int startY = std::max(minY, -yOffset);
-        int endY = std::min(maxY, MAP_TILE_SIZE - 1 - yOffset);
+        // Loop iterates over PIXEL scanlines, clipped to the sprite
+        int startY_px = std::max(minY_px, 0);
+        int endY_px = std::min(maxY_px, MAP_TILE_SIZE - 1);
 
-        if (startY > minY) {
-            for (int y = minY; y < startY; y++) {
-                if (y - minY < 0 || y - minY >= edgeBuckets.size()) continue;
-                int eIdx = edgeBuckets[y - minY];
-                while (eIdx != -1) {
-                    int nextIdx = edgePool[eIdx].nextInBucket;
-                    edgePool[eIdx].xVal += edgePool[eIdx].slope * (startY - y);
-                    edgePool[eIdx].nextActive = activeHead;
-                    activeHead = eIdx;
-                    eIdx = nextIdx;
-                }
-            }
-            int* pCurrIdx = &activeHead;
-            while (*pCurrIdx != -1) {
-                if (edgePool[*pCurrIdx].yMax <= startY) {
-                    *pCurrIdx = edgePool[*pCurrIdx].nextActive;
-                } else {
-                    pCurrIdx = &(edgePool[*pCurrIdx].nextActive);
-                }
-            }
-        }
-
-        for (int y = startY; y <= endY; y++) {
-            if ((y & 0x1F) == 0) { 
+        for (int y_px = startY_px; y_px <= endY_px; y_px++) {
+            if ((y_px & 0x1F) == 0) { 
                 esp_task_wdt_reset(); 
                 vTaskDelay(pdMS_TO_TICKS(1)); 
             }
 
-            if (y - minY >= 0 && y - minY < edgeBuckets.size()) {
-                int eIdx = edgeBuckets[y - minY];
+            // 4. Add new edges from bucket to Active Edge List (AEL)
+            if (y_px - minY_px >= 0 && (size_t)(y_px - minY_px) < edgeBuckets.size()) {
+                int eIdx = edgeBuckets[y_px - minY_px];
                 while (eIdx != -1) {
                     int nextIdx = edgePool[eIdx].nextInBucket;
                     edgePool[eIdx].nextActive = activeHead;
@@ -342,9 +332,10 @@ namespace MapEngine {
                 }
             }
 
+            // 5. Remove finished edges from AEL
             int* pCurrIdx = &activeHead;
             while (*pCurrIdx != -1) {
-                if (edgePool[*pCurrIdx].yMax <= y) {
+                if (edgePool[*pCurrIdx].yMax <= y_px) {
                     *pCurrIdx = edgePool[*pCurrIdx].nextActive;
                 } else {
                     pCurrIdx = &(edgePool[*pCurrIdx].nextActive);
@@ -353,6 +344,7 @@ namespace MapEngine {
 
             if (activeHead == -1) continue;
 
+            // 6. Sort AEL by xVal
             int sorted = -1;
             int active = activeHead;
             while (active != -1) {
@@ -372,22 +364,24 @@ namespace MapEngine {
             }
             activeHead = sorted;
 
-            int yy = y + yOffset;
+            // 7. Draw horizontal spans
             int left = activeHead;
             while (left != -1 && edgePool[left].nextActive != -1) {
                 int right = edgePool[left].nextActive;
-                int xStart = (edgePool[left].xVal >> 16) + xOffset;
-                int xEnd = (edgePool[right].xVal >> 16) + xOffset;
-                if (xStart < 0) xStart = 0;
-                if (xEnd > MAP_TILE_SIZE) xEnd = MAP_TILE_SIZE;
+                
+                // Scale HP fixed-point xVal down to pixels JUST before drawing
+                int xStart = (edgePool[left].xVal >> 16) >> 4;
+                int xEnd = (edgePool[right].xVal >> 16) >> 4;
+                
                 if (xEnd > xStart) {
-                    map.drawFastHLine(xStart, yy, xEnd - xStart, color);
+                    map.drawFastHLine(xStart + xOffset, y_px + yOffset, xEnd - xStart, color);
                 }
                 left = edgePool[right].nextActive;
             }
             
+            // 8. Update xVal for next PIXEL scanline (step is 16 HP units)
             for (int a = activeHead; a != -1; a = edgePool[a].nextActive) {
-                edgePool[a].xVal += edgePool[a].slope;
+                edgePool[a].xVal += (int64_t)edgePool[a].slope * 16;
             }
         }
     }
@@ -475,16 +469,18 @@ namespace MapEngine {
                 proj32X.resize(coordCount);
                 proj32Y.resize(coordCount);
 
-                int* px = proj32X.data();
-                int* py = proj32Y.data();
+                int* px_hp = proj32X.data();
+                int* py_hp = proj32Y.data();
 
+                // Store raw high-precision coordinates (0-4096)
                 for (uint16_t j = 0; j < coordCount; j++) {
-                    px[j] = (coords[j * 2] >> 4) + xOffset;
-                    py[j] = (coords[j * 2 + 1] >> 4) + yOffset;
+                    px_hp[j] = coords[j * 2];
+                    py_hp[j] = coords[j * 2 + 1];
                 }
             
                 if (fillPolygons) {
-                    fillPolygonGeneral(map, px, py, coordCount, colorRgb565, 0, 0, ringCount, ringEnds);
+                    // Pass high-precision coordinates and pixel offsets to the filler
+                    fillPolygonGeneral(map, px_hp, py_hp, coordCount, colorRgb565, xOffset, yOffset, ringCount, ringEnds);
                 }
 
                 uint16_t outerRingEnd = (ringCount > 0) ? ringEnds[0] : coordCount;
@@ -492,7 +488,12 @@ namespace MapEngine {
                     uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
                     for (int k = 0; k < outerRingEnd; k++) {
                         int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
-                        map.drawLine(px[k], py[k], px[next], py[next], borderColor);
+                        // Scale down to pixels just for drawing the border
+                        int x0 = (px_hp[k] >> 4) + xOffset;
+                        int y0 = (py_hp[k] >> 4) + yOffset;
+                        int x1 = (px_hp[next] >> 4) + xOffset;
+                        int y1 = (py_hp[next] >> 4) + yOffset;
+                        map.drawLine(x0, y0, x1, y1, borderColor);
                     }
                 }
             }
