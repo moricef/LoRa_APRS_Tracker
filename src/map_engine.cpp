@@ -219,7 +219,7 @@ namespace MapEngine {
             if (copy_w > 0 && copy_h > 0) {
                 uint16_t* fb = (uint16_t*)sprite->getBuffer();
                 for (int y = 0; y < copy_h; y++) {
-                    uint16_t* src_row_ptr = fb + ((src_y + y) * UIMapManager::MAP_TILE_SIZE) + src_x;
+                    uint16_t* src_row_ptr = fb + ((src_y + y) * MAP_TILE_SIZE) + src_x;
                     lv_canvas_copy_buf(canvas, src_row_ptr, dest_x, dest_y + y, copy_w, 1);
                 }
             }
@@ -249,7 +249,7 @@ namespace MapEngine {
             if (py[i] > maxY) maxY = py[i];
         }
 
-        if (maxY < 0 || minY >= (int)UIMapManager::MAP_TILE_SIZE) return;
+        if (maxY < 0 || minY >= (int)MAP_TILE_SIZE) return;
 
         edgePool.clear();
         int bucketCount = maxY - minY + 1;
@@ -302,7 +302,7 @@ namespace MapEngine {
 
         int activeHead = -1;
         int startY = std::max(minY, -yOffset);
-        int endY = std::min(maxY, (int)UIMapManager::MAP_TILE_SIZE - 1 - yOffset);
+        int endY = std::min(maxY, (int)MAP_TILE_SIZE - 1 - yOffset);
 
         if (startY > minY) {
             for (int y = minY; y < startY; y++) {
@@ -379,7 +379,7 @@ namespace MapEngine {
                 int xStart = (edgePool[left].xVal >> 16) + xOffset;
                 int xEnd = (edgePool[right].xVal >> 16) + xOffset;
                 if (xStart < 0) xStart = 0;
-                if (xEnd > (int)UIMapManager::MAP_TILE_SIZE) xEnd = (int)UIMapManager::MAP_TILE_SIZE;
+                if (xEnd > (int)MAP_TILE_SIZE) xEnd = (int)MAP_TILE_SIZE;
                 if (xEnd > xStart) {
                     map.drawFastHLine(xStart, yy, xEnd - xStart, color);
                 }
@@ -397,7 +397,7 @@ namespace MapEngine {
         uint8_t* data = nullptr;
         size_t fileSize = 0;
 
-        if (UIMapManager::spiMutex != NULL && xSemaphoreTakeRecursive(UIMapManager::spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             File file = SD.open(path, FILE_READ);
             if (file) {
                 fileSize = file.size();

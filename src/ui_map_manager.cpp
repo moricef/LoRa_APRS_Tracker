@@ -1231,7 +1231,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr) {
             // --- Asynchronous Rendering ---
             // Instead of rendering here, send a request to the background task.
-            RenderRequest request;
+            MapEngine::RenderRequest request;
             strncpy(request.path, found_path, sizeof(request.path) - 1);
             request.path[sizeof(request.path) - 1] = '\0';
             request.xOffset = 0;
