@@ -36,6 +36,8 @@
 
 namespace UIMapManager {
 
+void startRenderTask();
+void stopRenderTask();
 
     // Handles for the asynchronous rendering system
     QueueHandle_t mapRenderQueue = nullptr;
@@ -1689,6 +1691,7 @@ static void copySpriteToCanvasWithClip(lv_obj_t* canvas, LGFX_Sprite* sprite, in
         }
     }
     xSemaphoreGive(spriteMutex);
+    }
 }
 
 bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offsetX, int offsetY) {
