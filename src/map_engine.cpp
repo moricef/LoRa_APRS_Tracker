@@ -196,8 +196,8 @@ namespace MapEngine {
             int src_y = 0;
             int dest_x = offsetX;
             int dest_y = offsetY;
-            int copy_w = UIMapManager::MAP_TILE_SIZE;
-            int copy_h = UIMapManager::MAP_TILE_SIZE;
+            int copy_w = MAP_TILE_SIZE;
+            int copy_h = MAP_TILE_SIZE;
 
             if (dest_x < 0) {
                 src_x = -dest_x;
@@ -209,11 +209,11 @@ namespace MapEngine {
                 copy_h += dest_y;
                 dest_y = 0;
             }
-            if (dest_x + copy_w > UIMapManager::MAP_CANVAS_WIDTH) {
-                copy_w = UIMapManager::MAP_CANVAS_WIDTH - dest_x;
+            if (dest_x + copy_w > MAP_CANVAS_WIDTH) {
+                copy_w = MAP_CANVAS_WIDTH - dest_x;
             }
-            if (dest_y + copy_h > UIMapManager::MAP_CANVAS_HEIGHT) {
-                copy_h = UIMapManager::MAP_CANVAS_HEIGHT - dest_y;
+            if (dest_y + copy_h > MAP_CANVAS_HEIGHT) {
+                copy_h = MAP_CANVAS_HEIGHT - dest_y;
             }
 
             if (copy_w > 0 && copy_h > 0) {
@@ -249,7 +249,7 @@ namespace MapEngine {
             if (py[i] > maxY) maxY = py[i];
         }
 
-        if (maxY < 0 || minY >= (int)MAP_TILE_SIZE) return;
+        if (maxY < 0 || minY >= MAP_TILE_SIZE) return;
 
         edgePool.clear();
         int bucketCount = maxY - minY + 1;
@@ -302,7 +302,7 @@ namespace MapEngine {
 
         int activeHead = -1;
         int startY = std::max(minY, -yOffset);
-        int endY = std::min(maxY, (int)MAP_TILE_SIZE - 1 - yOffset);
+        int endY = std::min(maxY, MAP_TILE_SIZE - 1 - yOffset);
 
         if (startY > minY) {
             for (int y = minY; y < startY; y++) {
@@ -379,7 +379,7 @@ namespace MapEngine {
                 int xStart = (edgePool[left].xVal >> 16) + xOffset;
                 int xEnd = (edgePool[right].xVal >> 16) + xOffset;
                 if (xStart < 0) xStart = 0;
-                if (xEnd > (int)MAP_TILE_SIZE) xEnd = (int)MAP_TILE_SIZE;
+                if (xEnd > MAP_TILE_SIZE) xEnd = MAP_TILE_SIZE;
                 if (xEnd > xStart) {
                     map.drawFastHLine(xStart, yy, xEnd - xStart, color);
                 }
@@ -413,7 +413,7 @@ namespace MapEngine {
             } else {
                 Serial.printf("[MAP] Failed to open tile: %s\n", path);
             }
-            xSemaphoreGiveRecursive(UIMapManager::spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         }
 
         if (!data) {

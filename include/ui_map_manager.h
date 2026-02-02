@@ -60,14 +60,6 @@ namespace UIMapManager {
     extern const int& symbolArraySize;
     extern const uint8_t* const* symbolsAPRS;
 
-    // Map constants
-    #define MAP_TILE_SIZE 256
-    #define MAP_CANVAS_WIDTH   600
-    #define MAP_CANVAS_HEIGHT  520
-    #define MAP_VISIBLE_WIDTH 320  // Visible area on screen
-    #define MAP_VISIBLE_HEIGHT 200
-    #define MAP_CANVAS_MARGIN 128  // Margin on each side (half tile)
-
     // UI elements - Map screen
     extern lv_obj_t* screen_map;
     extern lv_obj_t* map_canvas;
