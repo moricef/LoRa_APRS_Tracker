@@ -95,6 +95,10 @@ namespace MapEngine {
         return rasterSeekFile(pFile->fHandle, iPosition);
     }
 
+    static int32_t rasterSeekFilePNG(PNGFILE* pFile, int32_t iPosition) {
+        return rasterSeekFile(pFile->fHandle, iPosition);
+    }
+
     // JPEG draw callback
     static int jpegDrawCallback(JPEGDRAW* pDraw) {
         if (!targetSprite_) return 0;
@@ -133,7 +137,7 @@ namespace MapEngine {
         targetSprite_ = &map;
         bool success = false;
         if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            if (png.open(path, rasterOpenFile, rasterCloseFile, rasterReadFilePNG, rasterSeekFile, pngDrawCallback) == 1) {
+            if (png.open(path, rasterOpenFile, rasterCloseFile, rasterReadFilePNG, rasterSeekFilePNG, pngDrawCallback) == 1) {
                 if (png.decode(nullptr, 0) == 1) success = true;
                 png.close();
             }
