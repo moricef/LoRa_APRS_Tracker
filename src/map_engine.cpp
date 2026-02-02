@@ -439,11 +439,15 @@ namespace MapEngine {
         // Loop iterates over PIXEL scanlines, clipped to the sprite
         int startY_px = std::max(minY_px, 0);
         int endY_px = std::min(maxY_px, MAP_TILE_SIZE - 1);
+        
+        uint32_t lastYieldMs = millis();
 
         for (int y_px = startY_px; y_px <= endY_px; y_px++) {
-            if ((y_px & 0x0F) == 0) { // Yield every 16 lines instead of 32
-                esp_task_wdt_reset(); 
-                vTaskDelay(pdMS_TO_TICKS(1)); 
+            uint32_t now = millis();
+            if (now - lastYieldMs > 20) { // Yield every 20ms of continuous work
+                esp_task_wdt_reset();
+                vTaskDelay(pdMS_TO_TICKS(1)); // Force context switch
+                lastYieldMs = now;
             }
 
             // 4. Add new edges from bucket to Active Edge List (AEL)
@@ -551,11 +555,14 @@ namespace MapEngine {
         map.fillSprite(TFT_WHITE); 
         map.setClipRect(0, 0, 256, 256);
 
+        uint32_t lastYieldMs = millis();
         uint8_t* p = data + 22;
         for (uint16_t i = 0; i < feature_count; i++) {
-            if (i % 20 == 0) { // Yield more frequently based on feature count
+            uint32_t now = millis();
+            if (now - lastYieldMs > 20) {
                 esp_task_wdt_reset();
                 vTaskDelay(pdMS_TO_TICKS(1));
+                lastYieldMs = now;
             }
             if (p + 12 > data + fileSize) break;
 
@@ -623,11 +630,14 @@ namespace MapEngine {
             p += 12 + feature_data_size;
         }
 
+        lastYieldMs = millis(); // Reset timer for the second pass
         p = data + 22;
         for (uint16_t i = 0; i < feature_count; i++) {
-            if (i % 20 == 0) { // Yield more frequently based on feature count
+            uint32_t now = millis();
+            if (now - lastYieldMs > 20) {
                 esp_task_wdt_reset();
                 vTaskDelay(pdMS_TO_TICKS(1));
+                lastYieldMs = now;
             }
             if (p + 12 > data + fileSize) break;
 
