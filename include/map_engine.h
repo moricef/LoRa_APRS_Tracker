@@ -1,0 +1,53 @@
+/* Map rendering engine for T-Deck Plus
+ * Handles vector tile parsing, rendering, and caching.
+ */
+#ifndef MAP_ENGINE_H
+#define MAP_ENGINE_H
+
+#ifdef USE_LVGL_UI
+
+#include <lvgl.h>
+#include "LGFX_TDeck.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <vector>
+#include "nav_types.h"
+
+namespace MapEngine {
+    
+    struct CachedTile
+    {
+        lgfx::LGFX_Sprite* sprite;
+        uint32_t tileHash;
+        uint32_t lastAccess;
+        bool isValid;
+        char filePath[64];
+    };
+    
+    // Request for the background rendering task
+    struct RenderRequest {
+        char path[128];
+        int16_t xOffset;
+        int16_t yOffset;
+        lgfx::LGFX_Sprite* targetSprite;
+    };
+
+    // Handles for the asynchronous rendering system
+    extern QueueHandle_t mapRenderQueue;
+    extern SemaphoreHandle_t spriteMutex;
+
+    // Function declarations
+    void startRenderTask(lv_obj_t* canvas_to_invalidate);
+    void stopRenderTask();
+    void initTileCache();
+    void clearTileCache();
+    bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map);
+    int findCachedTile(int zoom, int tileX, int tileY);
+    void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprite* sourceSprite);
+    void copySpriteToCanvasWithClip(lv_obj_t* canvas, LGFX_Sprite* sprite, int offsetX, int offsetY);
+    LGFX_Sprite* getCachedTileSprite(int index);
+
+} // namespace MapEngine
+
+#endif // USE_LVGL_UI
+#endif // MAP_ENGINE_H
