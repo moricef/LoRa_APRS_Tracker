@@ -44,7 +44,7 @@ namespace MapEngine {
     struct FeatureRef {
         uint8_t* ptr;           // Pointer to feature header in data buffer
         uint8_t geomType;       // 1=Point, 2=Line, 3=Polygon
-        uint16_t ringCount;     // For polygons (uint16_t per NAV1 format)
+        uint16_t ringCount;     // For polygons (uint8_t on disk, stored as uint16_t)
         uint16_t coordCount;    // Number of coordinates
         int16_t tileOffsetX;    // Pixel offset of tile top-left in viewport (IceNav: tilePixelOffsetX)
         int16_t tileOffsetY;    // Pixel offset of tile top-left in viewport (IceNav: tilePixelOffsetY)
@@ -255,8 +255,7 @@ namespace MapEngine {
         proj32Y.reserve(1024);
         for (int i = 0; i < 16; i++) globalLayers[i].reserve(256);
 
-        Serial.printf("[MAP] Tile cache initialized with %d tiles capacity\n", maxCachedTiles);
-        Serial.printf("[MAP] Render buffers pre-reserved (internal RAM)\n");
+        Serial.printf("[MAP] Cache %d tiles, render buffers pre-reserved (internal RAM)\n", maxCachedTiles);
     }
 
     void clearTileCache() {
@@ -574,6 +573,7 @@ namespace MapEngine {
     bool renderNavViewport(float centerLat, float centerLon, uint8_t zoom,
                            LGFX_Sprite &map, const char* region) {
         esp_task_wdt_reset();
+        uint64_t startTime = esp_timer_get_time();
 
         int viewportW = map.width();
         int viewportH = map.height();
@@ -663,12 +663,14 @@ namespace MapEngine {
                     uint32_t feature_data_size = coordCount * 4;
                     uint16_t ringCount = 0;
 
+                    // Polygon ring data: uint8_t ringCount (1 byte) + ringCount × uint16_t ringEnds
+                    // (matching Python tile_generator.py: struct.pack('<B', ring_count))
                     if (geomType == 3) {
                         uint8_t* ring_ptr = p + 12 + feature_data_size;
-                        if (ring_ptr + 2 <= data + fileSize) {
-                            ringCount = ring_ptr[0] | (ring_ptr[1] << 8);
-                            if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize)
-                                feature_data_size += 2 + (ringCount * 2);
+                        if (ring_ptr + 1 <= data + fileSize) {
+                            ringCount = ring_ptr[0];  // Single byte
+                            if (ring_ptr + 1 + (ringCount * 2) <= data + fileSize)
+                                feature_data_size += 1 + (ringCount * 2);
                             else
                                 ringCount = 0;
                         }
@@ -699,6 +701,14 @@ namespace MapEngine {
                 }
             }
         }
+
+        // Log load stats (IceNav-v3 pattern: maps.cpp:1582-1587)
+        uint64_t loadEnd = esp_timer_get_time();
+        int totalFeatures = 0;
+        for (int i = 0; i < 16; i++) totalFeatures += globalLayers[i].size();
+        Serial.printf("[NAV] Load: %llu ms, tiles: %d, features: %d, grid: [%d..%d]x[%d..%d]\n",
+                      (loadEnd - startTime) / 1000, (int)tileBuffers.size(), totalFeatures,
+                      minDx, maxDx, minDy, maxDy);
 
         // --- Render all layers (IceNav-v3 pattern: maps.cpp:1546-1569) ---
         map.startWrite();
@@ -733,8 +743,9 @@ namespace MapEngine {
                     case 3: { // Polygon (IceNav-v3: renderNavPolygon)
                         if (ref.coordCount < 3) break;
                         int16_t* coords = (int16_t*)(fp + 12);
+                        // ringEnds starts after 1-byte ringCount (not 2)
                         uint16_t* ringEnds = (ref.ringCount > 0)
-                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 2) : nullptr;
+                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 1) : nullptr;
 
                         if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount * 3 / 2);
                         if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount * 3 / 2);
@@ -743,6 +754,7 @@ namespace MapEngine {
 
                         int* px_hp = proj32X.data();
                         int* py_hp = proj32Y.data();
+                        if (!px_hp || !py_hp) break;
 
                         for (uint16_t j = 0; j < ref.coordCount; j++) {
                             px_hp[j] = coords[j * 2];
@@ -757,7 +769,7 @@ namespace MapEngine {
 
                         // Draw outline for exterior ring (IceNav-v3: renderNavPolygon L1392-1401)
                         uint16_t outerRingEnd = (ref.ringCount > 0) ? ringEnds[0] : ref.coordCount;
-                        if (outerRingEnd >= 3) {
+                        if (outerRingEnd >= 3 && outerRingEnd <= ref.coordCount) {
                             uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
                             for (int k = 0; k < outerRingEnd; k++) {
                                 if ((k & 63) == 0) esp_task_wdt_reset();
@@ -844,6 +856,11 @@ namespace MapEngine {
         // Free all tile buffers (IceNav-v3: maps.cpp:1574-1577)
         for (auto* buf : tileBuffers) free(buf);
 
+        uint64_t endTime = esp_timer_get_time();
+        Serial.printf("[NAV] Viewport: %llu ms (load %llu ms), %d features, PSRAM free: %u\n",
+                      (endTime - startTime) / 1000, (loadEnd - startTime) / 1000,
+                      totalFeatures, ESP.getFreePsram());
+
         return !tileBuffers.empty();
     }
 
@@ -853,7 +870,7 @@ namespace MapEngine {
     // - Per-feature setClipRect to tile boundaries
     // - startWrite()/endWrite() for SPI batching
     // - taskYIELD() between priority layers
-    // - ringCount read as uint16_t (2 bytes, per NAV1 format)
+    // - ringCount read as uint8_t (1 byte, matching Python tile_generator.py)
     static bool renderNavTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map, uint8_t currentZoom) {
         esp_task_wdt_reset();
         uint8_t* data = nullptr;
@@ -908,14 +925,14 @@ namespace MapEngine {
             uint32_t feature_data_size = coordCount * 4;
             uint16_t ringCount = 0;
 
-            // Polygon ring data: uint16_t ringCount (2 bytes) + ringCount × uint16_t ringEnds
-            // (per NAV1 format, matching IceNav-v3 NavReader)
+            // Polygon ring data: uint8_t ringCount (1 byte) + ringCount × uint16_t ringEnds
+            // (matching Python tile_generator.py: struct.pack('<B', ring_count))
             if (geomType == 3) {
                 uint8_t* ring_ptr = p + 12 + feature_data_size;
-                if (ring_ptr + 2 <= data + fileSize) {
-                    ringCount = ring_ptr[0] | (ring_ptr[1] << 8);  // uint16_t LE
-                    if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
-                        feature_data_size += 2 + (ringCount * 2);
+                if (ring_ptr + 1 <= data + fileSize) {
+                    ringCount = ring_ptr[0];  // Single byte
+                    if (ring_ptr + 1 + (ringCount * 2) <= data + fileSize) {
+                        feature_data_size += 1 + (ringCount * 2);
                     } else {
                         ringCount = 0;
                     }
@@ -976,8 +993,9 @@ namespace MapEngine {
                     case 3: { // Polygon
                         if (ref.coordCount < 3) break;
                         int16_t* coords = (int16_t*)(fp + 12);
+                        // ringEnds starts after 1-byte ringCount (not 2)
                         uint16_t* ringEnds = (ref.ringCount > 0)
-                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 2)
+                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 1)
                             : nullptr;
 
                         if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount * 3 / 2);

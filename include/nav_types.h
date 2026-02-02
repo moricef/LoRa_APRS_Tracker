@@ -43,15 +43,17 @@ struct NavTileHeader {
     int32_t maxLat;
 } __attribute__((packed));
 
-// Feature Header (12 bytes aligned)
+// Feature Header (12 bytes packed)
+// Followed by: coordCount × (int16 x, int16 y) coordinate pairs
+// For polygons: followed by uint8 ringCount + ringCount × uint16 ringEnd
 struct NavFeatureHeader {
     uint8_t geomType;       // 1=Point, 2=Line, 3=Polygon
     uint16_t colorRgb565;
-    uint8_t zoomPriority;
+    uint8_t zoomPriority;   // High nibble = minZoom, low nibble = priority
     uint8_t widthPixels;
-    uint8_t bbox[4];        // x1, y1, x2, y2
+    uint8_t bbox[4];        // x1, y1, x2, y2 (tile-relative, /16)
     uint16_t coordCount;
-    uint8_t padding;        // Alignment byte
+    uint8_t padding;        // Alignment byte (0x00)
 } __attribute__((packed));
 
 // Edge structure for Active Edge List (AEL) algorithm
