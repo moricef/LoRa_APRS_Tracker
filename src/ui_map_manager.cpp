@@ -322,7 +322,7 @@ namespace UIMapManager {
             lv_obj_set_style_text_font(stationDisplayPool[i].label, &lv_font_montserrat_12, 0);
             lv_obj_set_style_text_color(stationDisplayPool[i].label, lv_color_hex(0x332221), 0);
             lv_obj_set_style_bg_color(stationDisplayPool[i].label, lv_color_hex(0x759a9e), 0);
-            lv_obj_set_style_bg_opa(stationDisplayPool[i].label, LV_OPA_50, 0);
+            lv_obj_set_style_bg_opa(stationDisplayPool[i].label, LV_OPA_30, 0);
             lv_obj_set_style_pad_left(stationDisplayPool[i].label, 2, 0);
             lv_obj_set_style_pad_right(stationDisplayPool[i].label, 2, 0);
             lv_label_set_text(stationDisplayPool[i].label, "");
@@ -410,15 +410,7 @@ namespace UIMapManager {
             }
         }
 
-        // Color label background by station type
-        lv_color_t bgColor = lv_color_hex(0x759a9e);  // Default GPS gray
-        if (aprsSymbol && strlen(aprsSymbol) >= 2) {
-            char sym = aprsSymbol[1];
-            if (sym == '&')      bgColor = lv_color_hex(0xcc0000);  // Red: iGate
-            else if (sym == '#') bgColor = lv_color_hex(0x00cc00);  // Green: Digipeater
-            else if (sym == '_') bgColor = lv_color_hex(0x0055cc);  // Blue: Weather
-        }
-        lv_obj_set_style_bg_color(obj.label, bgColor, 0);
+        lv_obj_set_style_bg_color(obj.label, lv_color_hex(0x888888), 0);
 
         lv_label_set_text(obj.label, callsign);
         lv_obj_clear_flag(obj.container, LV_OBJ_FLAG_HIDDEN);
