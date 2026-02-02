@@ -565,8 +565,13 @@ namespace UIMapManager {
         }
 
         // Decode line as RGB565 with black background (0x000000)
+        // Must match LVGL byte order: big-endian when LV_COLOR_16_SWAP=1
         uint16_t* rgb565Row = (uint16_t*)symbolCombinedBuffer + rgb565Offset;
+#if LV_COLOR_16_SWAP
+        symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_BIG_ENDIAN, 0x00000000);
+#else
         symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
+#endif
 
         return 1;
     }
@@ -886,7 +891,10 @@ namespace UIMapManager {
 
             if (isNavMode) {
                 // NAV viewport rendering (IceNav-v3 pattern)
-                // Create a viewport sprite matching the canvas dimensions
+                // Temporarily unsubscribe loopTask from WDT — rendering at low zoom
+                // can take 10-30s with thousands of features (IceNav doesn't subscribe either)
+                esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
+
                 LGFX_Sprite viewportSprite(&tft);
                 viewportSprite.setPsram(true);
                 if (viewportSprite.createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) != nullptr) {
@@ -895,7 +903,6 @@ namespace UIMapManager {
                         viewportSprite, map_current_region.c_str());
 
                     if (hasTiles) {
-                        // Copy viewport sprite to LVGL canvas buffer (row by row)
                         uint16_t* src = (uint16_t*)viewportSprite.getBuffer();
                         if (src && map_canvas_buf) {
                             memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
@@ -905,6 +912,10 @@ namespace UIMapManager {
                 } else {
                     Serial.println("[MAP] Failed to create viewport sprite for NAV rendering");
                 }
+
+                // Re-subscribe loopTask to WDT
+                esp_task_wdt_add(xTaskGetCurrentTaskHandle());
+                esp_task_wdt_reset();
             } else {
                 // Raster per-tile rendering (PNG/JPG via cache)
                 for (int dy = -1; dy <= 1; dy++) {
@@ -1125,7 +1136,7 @@ namespace UIMapManager {
                 // Latitude: inverse Mercator for correct N/S displacement
                 double start_lat_rad = drag_start_lat * PI / 180.0;
                 double center_y_world = (1.0 - log(tan(start_lat_rad) + 1.0 / cos(start_lat_rad)) / PI) / 2.0;
-                double new_y_world = center_y_world + (double)dy / (n_d * MAP_TILE_SIZE);
+                double new_y_world = center_y_world - (double)dy / (n_d * MAP_TILE_SIZE);
                 // Clamp to valid Mercator range
                 if (new_y_world < 0.0) new_y_world = 0.0;
                 if (new_y_world > 1.0) new_y_world = 1.0;
@@ -1467,6 +1478,9 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
 
                 if (isNavMode) {
                     // NAV viewport rendering (IceNav-v3 pattern)
+                    // Temporarily unsubscribe loopTask from WDT — rendering can take 10-30s
+                    esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
+
                     LGFX_Sprite viewportSprite(&tft);
                     viewportSprite.setPsram(true);
                     if (viewportSprite.createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) != nullptr) {
@@ -1481,6 +1495,9 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                         }
                         viewportSprite.deleteSprite();
                     }
+
+                    esp_task_wdt_add(xTaskGetCurrentTaskHandle());
+                    esp_task_wdt_reset();
                 } else {
                     // Raster per-tile rendering (PNG/JPG via cache)
                     for (int dy = -1; dy <= 1; dy++) {

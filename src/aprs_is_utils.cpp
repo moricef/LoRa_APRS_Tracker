@@ -49,17 +49,17 @@ namespace APRS_IS_Utils {
         logger.log(logging::LoggerLevel::LOGGER_LEVEL_INFO, "APRS-IS", "Connecting to %s:%d",
                    Config.aprs_is.server.c_str(), Config.aprs_is.port);
 
+        aprsIsClient.setTimeout(3);  // 3 second timeout (DNS + TCP)
+
         uint8_t count = 0;
-        while (!aprsIsClient.connect(Config.aprs_is.server.c_str(), Config.aprs_is.port) && count < 5) {
+        while (!aprsIsClient.connect(Config.aprs_is.server.c_str(), Config.aprs_is.port) && count < 2) {
             logger.log(logging::LoggerLevel::LOGGER_LEVEL_WARN, "APRS-IS", "Connection attempt %d failed", count + 1);
             esp_task_wdt_reset();  // Reset watchdog during connection attempts
-            delay(1000);
             aprsIsClient.stop();
-            aprsIsClient.flush();
             count++;
         }
 
-        if (count == 5) {
+        if (count == 2) {
             logger.log(logging::LoggerLevel::LOGGER_LEVEL_ERROR, "APRS-IS", "Failed to connect after %d attempts", count);
             aprsIsConnected = false;
             passcodeValid = false;
