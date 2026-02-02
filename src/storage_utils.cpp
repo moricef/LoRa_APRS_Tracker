@@ -477,7 +477,7 @@ namespace STORAGE_Utils {
     static bool statsDirty = false;
 
     bool logRawFrame(const String& frame, int rssi, float snr, bool isDirect) {
-        // 1. Préparation du timestamp
+        // 1. Timestamp preparation
         char timestamp[64];
         if (year() > 2000) {
             snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d",
@@ -486,17 +486,17 @@ namespace STORAGE_Utils {
             snprintf(timestamp, sizeof(timestamp), "----/--/-- --:--:--");
         }
 
-        // 2. Création de la ligne avec le marqueur [D]irect ou [R]elayé
+        // 2. Create line with [D]irect or [R]elayed marker
         String statusMarker = isDirect ? "[D]" : "[R]";
         String logLine = statusMarker + String(timestamp) + " GMT: " + frame;
 
-        // 3. Stockage dans le buffer de la mémoire vive (pour l'écran)
+        // 3. Store in RAM buffer (for display)
         framesCache[framesCacheHead] = logLine;
         framesCacheHead = (framesCacheHead + 1) % FRAMES_CACHE_SIZE;
         if (framesCacheCount < FRAMES_CACHE_SIZE) framesCacheCount++;
         framesDirty = true;  // Mark for UI refresh
 
-        // 4. Écriture sur la carte SD
+        // 4. Write to SD card
         if (sdAvailable) {
             checkFramesLogRotation();
             File file = SD.open(FRAMES_FILE, FILE_APPEND);

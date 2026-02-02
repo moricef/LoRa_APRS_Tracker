@@ -99,8 +99,8 @@ struct FrameItemPool {
 };
 static FrameItemPool frame_pool[MAX_FRAME_ITEMS];
 static bool frame_pool_initialized = false;
-static lv_style_t style_header_text; // Déclaration du style pour les en-têtes du tableau de statistiques
-static bool style_header_text_initialized = false; // Flag pour l'initialisation du style
+static lv_style_t style_header_text; // Style declaration for stats table headers
+static bool style_header_text_initialized = false; // Flag for style initialization
 
 // Contact long-press flag
 static bool contact_longpress_handled = false;
@@ -1016,68 +1016,68 @@ static void update_frame_item(int index, const String& rawLine) {
     const char* raw = rawLine.c_str();
     size_t rawLen = rawLine.length();
 
-    // Détermine si c'est une trame directe (pour la couleur)
+    // Determine if this is a direct frame (for color)
     bool isDirect = (rawLen >= 3 && raw[0] == '[' && raw[1] == 'D' && raw[2] == ']');
 
-    // Buffer statique pour le résumé (réutilisé, pas d'allocation de heap)
+    // Static buffer for summary (reused, no heap allocation)
     static char summary[80];
-    summary[0] = '\0'; // Initialise le buffer
+    summary[0] = '\0'; // Initialize buffer
 
-    // Extraire la partie HH:MM:SS (commence à l'index 14 de raw, 8 caractères de long)
-    // Ex: "[D]YYYY-MM-DD HH:MM:SS GMT: ..." -> HH:MM:SS est à raw[14]
+    // Extract HH:MM:SS part (starts at index 14 of raw, 8 characters long)
+    // Ex: "[D]YYYY-MM-DD HH:MM:SS GMT: ..." -> HH:MM:SS is at raw[14]
     char timeStr[9]; // HH:MM:SS\0
-    if (rawLen >= 22) { // S'assurer que la ligne est assez longue pour contenir l'heure
+    if (rawLen >= 22) { // Ensure line is long enough to contain time
         strncpy(timeStr, raw + 14, 8);
         timeStr[8] = '\0';
     } else {
-        strcpy(timeStr, "        "); // Fallback si la trame est trop courte
+        strcpy(timeStr, "        "); // Fallback if frame is too short
     }
 
-    // Déterminer le début du contenu réel de la trame APRS (après "[X]YYYY-MM-JJ HH:MM:SS GMT: ")
-    // Le contenu APRS commence à l'index 27 (3+10+1+8+5 = 27 caractères à sauter)
+    // Determine start of actual APRS frame content (after "[X]YYYY-MM-DD HH:MM:SS GMT: ")
+    // APRS content starts at index 27 (3+10+1+8+5 = 27 characters to skip)
     const char* aprsFrameContent = raw;
-    if (rawLen >= 27) { // Longueur suffisante pour le préfixe complet
+    if (rawLen >= 27) { // Sufficient length for complete prefix
         aprsFrameContent = raw + 27;
     } else {
-        aprsFrameContent = raw; // Si trop court, traiter la ligne entière comme contenu
+        aprsFrameContent = raw; // If too short, treat entire line as content
     }
 
     const char* arrowPos = strchr(aprsFrameContent, '>');
     if (arrowPos) {
-        // Extrait l'émetteur
+        // Extract sender
         size_t senderLen = arrowPos - aprsFrameContent;
-        // Extrait la destination/chemin
+        // Extract destination/path
         const char* pathStart = arrowPos + 1;
-        const char* pathEnd = strchr(pathStart, ':'); // Trouve la fin du chemin/début du texte du message
-        if (!pathEnd) pathEnd = strchr(pathStart, ','); // S'il n'y a pas de texte de message, la virgule sépare les éléments du chemin
-        if (!pathEnd) pathEnd = pathStart + strlen(pathStart); // S'il n'y a pas d'éléments de chemin, le chemin est tout ce qui reste
+        const char* pathEnd = strchr(pathStart, ':'); // Find end of path/start of message text
+        if (!pathEnd) pathEnd = strchr(pathStart, ','); // If no message text, comma separates path elements
+        if (!pathEnd) pathEnd = pathStart + strlen(pathStart); // If no path elements, path is everything remaining
         size_t pathDisplayLen = pathEnd - pathStart;
 
-        // Construire le résumé: "HH:MM:SS EMETTEUR > CHEMIN"
+        // Build summary: "HH:MM:SS SENDER > PATH"
         snprintf(summary, sizeof(summary), "%s %.*s > %.*s",
                  timeStr,
                  (int)senderLen, aprsFrameContent,
                  (int)pathDisplayLen, pathStart);
     } else {
-        // Pas de '>' trouvé, juste l'heure et le contenu de la trame
+        // No '>' found, just time and frame content
         snprintf(summary, sizeof(summary), "%s %s", timeStr, aprsFrameContent);
     }
-    
-    // Troncation finale si le résumé est toujours trop long
-    if (strlen(summary) >= sizeof(summary) - 4) { // Réserve de l'espace pour "..."
+
+    // Final truncation if summary is still too long
+    if (strlen(summary) >= sizeof(summary) - 4) { // Reserve space for "..."
         summary[sizeof(summary) - 4] = '\0';
         strcat(summary, "...");
     }
 
-    // Met à jour le texte (LVGL fait une copie interne)
+    // Update text (LVGL makes internal copy)
     lv_label_set_text(item.summary_label, summary);
-    lv_label_set_text(item.full_label, raw); // Ligne raw complète pour la popup de détail
+    lv_label_set_text(item.full_label, raw); // Full raw line for detail popup
 
-    // Met à jour la couleur en fonction de direct/digipeated
+    // Update color based on direct/digipeated
     lv_obj_set_style_text_color(item.summary_label,
         isDirect ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_ORANGE), 0);
 
-    // Affiche l'élément
+    // Show element
     lv_obj_clear_flag(item.container, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1131,46 +1131,46 @@ static void populate_stats(lv_obj_t *cont) {
             lv_obj_set_style_bg_color(stats_table, lv_color_hex(0x0f0f23), 0);
             lv_obj_set_style_border_color(stats_table, lv_color_hex(0x333344), 0);
             lv_obj_set_style_pad_all(stats_table, 2, LV_PART_ITEMS);
-            // Couleur de texte par défaut pour les éléments du tableau (lignes de données)
+            // Default text color for table elements (data rows)
             lv_obj_set_style_text_color(stats_table, lv_color_hex(0x759a9e), LV_PART_ITEMS);
 
-            // Initialiser le style des en-têtes une seule fois
-            if (!style_header_text_initialized) { // Vérifie si le style a déjà été initialisé
+            // Initialize header style only once
+            if (!style_header_text_initialized) { // Check if style is already initialized
                 lv_style_init(&style_header_text);
                 lv_style_set_text_color(&style_header_text, lv_color_hex(0xFF8C00)); // Orange
-                lv_style_set_text_font(&style_header_text, &lv_font_montserrat_14); // Spécifier la police pour les en-têtes
-                style_header_text_initialized = true; // Marque le style comme initialisé
+                lv_style_set_text_font(&style_header_text, &lv_font_montserrat_14); // Specify font for headers
+                style_header_text_initialized = true; // Mark style as initialized
             }
-            // Appliquer le style pour les en-têtes (utilisant l'état personnalisé)
+            // Apply style for headers (using custom state)
             lv_obj_add_style(stats_table, &style_header_text, LV_PART_ITEMS | LV_STATE_USER_1);
 
-            // Largeurs de colonne ajustées (total ~290px pour la zone de contenu)
-            // Ancien: Time (0, 65), Station (1, 80), Pkts (2, 38), RSSI (3, 45), SNR (4, 45)
-            // Largeurs de colonne ajustées pour utiliser la largeur complète (~310px) et décaler Pkts
-            // Largeurs de colonne ajustées pour utiliser la largeur complète (~310px)
-            // Largeurs de colonne ajustées pour utiliser la largeur complète de 310px
-            // Largeurs de colonne ajustées pour un espacement équilibré et pour remplir la largeur de 310px
-            // Largeurs de colonne ajustées pour un espacement équilibré et pour remplir la largeur de 280px
-            // Largeurs de colonne ajustées pour un espacement équilibré et pour remplir la largeur de 280px
-            // Nouveau: Station (0, 100), Pkts (1, 40), RSSI (2, 70), SNR (3, 70) -> 100+40+70+70 = 280
+            // Column widths adjusted (total ~290px for content area)
+            // Old: Time (0, 65), Station (1, 80), Pkts (2, 38), RSSI (3, 45), SNR (4, 45)
+            // Column widths adjusted to use full width (~310px) and shift Pkts
+            // Column widths adjusted to use full width (~310px)
+            // Column widths adjusted to use full width of 310px
+            // Column widths adjusted for balanced spacing and to fill width of 310px
+            // Column widths adjusted for balanced spacing and to fill width of 280px
+            // Column widths adjusted for balanced spacing and to fill width of 280px
+            // New: Station (0, 100), Pkts (1, 40), RSSI (2, 70), SNR (3, 70) -> 100+40+70+70 = 280
             lv_table_set_col_width(stats_table, 0, 100);  // Station
             lv_table_set_col_width(stats_table, 1, 40);   // Pkts
             lv_table_set_col_width(stats_table, 2, 70);   // RSSI
             lv_table_set_col_width(stats_table, 3, 70);   // SNR
 
-            // Centrer le texte dans toutes les colonnes du tableau
+            // Center text in all table columns
             lv_obj_set_style_text_align(stats_table, LV_TEXT_ALIGN_CENTER, LV_PART_ITEMS);
         }
     }
 
     // Update table
     if (stats_table) {
-        // Ligne d'en-tête
+        // Header row
         lv_table_set_cell_value(stats_table, 0, 0, "Station");
         lv_table_set_cell_value(stats_table, 0, 1, "Pkts");
         lv_table_set_cell_value(stats_table, 0, 2, "RSSI");
         lv_table_set_cell_value(stats_table, 0, 3, "SNR");
-        // Appliquer l'état personnalisé aux cellules d'en-tête pour le style
+        // Apply custom state to header cells for styling
         lv_table_add_cell_ctrl(stats_table, 0, 0, LV_TABLE_CELL_CTRL_CUSTOM_1);
         lv_table_add_cell_ctrl(stats_table, 0, 1, LV_TABLE_CELL_CTRL_CUSTOM_1);
         lv_table_add_cell_ctrl(stats_table, 0, 2, LV_TABLE_CELL_CTRL_CUSTOM_1);
@@ -1187,15 +1187,15 @@ static void populate_stats(lv_obj_t *cont) {
             std::vector<size_t> indices(stations.size());
             for (size_t i = 0; i < stations.size(); i++) indices[i] = i;
             std::sort(indices.begin(), indices.end(), [&stations](size_t a, size_t b) {
-                return stations[a].count > stations[b].count; // Tri par nombre de paquets
+                return stations[a].count > stations[b].count; // Sort by packet count
             });
 
             size_t rowCount = (indices.size() < 10) ? indices.size() : 10;
-            lv_table_set_row_cnt(stats_table, rowCount + 1); // +1 pour l'en-tête
+            lv_table_set_row_cnt(stats_table, rowCount + 1); // +1 for header
 
             for (size_t i = 0; i < rowCount; i++) {
                 const StationStats &s = stations[indices[i]];
-                int row = i + 1; // Saute la ligne d'en-tête
+                int row = i + 1; // Skip header row
 
                 // Station
                 lv_table_set_cell_value(stats_table, row, 0, s.callsign.c_str());
@@ -1299,7 +1299,7 @@ static void btn_send_msg_clicked(lv_event_t *e) {
         if (xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
             File msgFile = STORAGE_Utils::openFile("/aprsMessages.txt", FILE_APPEND);
             if (msgFile) {
-                char sentMsgBuf[256]; // Utilisation d'un buffer statique pour éviter les allocations String
+                char sentMsgBuf[256]; // Use static buffer to avoid String allocations
                 snprintf(sentMsgBuf, sizeof(sentMsgBuf), "%s,>%s", to, msg);
                 msgFile.println(sentMsgBuf);
                 msgFile.close();
@@ -1619,7 +1619,7 @@ void createMsgScreen() {
     lv_obj_t *tab_stats = lv_tabview_add_tab(msg_tabview, "Stats");
     if (tab_stats) {
         lv_obj_set_style_bg_color(tab_stats, lv_color_hex(0x0f0f23), 0);
-        lv_obj_set_style_pad_all(tab_stats, 5, 0); // Réduction du padding pour augmenter la largeur utile
+        lv_obj_set_style_pad_all(tab_stats, 5, 0); // Reduce padding to increase usable width
 
         cont_stats_global = lv_obj_create(tab_stats);
         if (cont_stats_global) {
@@ -1758,34 +1758,34 @@ void handleComposeKeyboard(char key) {
         #ifdef BOARD_BL_PIN
             analogWrite(BOARD_BL_PIN, screenBrightness);
         #endif
-        // On continue pour traiter la touche immédiatement
+        // Continue to process key immediately
     }
 
-    // 2. Identifier la cible (Compose Message OU Contact Edit)
+    // 2. Identify target (Compose Message OR Contact Edit)
     lv_obj_t* target_input = nullptr;
     bool is_compose_mode = false;
     bool is_contact_mode = false;
 
-    // Cas A : Mode Compose Message
+    // Case A: Compose Message mode
     if (compose_screen_active && current_focused_input) {
         target_input = current_focused_input;
         is_compose_mode = true;
     }
-    // Cas B : Mode Édition Contact (Vérifier si l'écran est affiché)
+    // Case B: Contact Edit mode (Check if screen is displayed)
     else if (screen_contact_edit && lv_scr_act() == screen_contact_edit) {
-        // Sécurité : si le pointeur est null, on force le premier champ
+        // Safety: if pointer is null, force first field
         if (!contact_current_input) contact_current_input = contact_callsign_input;
-        
+
         target_input = contact_current_input;
         is_contact_mode = true;
     }
 
-    // Si aucun champ texte n'est actif, on sort
+    // If no text field is active, exit
     if (!target_input) return;
 
     uint32_t now = millis();
 
-    // --- Gestion des touches modificatrices (Shift/Symbol) ---
+    // --- Handle modifier keys (Shift/Symbol) ---
     if (key == KEY_SHIFT) {
         if (now - lastShiftTime < DOUBLE_TAP_MS) {
             capsLockActive = !capsLockActive;
@@ -1807,13 +1807,13 @@ void handleComposeKeyboard(char key) {
         return;
     }
 
-    // --- Gestion Backspace ---
+    // --- Handle Backspace ---
     if (key == '\b' || key == 0x08) {
         lv_textarea_del_char(target_input);
         return;
     }
 
-    // --- Gestion Navigation (Enter / Tab) ---
+    // --- Handle Navigation (Enter / Tab) ---
     if (key == '\n' || key == '\r' || key == '\t') {
         
         if (is_compose_mode) {
@@ -1822,7 +1822,7 @@ void handleComposeKeyboard(char key) {
                 lv_obj_clear_state(compose_to_input, LV_STATE_FOCUSED);
                 lv_obj_add_state(compose_msg_input, LV_STATE_FOCUSED);
                 current_focused_input = compose_msg_input;
-            } else if (key == '\t') { // Shift+Tab simulé par Tab simple pour remonter
+            } else if (key == '\t') { // Shift+Tab simulated by simple Tab to go back
                 lv_obj_clear_state(compose_msg_input, LV_STATE_FOCUSED);
                 lv_obj_add_state(compose_to_input, LV_STATE_FOCUSED);
                 current_focused_input = compose_to_input;
@@ -1839,13 +1839,13 @@ void handleComposeKeyboard(char key) {
                 lv_obj_add_state(contact_comment_input, LV_STATE_FOCUSED);
                 contact_current_input = contact_comment_input;
             } else if (contact_current_input == contact_comment_input) {
-                // Sur le dernier champ, Entrée ou Tab boucle au début
+                // On last field, Enter or Tab loops to beginning
                 lv_obj_clear_state(contact_comment_input, LV_STATE_FOCUSED);
                 lv_obj_add_state(contact_callsign_input, LV_STATE_FOCUSED);
                 contact_current_input = contact_callsign_input;
             }
-            
-            // Mise à jour du clavier virtuel si présent
+
+            // Update virtual keyboard if present
             if (contact_edit_keyboard) {
                 lv_keyboard_set_textarea(contact_edit_keyboard, contact_current_input);
             }
@@ -1853,7 +1853,7 @@ void handleComposeKeyboard(char key) {
         return;
     }
 
-    // --- Saisie de caractères ---
+    // --- Character input ---
     char output = key;
     if (symbolLockActive && key >= 'a' && key <= 'z') {
         output = getSymbolChar(key);
@@ -1861,7 +1861,7 @@ void handleComposeKeyboard(char key) {
         output = key - 32; // Convert to uppercase
     }
 
-    // IMPORTANT : On écrit dans target_input (qui peut être Compose OU Contact)
+    // IMPORTANT: Write to target_input (which can be Compose OR Contact)
     char str[2] = {output, '\0'};
     lv_textarea_add_text(target_input, str);
 }

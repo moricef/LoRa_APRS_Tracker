@@ -39,7 +39,7 @@ extern int              loraIndexSize;
 bool operationDone   = true;
 bool transmitFlag    = true;
 
-// Flags pour les changements de configuration à appliquer hors ISR
+// Flags for configuration changes to apply outside ISR
 bool pendingFrequencyChange = false;
 int pendingLoraIndex = -1;
 bool pendingDataRateChange = false;
@@ -73,19 +73,19 @@ namespace LoRa_Utils {
     }
 
     void requestFrequencyChange(int newLoraIndex) {
-        // Fonction sûre à appeler depuis ISR - positionne juste un flag
+        // ISR-safe function - just sets a flag
         pendingLoraIndex = newLoraIndex;
         pendingFrequencyChange = true;
     }
 
     void requestDataRateChange(int newDataRate) {
-        // Fonction sûre à appeler depuis ISR - positionne juste un flag
+        // ISR-safe function - just sets a flag
         pendingDataRate = newDataRate;
         pendingDataRateChange = true;
     }
 
     void processPendingChanges() {
-        // À appeler depuis la boucle principale (loop), pas depuis ISR
+        // Call from main loop, not from ISR
         if (pendingFrequencyChange) {
             pendingFrequencyChange = false;
             if (pendingLoraIndex >= 0 && pendingLoraIndex < loraIndexSize) {
@@ -177,21 +177,21 @@ namespace LoRa_Utils {
             }
         }
 
-        // Valeur par défaut si non trouvé
+        // Default value if not found
         return configs[0];  // 300 bps
     }
 
     int getNextDataRate(int currentDataRate) {
-        // Les 6 vitesses disponibles
+        // The 6 available speeds
         const int dataRates[] = {300, 244, 209, 183, 610, 1200};
 
         for (int i = 0; i < 6; i++) {
             if (dataRates[i] == currentDataRate) {
-                return dataRates[(i + 1) % 6];  // Cycle à travers les 6 options
+                return dataRates[(i + 1) % 6];  // Cycle through the 6 options
             }
         }
 
-        return 300;  // Valeur par défaut
+        return 300;  // Default value
     }
 
     void changeDataRate() {
@@ -203,7 +203,7 @@ namespace LoRa_Utils {
     void setDataRate(int dataRate) {
         DataRateConfig config = getDataRateConfig(dataRate);
 
-        // Mise à jour de la configuration
+        // Update configuration
         Config.loraTypes[loraIndex].dataRate = config.dataRate;
         Config.loraTypes[loraIndex].spreadingFactor = config.spreadingFactor;
         Config.loraTypes[loraIndex].codingRate4 = config.codingRate4;
@@ -211,7 +211,7 @@ namespace LoRa_Utils {
 
         currentLoRaType = &Config.loraTypes[loraIndex];
 
-        // Reconfigurer la radio avec les nouveaux paramètres
+        // Reconfigure radio with new parameters
         radio.setSpreadingFactor(config.spreadingFactor);
         radio.setCodingRate(config.codingRate4);
         float signalBandwidth = config.signalBandwidth / 1000;

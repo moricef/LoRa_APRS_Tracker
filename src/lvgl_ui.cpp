@@ -32,11 +32,11 @@
 #include <SD.h> // Added because used for sent messages
 #include <TouchLib.h>
 #include <Wire.h>
-#include <algorithm> // Pour std::sort
+#include <algorithm> // For std::sort
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
-#include "ui_map_manager.h" // Inclure le nouveau gestionnaire de carte
+#include "ui_map_manager.h" // Include the new map manager
 #include "ui_common.h"       // UI shared constants and accessors
 #include "ui_popups.h"       // Popup notifications module
 #include "ui_settings.h"     // Settings screens module
@@ -89,8 +89,8 @@ extern uint8_t loraIndex;
 extern int loraIndexSize;
 extern bool displayEcoMode;
 extern uint8_t screenBrightness;
-extern int mapStationsCount; // Compteur de stations pour la barre d'information
-                             // de la carte
+extern int mapStationsCount; // Station counter for the map
+                             // information bar
 
 // Display dimensions
 #define SCREEN_WIDTH 320

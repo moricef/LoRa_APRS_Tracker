@@ -413,7 +413,7 @@ void updateLastRx() {
         return;
     }
 
-    // Tri par date de réception
+    // Sort by reception date
     std::vector<size_t> indices(stations.size());
     for (size_t i = 0; i < stations.size(); i++) indices[i] = i;
     std::sort(indices.begin(), indices.end(), [&stations](size_t a, size_t b) {
@@ -427,7 +427,7 @@ void updateLastRx() {
     for (size_t i = 0; i < count; i++) {
         const StationStats &s = stations[indices[i]];
         
-        // Vert (#00ff00) pour Direct, Orange (#ffa500) pour Digi
+        // Green (#00ff00) for Direct, Orange (#ffa500) for Digi
         const char* color = s.lastIsDirect ? "00ff00" : "ffa500";
         
         snprintf(line, sizeof(line), "\n#%s %02d:%02d %-9s RSSI:%-4d SNR:%-2.0f#",

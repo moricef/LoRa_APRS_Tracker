@@ -291,17 +291,17 @@ namespace WIFI_Utils {
         // Modem sleep (WIFI_PS_MIN_MODEM) is enabled after connection
 
         #ifdef USE_LVGL_UI
-            // Pour LVGL, on laisse le main gérer le web-conf après init LVGL
+            // For LVGL, let main handle web-conf after LVGL init
             if (Config.wifiEnabled && !needsWebConfig()) {
                 startStationMode();
             }
             WiFiUserDisabled = !Config.wifiEnabled;
-            // Si needsWebConfig(), le main affichera l'écran LVGL web-conf
+            // If needsWebConfig(), main will display the LVGL web-conf screen
         #else
-            // Mode web-conf bloquant si activé, callsign NOCALL, ou pas de réseau WiFi configuré
+            // Blocking web-conf mode if enabled, callsign NOCALL, or no WiFi network configured
             if (needsWebConfig()) {
                 startBlockingWebConfig();
-                // Ne revient jamais ici - reboot après config
+                // Never returns here - reboot after config
             }
             // Mode Station: connexion au réseau WiFi configuré (si activé)
             WiFiUserDisabled = !Config.wifiEnabled;

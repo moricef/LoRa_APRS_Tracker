@@ -302,7 +302,7 @@ void loop() {
         #endif
     #endif
 
-    // Traiter les changements de configuration LoRa pendants (depuis ISR)
+    // Process pending LoRa configuration changes (from ISR)
     LoRa_Utils::processPendingChanges();
 
     ReceivedLoRaPacket packet = LoRa_Utils::receivePacket();
@@ -311,25 +311,25 @@ void loop() {
     if (!packet.text.isEmpty()) {
         String rawFrame = packet.text.substring(3);
         
-        // --- 1. Extraction du chemin et détection Direct/Digi ---
+        // --- 1. Extract path and detect Direct/Digi ---
         int pathStart = rawFrame.indexOf('>');
         int pathEnd = rawFrame.indexOf(':');
-        bool isDirect = true; // Par défaut direct
+        bool isDirect = true; // Direct by default
 
         if (pathStart != -1 && pathEnd != -1) {
             String path = rawFrame.substring(pathStart + 1, pathEnd);
             if (path.indexOf('*') != -1) {
-                isDirect = false; // Astérisque trouvé = Relayé
+                isDirect = false; // Asterisk found = Relayed
             }
-            // Mise à jour des stats digi (code original)
+            // Update digi stats (original code)
             STORAGE_Utils::updateDigiStats(path);
         }
 
-        // --- 2. Enregistrement de la trame ---
+        // --- 2. Frame recording ---
         STORAGE_Utils::logRawFrame(rawFrame, packet.rssi, packet.snr, isDirect);
         STORAGE_Utils::updateRxStats(packet.rssi, packet.snr);
 
-        // --- 3. Stats par station (Émetteur) ---
+        // --- 3. Per-station stats (Sender) ---
         if (pathStart > 0) {
             String sender = rawFrame.substring(0, pathStart);
             STORAGE_Utils::updateStationStats(sender, packet.rssi, packet.snr, isDirect);
