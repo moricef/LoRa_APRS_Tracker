@@ -1023,18 +1023,21 @@ void UISettings::createSoundScreen() {
 static void wifi_switch_changed(lv_event_t *e) {
     lv_obj_t *sw = lv_event_get_target(e);
     bool is_on = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    extern uint32_t lastWiFiRetry;
+    extern int wifiRetryCount;
 
     if (is_on) {
         Serial.println("[UISettings] WiFi: User enabled");
         WiFiUserDisabled = false;
-        WiFiEcoMode = true;
-        lastWiFiRetry = 0;
+        WiFiEcoMode = false;
+        wifiRetryCount = 0;
 
         if (wifi_status_label) {
-            lv_label_set_text(wifi_status_label, "Reconnecting...");
+            lv_label_set_text(wifi_status_label, "Connecting...");
             lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xffa500), 0);
         }
+
+        // Start connection immediately
+        WIFI_Utils::startStationMode();
     } else {
         Serial.println("[UISettings] WiFi: User disabled");
         WiFiUserDisabled = true;

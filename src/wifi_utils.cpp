@@ -160,7 +160,14 @@ namespace WIFI_Utils {
         wifiRetryCount = 0;
         wifiIsReconnecting = false;
         esp_wifi_set_ps(WIFI_PS_MIN_MODEM);  // Enable modem sleep for coexistence
-        Serial.printf("[WiFi] Connected to '%s'! IP=%s RSSI=%d dBm\n",
+
+        // Use public DNS servers (Cloudflare + Google) for reliable resolution
+        // DHCP-provided DNS on some routers is slow or unreliable for the ESP32
+        IPAddress dns1(1, 1, 1, 1);       // Cloudflare
+        IPAddress dns2(8, 8, 8, 8);       // Google
+        WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), dns1, dns2);
+
+        Serial.printf("[WiFi] Connected to '%s'! IP=%s RSSI=%d dBm DNS=1.1.1.1/8.8.8.8\n",
             Config.wifiAPs[wifiCurrentNetworkIndex].ssid.c_str(),
             WiFi.localIP().toString().c_str(), WiFi.RSSI());
         WEB_Utils::setup();

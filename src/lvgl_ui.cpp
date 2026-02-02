@@ -235,6 +235,10 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
   static lv_obj_t *screen_splash = nullptr;
   static lv_obj_t *screen_init = nullptr;
   static lv_obj_t *init_status_label = nullptr;
+#if LV_COLOR_16_SWAP
+  static uint8_t *swapped_logo = nullptr;
+  static lv_img_dsc_t swapped_dsc;
+#endif
 
   void initLvglDisplay() {
     if (spiMutex == NULL) {
@@ -303,7 +307,26 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
     // LoRa APRS Logo image
     lv_obj_t *logo = lv_img_create(screen_splash);
+#if LV_COLOR_16_SWAP
+    // Logo data is little-endian RGB565 but LVGL expects big-endian:
+    // swap the two color bytes of each pixel (3-byte triplets: color_lo, color_hi, alpha)
+    if (!swapped_logo) {
+      swapped_logo = (uint8_t *)ps_malloc(lora_aprs_logo.data_size);
+      if (swapped_logo) {
+        const uint8_t *src = lora_aprs_logo.data;
+        for (uint32_t i = 0; i < lora_aprs_logo.data_size; i += 3) {
+          swapped_logo[i]     = src[i + 1];  // color_hi → byte 0
+          swapped_logo[i + 1] = src[i];      // color_lo → byte 1
+          swapped_logo[i + 2] = src[i + 2];  // alpha unchanged
+        }
+        swapped_dsc = lora_aprs_logo;
+        swapped_dsc.data = swapped_logo;
+      }
+    }
+    lv_img_set_src(logo, swapped_logo ? &swapped_dsc : &lora_aprs_logo);
+#else
     lv_img_set_src(logo, &lora_aprs_logo);
+#endif
     lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, 30);
 
     // Subtitle: (TRACKER)
@@ -399,6 +422,10 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
       lv_obj_del(screen_splash);
       screen_splash = nullptr;
       init_status_label = nullptr;
+#if LV_COLOR_16_SWAP
+      // Free the byte-swapped logo copy (no longer needed after splash)
+      if (swapped_logo) { free(swapped_logo); swapped_logo = nullptr; }
+#endif
     }
   }
 

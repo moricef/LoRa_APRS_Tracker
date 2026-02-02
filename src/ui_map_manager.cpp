@@ -109,9 +109,14 @@ namespace UIMapManager {
     static lv_timer_t* map_refresh_timer = nullptr;
     #define MAP_REFRESH_INTERVAL 10000  // 10 seconds
 
+    // Redraw synchronization (prevent overlapping redraws and timer pileup)
+    static lv_timer_t* pending_reload_timer = nullptr;
+    static volatile bool redraw_in_progress = false;
+
     // Timer callback for periodic map refresh (stations update)
     static void map_refresh_timer_cb(lv_timer_t* timer) {
-        if (screen_map && lv_scr_act() == screen_map) {
+        if (screen_map && lv_scr_act() == screen_map
+            && !touch_dragging && !redraw_in_progress) {
             Serial.println("[MAP] Periodic refresh (stations)");
             redraw_map_canvas();
         }
@@ -842,6 +847,9 @@ namespace UIMapManager {
             return;
         }
 
+        if (redraw_in_progress) return;  // Prevent overlapping redraws
+        redraw_in_progress = true;
+
         // Pause async preloading while we load tiles (avoid SD contention)
         mainThreadLoading = true;
 
@@ -951,20 +959,38 @@ namespace UIMapManager {
         // Force container update (needed for touch pan to work)
         lv_obj_invalidate(map_container);
 
+        // Reset periodic refresh timer so it doesn't fire right after this redraw
+        // (avoids double-blocking: pan redraw 600ms + immediate periodic refresh 600ms)
+        if (map_refresh_timer) {
+            lv_timer_reset(map_refresh_timer);
+        }
+
         // Resume async preloading
         mainThreadLoading = false;
+        redraw_in_progress = false;
+
+        // Flush pending LVGL events immediately so touches during the blocking
+        // render are processed without waiting for the next main loop iteration
+        lv_timer_handler();
     }
 
     // Timer callback to reload map screen (for panning/recentering)
     void map_reload_timer_cb(lv_timer_t* timer) {
+        pending_reload_timer = nullptr;
         lv_timer_del(timer);
-        redraw_map_canvas(); // Only canvas is redrawn, no need to recreate screen_map
+        if (redraw_in_progress) return;  // Skip if previous redraw still running
+        redraw_map_canvas();
     }
 
     // Helper function to schedule map reload with delay
+    // Cancels any pending reload to avoid piling up redraws
     void schedule_map_reload() {
-        lv_timer_t* t = lv_timer_create(map_reload_timer_cb, 20, NULL);
-        lv_timer_set_repeat_count(t, 1);
+        if (pending_reload_timer) {
+            lv_timer_del(pending_reload_timer);
+            pending_reload_timer = nullptr;
+        }
+        pending_reload_timer = lv_timer_create(map_reload_timer_cb, 20, NULL);
+        lv_timer_set_repeat_count(pending_reload_timer, 1);
     }
 
     // Map zoom in handler
