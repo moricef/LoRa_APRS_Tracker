@@ -48,6 +48,10 @@ void stopRenderTask();
     static std::vector<Edge> edgePool;
     static std::vector<int> edgeBuckets;
 
+    // Static vectors for coordinate projection (to avoid re-allocation)
+    static std::vector<int> proj32X;
+    static std::vector<int> proj32Y;
+
     // UI elements - Map screen
     lv_obj_t* screen_map = nullptr;
     lv_obj_t* map_canvas = nullptr;
@@ -818,7 +822,7 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
 
         edgePool.clear();
         int bucketCount = maxY - minY + 1;
-        if (bucketCount < 0) return;
+        if (bucketCount <= 0) return;
         edgeBuckets.assign(bucketCount, -1);
 
         uint16_t count = (ringCount == 0) ? 1 : ringCount;
@@ -866,16 +870,35 @@ void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprit
         }
 
         int activeHead = -1;
-        uint32_t last_wdt_ms = millis(); // WDT tracking for complex polygons
         int startY = std::max(minY, -yOffset);
         int endY = std::min(maxY, (int)MAP_TILE_SIZE - 1 - yOffset);
 
+        if (startY > minY) {
+            for (int y = minY; y < startY; y++) {
+                if (y - minY < 0 || y - minY >= edgeBuckets.size()) continue;
+                int eIdx = edgeBuckets[y - minY];
+                while (eIdx != -1) {
+                    int nextIdx = edgePool[eIdx].nextInBucket;
+                    edgePool[eIdx].xVal += edgePool[eIdx].slope * (startY - y);
+                    edgePool[eIdx].nextActive = activeHead;
+                    activeHead = eIdx;
+                    eIdx = nextIdx;
+                }
+            }
+            int* pCurrIdx = &activeHead;
+            while (*pCurrIdx != -1) {
+                if (edgePool[*pCurrIdx].yMax <= startY) {
+                    *pCurrIdx = edgePool[*pCurrIdx].nextActive;
+                } else {
+                    pCurrIdx = &(edgePool[*pCurrIdx].nextActive);
+                }
+            }
+        }
+
         for (int y = startY; y <= endY; y++) {
-            // Add watchdog reset inside the scanline loop for very large polygons
-            if (millis() - last_wdt_ms > 100) {
-                esp_task_wdt_reset();
-                yield();
-                last_wdt_ms = millis();
+            if ((y & 0x1F) == 0) { 
+                esp_task_wdt_reset(); 
+                vTaskDelay(pdMS_TO_TICKS(1)); 
             }
 
             if (y - minY >= 0 && y - minY < edgeBuckets.size()) {
@@ -979,14 +1002,13 @@ bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite 
     memcpy(&feature_count, data + 4, 2);
 
     map.fillSprite(TFT_WHITE); 
-    map.setClipRect(0, 0, 256, 256); // CRITICAL: Fix for "Memory Wrap" artifacts
+    map.setClipRect(0, 0, 256, 256); // Hardware clipping
 
     uint32_t last_wdt_ms = millis();
     
     // --- PASS 1: RENDER POLYGONS ---
     uint8_t* p = data + 22;
     for (uint16_t i = 0; i < feature_count; i++) {
-        // Add watchdog reset inside the feature loop
         if (millis() - last_wdt_ms > 100) {
             esp_task_wdt_reset();
             yield();
@@ -1001,36 +1023,34 @@ bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite 
         uint32_t feature_data_size = coordCount * 4;
         uint16_t ringCount = 0;
 
-        if (geomType == 3) { // If polygon, calculate size of ring data
+        if (geomType == 3) {
             uint8_t* ring_ptr = p + 12 + feature_data_size;
             if (ring_ptr + 2 <= data + fileSize) {
                 memcpy(&ringCount, ring_ptr, 2);
                 if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
                     feature_data_size += 2 + (ringCount * 2);
                 } else {
-                    ringCount = 0;
+                    ringCount = 0; // Invalid ring data, ignore it
                 }
             }
         }
         
         if (p + 12 + feature_data_size > data + fileSize) break;
 
-        if (geomType == 3 && coordCount >= 3) { // Is a valid Polygon
+        if (geomType == 3 && coordCount >= 3) {
             uint16_t colorRgb565;
             memcpy(&colorRgb565, p + 1, 2);
             int16_t* coords = (int16_t*)(p + 12);
             uint16_t* ringEnds = (ringCount > 0) ? (uint16_t*)(p + 12 + coordCount * 4 + 2) : nullptr;
 
-            int* px = (int*)ps_malloc(coordCount * sizeof(int));
-            if (!px) continue; // Not enough memory, skip feature
+            if (proj32X.capacity() < coordCount) proj32X.reserve(coordCount);
+            if (proj32Y.capacity() < coordCount) proj32Y.reserve(coordCount);
+            proj32X.resize(coordCount);
+            proj32Y.resize(coordCount);
 
-            int* py = (int*)ps_malloc(coordCount * sizeof(int));
-            if (!py) {
-                free(px); // Free px before skipping
-                continue;
-            }
+            int* px = proj32X.data();
+            int* py = proj32Y.data();
 
-            // Both buffers allocated successfully
             for (uint16_t j = 0; j < coordCount; j++) {
                 px[j] = (coords[j * 2] >> 4) + xOffset;
                 py[j] = (coords[j * 2 + 1] >> 4) + yOffset;
@@ -1048,15 +1068,12 @@ bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite 
                     map.drawLine(px[k], py[k], px[next], py[next], borderColor);
                 }
             }
-
-            free(px);
-            free(py);
         }
-        p += 12 + feature_data_size; // Advance pointer to the next feature
+        p += 12 + feature_data_size;
     }
 
     // --- PASS 2: RENDER LINES & POINTS ---
-    p = data + 22; // Reset pointer to start of features
+    p = data + 22;
     for (uint16_t i = 0; i < feature_count; i++) {
         if (millis() - last_wdt_ms > 100) { 
             esp_task_wdt_reset(); 
@@ -1109,7 +1126,7 @@ bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite 
              map.fillCircle(px, py, 3, colorRgb565);
         }
 
-        p += 12 + feature_data_size; // Advance pointer to the next feature
+        p += 12 + feature_data_size;
     }
 
     map.clearClipRect();
