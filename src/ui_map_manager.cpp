@@ -990,7 +990,7 @@ namespace UIMapManager {
         // Update info bar with current coordinates and station count
         if (map_info_label) {
             char info_text[64];
-            snprintf(info_text, sizeof(info_text), "%.4f, %.4f  Stn: %d",
+            snprintf(info_text, sizeof(info_text), "Lat: %.4f  Lon: %.4f  Stations: %d",
                      map_center_lat, map_center_lon, mapStationsCount);
             lv_label_set_text(map_info_label, info_text);
         }
@@ -1682,7 +1682,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         // Display coordinates and station count (updated in redraw_map_canvas)
         map_info_label = lv_label_create(info_bar);
         char coords_text[64];
-        snprintf(coords_text, sizeof(coords_text), "%.4f, %.4f  Stn: %d",
+        snprintf(coords_text, sizeof(coords_text), "Lat: %.4f  Lon: %.4f  Stations: %d",
                  map_center_lat, map_center_lon, mapStationsCount);
         lv_label_set_text(map_info_label, coords_text);
         lv_obj_set_style_text_color(map_info_label, lv_color_hex(0xaaaaaa), 0);

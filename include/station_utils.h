@@ -23,7 +23,7 @@
 
 // Structure for stations to display on map
 #define MAP_STATIONS_MAX 15
-#define TRACE_MAX_POINTS 20
+#define TRACE_MAX_POINTS 100
 
 struct TracePoint {
     float lat;
