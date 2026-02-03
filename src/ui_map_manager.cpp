@@ -83,7 +83,8 @@ namespace UIMapManager {
     static bool symbolCacheInitialized = false;
 
     // Forward declarations
-    void drawStationOnMap(lv_obj_t* canvas, int x, int y, const String& ssid, const char* aprsSymbol);
+    void draw_station_traces();
+    void update_station_objects();
 
     // Station hit zones for click detection (replaces LVGL buttons - no alloc/dealloc)
     struct StationHitZone {
@@ -94,17 +95,7 @@ namespace UIMapManager {
     static StationHitZone stationHitZones[MAP_STATIONS_MAX];
     static int stationHitZoneCount = 0;
 
-    // Station display objects pool (LVGL objects instead of canvas drawing)
-    struct StationDisplayObj {
-        lv_obj_t* container;  // Parent container for positioning
-        lv_obj_t* icon;       // lv_img for APRS symbol
-        lv_obj_t* icon_overlay; // Label for alphanumeric overlay (e.g., 'L', '1') or fallback char
-        lv_obj_t* label;      // lv_label for callsign
-        bool inUse;           // Currently displaying a station
-    };
-    #define STATION_POOL_SIZE (MAP_STATIONS_MAX + 1)  // +1 for own position at index 0
-    static StationDisplayObj stationDisplayPool[STATION_POOL_SIZE];
-    static bool stationDisplayPoolInitialized = false;
+    // No LVGL objects for stations — drawn directly on canvas (zero DRAM cost)
 
     // Periodic refresh timer for stations
     static lv_timer_t* map_refresh_timer = nullptr;
@@ -114,12 +105,24 @@ namespace UIMapManager {
     static lv_timer_t* pending_reload_timer = nullptr;
     static volatile bool redraw_in_progress = false;
 
-    // Timer callback for periodic map refresh (stations update)
+    // Persistent viewport sprite for NAV rendering (avoids PSRAM fragmentation)
+    static LGFX_Sprite* persistentViewportSprite = nullptr;
+
+    // Timer callback for periodic station refresh (NOT full map redraw)
     static void map_refresh_timer_cb(lv_timer_t* timer) {
         if (screen_map && lv_scr_act() == screen_map
             && !touch_dragging && !redraw_in_progress) {
-            Serial.println("[MAP] Periodic refresh (stations)");
-            redraw_map_canvas();
+            Serial.println("[MAP] Periodic refresh (stations only)");
+            // Only update station objects and traces — no NAV re-render
+            draw_station_traces();
+            update_station_objects();
+            if (map_info_label) {
+                char info_text[64];
+                snprintf(info_text, sizeof(info_text), "Lat: %.4f  Lon: %.4f  Stations: %d",
+                         map_center_lat, map_center_lon, mapStationsCount);
+                lv_label_set_text(map_info_label, info_text);
+            }
+            lv_obj_invalidate(map_container);
         }
     }
 
@@ -253,99 +256,9 @@ namespace UIMapManager {
     }
     // ============ END ASYNC TILE PRELOADING ============
 
-    // Clear station hit zones and hide display objects
+    // Clear station hit zones
     void cleanup_station_buttons() {
         stationHitZoneCount = 0;
-        // Hide all station display objects (keep pool intact for reuse)
-        if (stationDisplayPoolInitialized) {
-            for (int i = 0; i < STATION_POOL_SIZE; i++) {
-                if (stationDisplayPool[i].container) {
-                    lv_obj_add_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_HIDDEN);
-                }
-                stationDisplayPool[i].inUse = false;
-            }
-        }
-    }
-
-    // Destroy station pool - call only when leaving map screen
-    void destroy_station_pool() {
-        stationHitZoneCount = 0;
-        if (stationDisplayPoolInitialized) {
-            for (int i = 0; i < STATION_POOL_SIZE; i++) {
-                // Objects will be deleted with parent map_container
-                // Just null out pointers to avoid dangling references
-                stationDisplayPool[i].container = nullptr;
-                stationDisplayPool[i].icon = nullptr;
-                stationDisplayPool[i].icon_overlay = nullptr;
-                stationDisplayPool[i].label = nullptr;
-                stationDisplayPool[i].inUse = false;
-            }
-            stationDisplayPoolInitialized = false;
-            Serial.println("[MAP] Station display pool destroyed");
-        }
-    }
-
-    // Initialize station display pool (call once when map_container is created)
-    void initStationDisplayPool() {
-        if (stationDisplayPoolInitialized || !map_container) return;
-
-        for (int i = 0; i < STATION_POOL_SIZE; i++) {
-            // Container for positioning (transparent, no layout, click-through)
-            stationDisplayPool[i].container = lv_obj_create(map_container);
-            lv_obj_set_size(stationDisplayPool[i].container, 80, 40);
-            lv_obj_set_style_bg_opa(stationDisplayPool[i].container, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(stationDisplayPool[i].container, 0, 0);
-            lv_obj_set_style_pad_all(stationDisplayPool[i].container, 0, 0);
-            lv_obj_clear_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_add_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_EVENT_BUBBLE);
-
-            // Icon: lv_img for APRS symbol PNG (24x24)
-            stationDisplayPool[i].icon = lv_img_create(stationDisplayPool[i].container);
-            lv_obj_set_size(stationDisplayPool[i].icon, SYMBOL_SIZE, SYMBOL_SIZE);
-            lv_obj_align(stationDisplayPool[i].icon, LV_ALIGN_TOP_MID, 0, 0);
-            lv_obj_set_style_border_width(stationDisplayPool[i].icon, 0, 0);
-            lv_obj_set_style_outline_width(stationDisplayPool[i].icon, 0, 0);
-            lv_obj_set_style_shadow_width(stationDisplayPool[i].icon, 0, 0);
-            lv_obj_set_style_pad_all(stationDisplayPool[i].icon, 0, 0);
-            lv_obj_set_style_bg_opa(stationDisplayPool[i].icon, LV_OPA_TRANSP, 0);
-        
-            // Overlay label: displays letters inside the symbol icon (white, centered)
-            stationDisplayPool[i].icon_overlay = lv_label_create(stationDisplayPool[i].container);
-            lv_label_set_text(stationDisplayPool[i].icon_overlay, "");
-            lv_obj_set_style_text_font(stationDisplayPool[i].icon_overlay, &lv_font_montserrat_14, 0);
-            lv_obj_set_style_text_color(stationDisplayPool[i].icon_overlay, lv_color_hex(0xffffff), 0);
-            lv_obj_align(stationDisplayPool[i].icon_overlay, LV_ALIGN_TOP_MID, 0, 4);
-
-            // Label for callsign (centered under icon)
-            stationDisplayPool[i].label = lv_label_create(stationDisplayPool[i].container);
-            lv_obj_align(stationDisplayPool[i].label, LV_ALIGN_TOP_MID, 0, SYMBOL_SIZE + 2);
-            lv_obj_set_style_text_font(stationDisplayPool[i].label, &lv_font_montserrat_12, 0);
-            lv_obj_set_style_text_color(stationDisplayPool[i].label, lv_color_hex(0x332221), 0);
-            lv_obj_set_style_bg_color(stationDisplayPool[i].label, lv_color_hex(0x759a9e), 0);
-            lv_obj_set_style_bg_opa(stationDisplayPool[i].label, LV_OPA_30, 0);
-            lv_obj_set_style_pad_left(stationDisplayPool[i].label, 2, 0);
-            lv_obj_set_style_pad_right(stationDisplayPool[i].label, 2, 0);
-            lv_label_set_text(stationDisplayPool[i].label, "");
-
-            // Hide initially
-            lv_obj_add_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_HIDDEN);
-            stationDisplayPool[i].inUse = false;
-        }
-
-        stationDisplayPoolInitialized = true;
-        Serial.println("[MAP] Station display pool initialized (LVGL objects with lv_img)");
-    }
-
-    // Move all visible station display objects by delta (for pan sync)
-    void moveStationDisplayObjects(lv_coord_t dx, lv_coord_t dy) {
-        if (!stationDisplayPoolInitialized) return;
-        for (int i = 0; i < STATION_POOL_SIZE; i++) {
-            if (stationDisplayPool[i].inUse && stationDisplayPool[i].container) {
-                lv_coord_t x = lv_obj_get_x(stationDisplayPool[i].container);
-                lv_coord_t y = lv_obj_get_y(stationDisplayPool[i].container);
-                lv_obj_set_pos(stationDisplayPool[i].container, x + dx, y + dy);
-            }
-        }
     }
 
     // Helper: parse APRS symbol string and get cached symbol image descriptor
@@ -366,60 +279,78 @@ namespace UIMapManager {
         return getSymbolCacheEntry(table, symbol);
     }
 
-    // Helper: configure a pool entry with position, symbol image, and label
-    static void configurePoolEntry(int poolIdx, int screenX, int screenY,
-                                   const char* callsign, const char* aprsSymbol, int8_t stationIdx) {
-        if (poolIdx >= STATION_POOL_SIZE || !stationDisplayPool[poolIdx].container) return;
+    // Draw a single station directly on the canvas (symbol + overlay letter + callsign)
+    static void drawStationOnCanvas(int canvasX, int canvasY,
+                                    const char* callsign, const char* aprsSymbol,
+                                    int8_t stationIdx) {
+        if (!map_canvas) return;
 
-        StationDisplayObj& obj = stationDisplayPool[poolIdx];
+        // Symbol top-left position (centered on canvasX, canvasY)
+        int symX = canvasX - SYMBOL_SIZE / 2;
+        int symY = canvasY - SYMBOL_SIZE / 2;
 
-        // Position container (center 80px container on symbol position)
-        int objX = screenX - MAP_CANVAS_MARGIN - 40;
-        int objY = screenY - MAP_CANVAS_MARGIN - SYMBOL_SIZE / 2;
-        lv_obj_set_pos(obj.container, objX, objY);
-
-        // Try loading PNG symbol
+        // Draw APRS symbol PNG via lv_canvas_draw_img (handles alpha + byte order)
         CachedSymbol* cache = parseAndGetSymbol(aprsSymbol);
-
         if (cache && cache->valid) {
-            // PNG found — display it
-            lv_obj_clear_flag(obj.icon, LV_OBJ_FLAG_HIDDEN);
-            lv_img_set_src(obj.icon, &cache->img_dsc);
-            lv_obj_set_style_bg_opa(obj.icon, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_bg_opa(obj.icon_overlay, LV_OPA_TRANSP, 0);
-            lv_label_set_text(obj.icon_overlay, "");  // Clear overlay by default
+            lv_draw_img_dsc_t img_dsc;
+            lv_draw_img_dsc_init(&img_dsc);
+            img_dsc.opa = LV_OPA_COVER;
+            lv_canvas_draw_img(map_canvas, symX, symY, &cache->img_dsc, &img_dsc);
         } else {
-            // Fallback: hide icon (no valid PNG), show symbol char via overlay
-            lv_obj_add_flag(obj.icon, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_style_bg_color(obj.icon_overlay, lv_color_hex(0xff0000), 0);
-            lv_obj_set_style_bg_opa(obj.icon_overlay, LV_OPA_COVER, 0);
-            lv_obj_set_style_radius(obj.icon_overlay, LV_RADIUS_CIRCLE, 0);
-
-            if (aprsSymbol && strlen(aprsSymbol) >= 2) {
-                char symChar[2] = { aprsSymbol[1], '\0' };
-                lv_label_set_text(obj.icon_overlay, symChar);
-            }
+            // Fallback: red circle
+            lv_draw_rect_dsc_t rect_dsc;
+            lv_draw_rect_dsc_init(&rect_dsc);
+            rect_dsc.bg_color = lv_color_hex(0xff0000);
+            rect_dsc.bg_opa = LV_OPA_COVER;
+            rect_dsc.radius = LV_RADIUS_CIRCLE;
+            lv_canvas_draw_rect(map_canvas, canvasX - 8, canvasY - 8, 16, 16, &rect_dsc);
         }
 
-        // Alphanumeric overlay (e.g., "L", "1") — displayed on top of icon
+        // Overlay letter (e.g., "L", "1") centered on the icon
         if (aprsSymbol && strlen(aprsSymbol) >= 2) {
             char overlay = aprsSymbol[0];
             if (overlay != '/' && overlay != '\\' && overlay != ' ') {
                 char ovStr[2] = { overlay, '\0' };
-                lv_label_set_text(obj.icon_overlay, ovStr);
+                lv_draw_label_dsc_t ov_dsc;
+                lv_draw_label_dsc_init(&ov_dsc);
+                ov_dsc.color = lv_color_hex(0xffffff);
+                ov_dsc.font = &lv_font_montserrat_14;
+                lv_canvas_draw_text(map_canvas, canvasX - 5, symY + 4, 14, &ov_dsc, ovStr);
             }
         }
 
-        lv_obj_set_style_bg_color(obj.label, lv_color_hex(0x888888), 0);
+        // Callsign text with semi-transparent background below symbol
+        if (callsign) {
+            int textY = canvasY + SYMBOL_SIZE / 2 + 2;
+            if (textY >= 0 && textY < MAP_CANVAS_HEIGHT) {
+                // Estimate text width (~7px per char at 12px font) for centering
+                int textLen = strlen(callsign);
+                int textW = textLen * 7 + 6;
+                int textH = 16;
+                int textX = canvasX - textW / 2;
+                if (textX < 0) textX = 0;
 
-        lv_label_set_text(obj.label, callsign);
-        lv_obj_clear_flag(obj.container, LV_OBJ_FLAG_HIDDEN);
-        obj.inUse = true;
+                // Background rectangle (gray, 30% opacity)
+                lv_draw_rect_dsc_t bg_dsc;
+                lv_draw_rect_dsc_init(&bg_dsc);
+                bg_dsc.bg_color = lv_color_hex(0x888888);
+                bg_dsc.bg_opa = LV_OPA_30;
+                bg_dsc.radius = 2;
+                lv_canvas_draw_rect(map_canvas, textX, textY, textW, textH, &bg_dsc);
 
-        // Store hit zone (only for received stations, not own position)
+                // Text on top
+                lv_draw_label_dsc_t label_dsc;
+                lv_draw_label_dsc_init(&label_dsc);
+                label_dsc.color = lv_color_hex(0x332221);
+                label_dsc.font = &lv_font_montserrat_12;
+                lv_canvas_draw_text(map_canvas, textX + 2, textY + 1, textW, &label_dsc, callsign);
+            }
+        }
+
+        // Store hit zone for tap detection
         if (stationIdx >= 0 && stationHitZoneCount < MAP_STATIONS_MAX) {
-            stationHitZones[stationHitZoneCount].x = screenX - MAP_CANVAS_MARGIN;
-            stationHitZones[stationHitZoneCount].y = screenY - MAP_CANVAS_MARGIN + 12;
+            stationHitZones[stationHitZoneCount].x = canvasX - MAP_CANVAS_MARGIN;
+            stationHitZones[stationHitZoneCount].y = canvasY - MAP_CANVAS_MARGIN + 12;
             stationHitZones[stationHitZoneCount].w = 80;
             stationHitZones[stationHitZoneCount].h = 50;
             stationHitZones[stationHitZoneCount].stationIdx = stationIdx;
@@ -427,60 +358,39 @@ namespace UIMapManager {
         }
     }
 
-    // Update all station LVGL objects (own position + received stations)
+    // Draw all stations directly on the canvas (zero LVGL objects, all PSRAM)
     void update_station_objects() {
-        if (!map_container) return;
-
-        // Init pool if needed
-        if (!stationDisplayPoolInitialized) {
-            initStationDisplayPool();
-        }
+        if (!map_canvas || !map_canvas_buf) return;
 
         stationHitZoneCount = 0;
-        int displayIdx = 0;
 
-        // Index 0: own position
+        // Own position
         if (gps.location.isValid()) {
             int myX, myY;
             latLonToPixel(gps.location.lat(), gps.location.lng(),
                           map_center_lat, map_center_lon, map_current_zoom, &myX, &myY);
             if (myX >= 0 && myX < MAP_CANVAS_WIDTH && myY >= 0 && myY < MAP_CANVAS_HEIGHT) {
                 Beacon* currentBeacon = &Config.beacons[myBeaconsIndex];
-                char fullSymbol[4]; // Overlay (1) + Symbol (1) + Null
-                snprintf(fullSymbol, sizeof(fullSymbol), "%s%s", currentBeacon->overlay.c_str(), currentBeacon->symbol.c_str());
-                configurePoolEntry(displayIdx, myX, myY,
-                                   currentBeacon->callsign.c_str(), fullSymbol, -1);
-                displayIdx++;
+                char fullSymbol[4];
+                snprintf(fullSymbol, sizeof(fullSymbol), "%s%s",
+                         currentBeacon->overlay.c_str(), currentBeacon->symbol.c_str());
+                drawStationOnCanvas(myX, myY, currentBeacon->callsign.c_str(), fullSymbol, -1);
             }
         }
 
         // Received stations
         STATION_Utils::cleanOldMapStations();
-        int validCount = 0, visibleCount = 0;
-        for (int i = 0; i < MAP_STATIONS_MAX && displayIdx < STATION_POOL_SIZE; i++) {
+        for (int i = 0; i < MAP_STATIONS_MAX; i++) {
             MapStation* station = STATION_Utils::getMapStation(i);
             if (station && station->valid && station->latitude != 0.0f && station->longitude != 0.0f) {
-                validCount++;
                 int stX, stY;
                 latLonToPixel(station->latitude, station->longitude,
                               map_center_lat, map_center_lon, map_current_zoom, &stX, &stY);
-            
                 if (stX >= 0 && stX < MAP_CANVAS_WIDTH && stY >= 0 && stY < MAP_CANVAS_HEIGHT) {
-                    visibleCount++;
-                    // station->symbol already contains full APRS symbol (overlay+symbol, e.g. "/[" or "\>")
-                    configurePoolEntry(displayIdx, stX, stY,
-                                       station->callsign.c_str(), station->symbol.c_str(), i);
-                    displayIdx++;
+                    drawStationOnCanvas(stX, stY, station->callsign.c_str(),
+                                        station->symbol.c_str(), i);
                 }
             }
-        }
-
-        // Hide unused objects
-        for (int i = displayIdx; i < STATION_POOL_SIZE; i++) {
-            if (stationDisplayPool[i].container) {
-                lv_obj_add_flag(stationDisplayPool[i].container, LV_OBJ_FLAG_HIDDEN);
-            }
-            stationDisplayPool[i].inUse = false;
         }
     }
 
@@ -797,8 +707,7 @@ namespace UIMapManager {
     void btn_map_back_clicked(lv_event_t* e) {
         Serial.println("[LVGL] MAP BACK button pressed");
         MapEngine::stopRenderTask();
-        destroy_station_pool();
-        cleanup_station_buttons();  // Clean up station buttons when leaving map
+        cleanup_station_buttons();
         map_follow_gps = true;  // Reset to follow GPS when leaving map
         // Stop periodic refresh timer
         if (map_refresh_timer) {
@@ -807,9 +716,15 @@ namespace UIMapManager {
         }
         // Stop tile preload task
         stopTilePreloadTask();
+        // Keep persistent viewport sprite alive (never free — avoids PSRAM fragmentation)
+        // See CLAUDE.md: "Sprites persistants — allouer une seule fois, ne jamais libérer/recréer"
         // Return CPU to 80 MHz for power saving
         setCpuFrequencyMhz(80);
         Serial.printf("[MAP] CPU reduced to %d MHz\n", getCpuFrequencyMhz());
+        Serial.printf("[MEM] After MAP exit - DRAM: %u  PSRAM: %u  Largest DRAM block: %u\n",
+                      heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                      heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
         // Return to main dashboard screen
         LVGL_UI::return_to_dashboard();
     }
@@ -934,22 +849,30 @@ namespace UIMapManager {
                 // can take 10-30s with thousands of features (IceNav doesn't subscribe either)
                 esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
 
-                LGFX_Sprite viewportSprite(&tft);
-                viewportSprite.setPsram(true);
-                if (viewportSprite.createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) != nullptr) {
+                // Allocate persistent sprite once to avoid PSRAM fragmentation
+                if (!persistentViewportSprite) {
+                    persistentViewportSprite = new LGFX_Sprite(&tft);
+                    persistentViewportSprite->setPsram(true);
+                    if (persistentViewportSprite->createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) == nullptr) {
+                        Serial.println("[MAP] Failed to create persistent viewport sprite");
+                        delete persistentViewportSprite;
+                        persistentViewportSprite = nullptr;
+                    }
+                }
+
+                if (persistentViewportSprite) {
                     hasTiles = MapEngine::renderNavViewport(
                         map_center_lat, map_center_lon, (uint8_t)map_current_zoom,
-                        viewportSprite, map_current_region.c_str());
+                        *persistentViewportSprite, map_current_region.c_str());
 
                     if (hasTiles) {
-                        uint16_t* src = (uint16_t*)viewportSprite.getBuffer();
+                        uint16_t* src = (uint16_t*)persistentViewportSprite->getBuffer();
                         if (src && map_canvas_buf) {
                             memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
                         }
                     }
-                    viewportSprite.deleteSprite();
                 } else {
-                    Serial.println("[MAP] Failed to create viewport sprite for NAV rendering");
+                    Serial.println("[MAP] No viewport sprite available for NAV rendering");
                 }
 
                 // Re-subscribe loopTask to WDT
@@ -1176,10 +1099,6 @@ namespace UIMapManager {
                 {
                     // Normal panning within margin
                     lv_obj_set_pos(map_canvas, new_x, new_y);
-                    // Move station objects by incremental delta
-                    lv_coord_t delta_dx = dx - last_pan_dx;
-                    lv_coord_t delta_dy = dy - last_pan_dy;
-                    moveStationDisplayObjects(delta_dx, delta_dy);
                     last_pan_dx = dx;
                     last_pan_dy = dy;
                 }
@@ -1491,12 +1410,10 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         lv_obj_add_event_cb(map_container, map_touch_event_cb, LV_EVENT_RELEASED, NULL);
 
         // Create canvas for map drawing
-        // Free old buffer if it exists (memory leak prevention)
-        if (map_canvas_buf) {
-            heap_caps_free(map_canvas_buf);
-            map_canvas_buf = nullptr;
+        // Allocate buffer once and keep it persistent (avoids PSRAM fragmentation)
+        if (!map_canvas_buf) {
+            map_canvas_buf = (lv_color_t*)heap_caps_malloc(MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
         }
-        map_canvas_buf = (lv_color_t*)heap_caps_malloc(MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
         if (map_canvas_buf) {
             map_canvas = lv_canvas_create(map_container);
             lv_obj_clear_flag(map_canvas, LV_OBJ_FLAG_CLICKABLE);
@@ -1556,19 +1473,27 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                     // Temporarily unsubscribe loopTask from WDT — rendering can take 10-30s
                     esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
 
-                    LGFX_Sprite viewportSprite(&tft);
-                    viewportSprite.setPsram(true);
-                    if (viewportSprite.createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) != nullptr) {
+                    // Allocate persistent sprite once to avoid PSRAM fragmentation
+                    if (!persistentViewportSprite) {
+                        persistentViewportSprite = new LGFX_Sprite(&tft);
+                        persistentViewportSprite->setPsram(true);
+                        if (persistentViewportSprite->createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) == nullptr) {
+                            Serial.println("[MAP] Failed to create persistent viewport sprite");
+                            delete persistentViewportSprite;
+                            persistentViewportSprite = nullptr;
+                        }
+                    }
+
+                    if (persistentViewportSprite) {
                         hasTiles = MapEngine::renderNavViewport(
                             map_center_lat, map_center_lon, (uint8_t)map_current_zoom,
-                            viewportSprite, map_current_region.c_str());
+                            *persistentViewportSprite, map_current_region.c_str());
                         if (hasTiles && map_canvas_buf) {
-                            uint16_t* src = (uint16_t*)viewportSprite.getBuffer();
+                            uint16_t* src = (uint16_t*)persistentViewportSprite->getBuffer();
                             if (src) {
                                 memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
                             }
                         }
-                        viewportSprite.deleteSprite();
                     }
 
                     esp_task_wdt_add(xTaskGetCurrentTaskHandle());
