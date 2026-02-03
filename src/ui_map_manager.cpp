@@ -292,6 +292,14 @@ namespace UIMapManager {
         // Draw APRS symbol PNG via lv_canvas_draw_img (handles alpha + byte order)
         CachedSymbol* cache = parseAndGetSymbol(aprsSymbol);
         if (cache && cache->valid) {
+            // DEBUG: dump first few pixels of cached symbol
+            uint16_t* px = (uint16_t*)cache->img_dsc.data;
+            uint8_t* alpha = (uint8_t*)(cache->img_dsc.data + SYMBOL_SIZE * SYMBOL_SIZE * sizeof(uint16_t));
+            Serial.printf("[SYMBOL-DBG] %s at %d,%d  cf=%d  size=%ux%u  px[0]=0x%04X a[0]=%u px[12]=0x%04X a[12]=%u\n",
+                          callsign ? callsign : "?", symX, symY,
+                          cache->img_dsc.header.cf,
+                          cache->img_dsc.header.w, cache->img_dsc.header.h,
+                          px[0], alpha[0], px[12], alpha[12]);
             lv_draw_img_dsc_t img_dsc;
             lv_draw_img_dsc_init(&img_dsc);
             img_dsc.opa = LV_OPA_COVER;
@@ -330,11 +338,11 @@ namespace UIMapManager {
                 int textX = canvasX - textW / 2;
                 if (textX < 0) textX = 0;
 
-                // Background rectangle (gray, 30% opacity)
+                // Background rectangle (light gray, fully opaque to avoid accumulation on refresh)
                 lv_draw_rect_dsc_t bg_dsc;
                 lv_draw_rect_dsc_init(&bg_dsc);
-                bg_dsc.bg_color = lv_color_hex(0x888888);
-                bg_dsc.bg_opa = LV_OPA_30;
+                bg_dsc.bg_color = lv_color_hex(0xDDDDDD);
+                bg_dsc.bg_opa = LV_OPA_COVER;
                 bg_dsc.radius = 2;
                 lv_canvas_draw_rect(map_canvas, textX, textY, textW, textH, &bg_dsc);
 
@@ -459,27 +467,93 @@ namespace UIMapManager {
         const size_t alphaOffset  = SYMBOL_SIZE * SYMBOL_SIZE * sizeof(uint16_t)
                                   + pDraw->y * SYMBOL_SIZE;   // In bytes
 
-        // Extract alpha BEFORE getLineAsRGB565 (which overwrites pPixels)
         uint8_t* alphaRow = symbolCombinedBuffer + alphaOffset;
-        if (pDraw->iHasAlpha) {
-            for (int x = 0; x < w; x++) {
-                alphaRow[x] = pDraw->pPixels[x * 4 + 3];  // RGBA -> A
+        uint16_t* rgb565Row = (uint16_t*)symbolCombinedBuffer + rgb565Offset;
+
+        // DEBUG: log PNGdec decode mode on row 12
+        if (pDraw->y == 12) {
+            Serial.printf("[PNG-DEBUG] bpp=%d alpha=%d palette=%d w=%d\n",
+                          pDraw->iBpp, pDraw->iHasAlpha, pDraw->pPalette ? 1 : 0, pDraw->iWidth);
+            if (pDraw->pPalette) {
+                uint8_t* pal = (uint8_t*)pDraw->pPalette;
+                Serial.printf("[PALETTE] RGB888: [0]=%02X%02X%02X [1]=%02X%02X%02X [2]=%02X%02X%02X [3]=%02X%02X%02X\n",
+                              pal[0], pal[1], pal[2], pal[3], pal[4], pal[5],
+                              pal[6], pal[7], pal[8], pal[9], pal[10], pal[11]);
+                Serial.printf("[PALETTE] Alpha@768: [0]=%u [1]=%u [2]=%u [3]=%u\n",
+                              pal[768], pal[769], pal[770], pal[771]);
             }
-            for (int x = w; x < SYMBOL_SIZE; x++) {
-                alphaRow[x] = 0;  // Transparent padding
-            }
-        } else {
-            memset(alphaRow, 255, SYMBOL_SIZE);  // Fully opaque
         }
 
-        // Decode line as RGB565 with black background (0x000000)
-        // Must match LVGL byte order: big-endian when LV_COLOR_16_SWAP=1
-        uint16_t* rgb565Row = (uint16_t*)symbolCombinedBuffer + rgb565Offset;
+        // Handle palette (type 3) vs truecolor+alpha (type 6) vs others
+        if (pDraw->iPixelType == PNG_PIXEL_INDEXED) {
+            // Palette mode: convert palette indices to RGBA
+            uint8_t* indices = (uint8_t*)pDraw->pPixels;
+            uint8_t* palette = (uint8_t*)pDraw->pPalette;
+
+            for (int x = 0; x < w; x++) {
+                uint8_t idx = indices[x];
+                uint8_t r = palette[idx * 3 + 0];
+                uint8_t g = palette[idx * 3 + 1];
+                uint8_t b = palette[idx * 3 + 2];
+                uint8_t a = pDraw->iHasAlpha ? palette[768 + idx] : 255;
+
+                // Binarize alpha for sharp edges on 16-bit canvas
+                a = (a > 50) ? 255 : 0;  // 50/255 ≈ 20%
+
+                // Convert RGB888 to RGB565
+                uint16_t rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 #if LV_COLOR_16_SWAP
-        symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_BIG_ENDIAN, 0x00000000);
+                rgb565Row[x] = (rgb565 >> 8) | (rgb565 << 8);
 #else
-        symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
+                rgb565Row[x] = rgb565;
 #endif
+                alphaRow[x] = a;
+            }
+
+            // DEBUG: log converted RGB565 values on row 12
+            if (pDraw->y == 12) {
+                Serial.printf("[RGB565-OUT] px[0..3]: %04X %04X %04X %04X  alpha[0..3]: %02X %02X %02X %02X\n",
+                              rgb565Row[0], rgb565Row[1], rgb565Row[2], rgb565Row[3],
+                              alphaRow[0], alphaRow[1], alphaRow[2], alphaRow[3]);
+            }
+
+            for (int x = w; x < SYMBOL_SIZE; x++) {
+                rgb565Row[x] = 0;
+                alphaRow[x] = 0;
+            }
+        } else {
+            // Direct RGBA mode
+            if (pDraw->iHasAlpha) {
+                for (int x = 0; x < w; x++) {
+                    uint8_t a = pDraw->pPixels[x * 4 + 3];
+                    // Binarize alpha (same threshold as palette mode)
+                    alphaRow[x] = (a > 50) ? 255 : 0;
+                }
+                for (int x = w; x < SYMBOL_SIZE; x++) {
+                    alphaRow[x] = 0;
+                }
+            } else {
+                memset(alphaRow, 255, SYMBOL_SIZE);
+            }
+
+#if LV_COLOR_16_SWAP
+            symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_BIG_ENDIAN, 0x00000000);
+#else
+            symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
+#endif
+
+            // DEBUG: log raw RGBA pixels and RGB565 output on row 12
+            if (pDraw->y == 12) {
+                uint8_t* raw = pDraw->pPixels;
+                Serial.printf("[RAW-RGBA] px[0]=%02X%02X%02X/%02X px[12]=%02X%02X%02X/%02X pitch=%d\n",
+                              raw[0], raw[1], raw[2], raw[3],
+                              raw[48], raw[49], raw[50], raw[51],
+                              pDraw->iPitch);
+                Serial.printf("[RGB565-DIRECT] px[0..3]: %04X %04X %04X %04X  alpha[0..3]: %02X %02X %02X %02X\n",
+                              rgb565Row[0], rgb565Row[1], rgb565Row[2], rgb565Row[3],
+                              alphaRow[0], alphaRow[1], alphaRow[2], alphaRow[3]);
+            }
+        }
 
         return 1;
     }
@@ -514,6 +588,9 @@ namespace UIMapManager {
         // Decode PNG
         int rc = symbolPNG.open(path.c_str(), pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngSymbolCallback);
         if (rc == PNG_SUCCESS && pngFileOpened) {
+            Serial.printf("[PNG-OPEN] %s pixelType=%d bpp=%d size=%dx%d\n",
+                          path.c_str(), symbolPNG.getPixelType(), symbolPNG.getBpp(),
+                          symbolPNG.getWidth(), symbolPNG.getHeight());
             rc = symbolPNG.decode(nullptr, 0);
             symbolPNG.close();
 
@@ -976,46 +1053,6 @@ namespace UIMapManager {
             Serial.printf("[MAP] Zoom out: %d\n", map_current_zoom);
             redraw_map_canvas();
         }
-    }
-
-    // Calculate pan step based on zoom level (pixels to degrees)
-    float getMapPanStep() {
-        int n = 1 << map_current_zoom;
-        // Move approximately 50 pixels at current zoom value
-        return 50.0f / MAP_TILE_SIZE / n * 360.0f;
-    }
-
-    // Map panning handlers
-    void btn_map_up_clicked(lv_event_t* e) {
-        map_follow_gps = false;
-        float step = getMapPanStep();
-        map_center_lat += step;
-        Serial.printf("[MAP] Pan up: %.4f, %.4f\n", map_center_lat, map_center_lon);
-        schedule_map_reload();
-    }
-
-    void btn_map_down_clicked(lv_event_t* e) {
-        map_follow_gps = false;
-        float step = getMapPanStep();
-        map_center_lat -= step;
-        Serial.printf("[MAP] Pan down: %.4f, %.4f\n", map_center_lat, map_center_lon);
-        schedule_map_reload();
-    }
-
-    void btn_map_left_clicked(lv_event_t* e) {
-        map_follow_gps = false;
-        float step = getMapPanStep();
-        map_center_lon -= step;
-        Serial.printf("[MAP] Pan left: %.4f, %.4f\n", map_center_lat, map_center_lon);
-        schedule_map_reload();
-    }
-
-    void btn_map_right_clicked(lv_event_t* e) {
-        map_follow_gps = false;
-        float step = getMapPanStep();
-        map_center_lon += step;
-        Serial.printf("[MAP] Pan right: %.4f, %.4f\n", map_center_lat, map_center_lon);
-        schedule_map_reload();
     }
 
     // Touch pan handler for finger drag on map
@@ -1542,58 +1579,6 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
             // Resume async preloading
             mainThreadLoading = false;
         }
-
-        // Arrow buttons for panning (touch pan still unstable)
-#if 1
-        int arrow_size = 28;
-        int arrow_x = 5;
-        int arrow_y = MAP_VISIBLE_HEIGHT - 105;  // Above info bar
-        lv_color_t arrow_color = lv_color_hex(0x444444);
-
-        // Up button
-        lv_obj_t* btn_up = lv_btn_create(map_container);
-        lv_obj_set_size(btn_up, arrow_size, arrow_size);
-        lv_obj_set_pos(btn_up, arrow_x + arrow_size, arrow_y);
-        lv_obj_set_style_bg_color(btn_up, arrow_color, 0);
-        lv_obj_set_style_bg_opa(btn_up, 90, 0);  // 45% opacity
-        lv_obj_add_event_cb(btn_up, btn_map_up_clicked, LV_EVENT_CLICKED, NULL);
-        lv_obj_t* lbl_up = lv_label_create(btn_up);
-        lv_label_set_text(lbl_up, LV_SYMBOL_UP);
-        lv_obj_center(lbl_up);
-
-        // Down button
-        lv_obj_t* btn_down = lv_btn_create(map_container);
-        lv_obj_set_size(btn_down, arrow_size, arrow_size);
-        lv_obj_set_pos(btn_down, arrow_x + arrow_size, arrow_y + arrow_size * 2);
-        lv_obj_set_style_bg_color(btn_down, arrow_color, 0);
-        lv_obj_set_style_bg_opa(btn_down, 90, 0);  // 45% opacity
-        lv_obj_add_event_cb(btn_down, btn_map_down_clicked, LV_EVENT_CLICKED, NULL);
-        lv_obj_t* lbl_down = lv_label_create(btn_down);
-        lv_label_set_text(lbl_down, LV_SYMBOL_DOWN);
-        lv_obj_center(lbl_down);
-
-        // Left button
-        lv_obj_t* btn_left = lv_btn_create(map_container);
-        lv_obj_set_size(btn_left, arrow_size, arrow_size);
-        lv_obj_set_pos(btn_left, arrow_x, arrow_y + arrow_size);
-        lv_obj_set_style_bg_color(btn_left, arrow_color, 0);
-        lv_obj_set_style_bg_opa(btn_left, 90, 0);  // 45% opacity
-        lv_obj_add_event_cb(btn_left, btn_map_left_clicked, LV_EVENT_CLICKED, NULL);
-        lv_obj_t* lbl_left = lv_label_create(btn_left);
-        lv_label_set_text(lbl_left, LV_SYMBOL_LEFT);
-        lv_obj_center(lbl_left);
-
-        // Right button
-        lv_obj_t* btn_right = lv_btn_create(map_container);
-        lv_obj_set_size(btn_right, arrow_size, arrow_size);
-        lv_obj_set_pos(btn_right, arrow_x + arrow_size * 2, arrow_y + arrow_size);
-        lv_obj_set_style_bg_color(btn_right, arrow_color, 0);
-        lv_obj_set_style_bg_opa(btn_right, 90, 0);  // 45% opacity
-        lv_obj_add_event_cb(btn_right, btn_map_right_clicked, LV_EVENT_CLICKED, NULL);
-        lv_obj_t* lbl_right = lv_label_create(btn_right);
-        lv_label_set_text(lbl_right, LV_SYMBOL_RIGHT);
-        lv_obj_center(lbl_right);
-#endif
 
         // Info bar at bottom
         lv_obj_t* info_bar = lv_obj_create(screen_map);

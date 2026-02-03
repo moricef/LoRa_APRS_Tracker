@@ -599,7 +599,7 @@ namespace MapEngine {
         int minDy = -(centerTileOriginY / MAP_TILE_SIZE + 1);
         int maxDy = (viewportH - centerTileOriginY + MAP_TILE_SIZE - 1) / MAP_TILE_SIZE;
 
-        map.fillSprite(TFT_WHITE);
+        map.fillSprite(map.color565(0xF2, 0xEF, 0xE9));  // OSM-style beige background
 
         // --- Load all tiles and dispatch features (IceNav-v3 pattern: maps.cpp:1498-1543) ---
         std::vector<uint8_t*> tileBuffers;
@@ -907,7 +907,7 @@ namespace MapEngine {
         uint16_t feature_count;
         memcpy(&feature_count, data + 4, 2);
 
-        map.fillSprite(TFT_WHITE);
+        map.fillSprite(map.color565(0xF2, 0xEF, 0xE9));  // OSM-style beige background
 
         // --- Dispatch features to 16 priority layers (IceNav-v3 pattern) ---
         for (int i = 0; i < 16; i++) globalLayers[i].clear();

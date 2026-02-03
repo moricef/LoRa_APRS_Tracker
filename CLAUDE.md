@@ -75,3 +75,49 @@ Polices Montserrat disponibles (à activer dans lv_conf.h si nécessaire) :
 | `lvgl_ui.cpp` | 730 | Init LVGL + navigation |
 
 **Total : ~7300 lignes** réparties en 6 modules.
+
+## Branche courante : feature/station-gps-traces
+
+### État des modifications en cours (session du 2026-02-03)
+
+Les stations sur la carte ont été migrées du pool d'objets LVGL (16 entrées × 4 objets = 64 objets LVGL, ~29KB DRAM) vers un **dessin direct sur canvas** via `lv_canvas_draw_img`, `lv_canvas_draw_rect`, `lv_canvas_draw_text`. Zéro objet LVGL, zéro DRAM pour les stations.
+
+### Bug à corriger : Sprite viewport non persistant → fragmentation PSRAM (CRITIQUE)
+
+**Fichier:** `src/ui_map_manager.cpp`, variable `persistentViewportSprite` (ligne ~109)
+
+**Problème:** Le sprite viewport (600×520, ~624KB PSRAM) est libéré à chaque sortie de carte (`btn_map_back_clicked`, lignes ~720-723) et recréé à chaque entrée. Après quelques cycles entrée/sortie, `createSprite()` échoue malgré suffisamment de PSRAM libre total (fragmentation — pas de bloc contigu de 624KB).
+
+**Log symptôme:** `[MAP] Failed to create persistent viewport sprite`
+
+**Fix à appliquer:** Suivre le pattern Jordi (IceNav-v3) — allouer le sprite **une seule fois** (au premier accès à la carte) et ne jamais le libérer. Supprimer le bloc de libération dans `btn_map_back_clicked` (lignes ~720-723). Le sprite reste en PSRAM entre les sessions carte.
+
+**Référence Jordi:** `IceNav-v3/maps/src/maps.cpp` lignes 299-316 — `mapTempSprite`, `mapSprite`, `preloadSprite` alloués dans `initMap()`, jamais libérés.
+
+### Principes de conception mémoire (à respecter impérativement)
+
+Tirés de l'analyse du code IceNav-v3 de Jordi :
+
+1. **Sprites persistants** — allouer une seule fois, ne jamais libérer/recréer. Évite la fragmentation PSRAM.
+2. **Tout en PSRAM** — les gros buffers (sprites, canvas, cache tuiles) en PSRAM. La DRAM (~53KB libre au boot) est réservée à l'OS, WiFi, et petites structures.
+3. **Allocation/libération dans le même scope** — les buffers temporaires (données NAV) doivent être alloués et libérés dans la même fonction.
+4. **Pas d'objets LVGL pour les éléments de carte** — dessin direct sur sprite/canvas (`fillCircle`, `pushImage`, `lv_canvas_draw_img`, etc.).
+5. **Culling** — bounds check avant chaque dessin pour ne pas rendre hors écran.
+
+### LVGL API — champs vérifiés
+
+**`lv_draw_label_dsc_t`** (fichier `.pio/libdeps/ttgo_t_deck_plus_433/lvgl/src/draw/lv_draw_label.h`) :
+- Champs existants : `font`, `color`, `opa`, `sel_start`, `sel_end`, `sel_color`, `sel_bg_color`, `line_space`, `letter_space`, `ofs_x`, `ofs_y`, `bidi_dir`, `align`, `flag`, `decor`, `blend_mode`
+- **N'EXISTE PAS** : `bk_color`, `bk_opa` — ne jamais utiliser ces champs
+
+Pour un fond derrière du texte sur canvas : utiliser `lv_canvas_draw_rect()` puis `lv_canvas_draw_text()` par-dessus.
+
+### Logs mémoire
+
+- `src/LoRa_APRS_Tracker.cpp` : log mémoire toutes les 10 secondes (DRAM, PSRAM, largest DRAM block)
+- `src/ui_dashboard.cpp` : log avant entrée dans la carte
+- `src/ui_map_manager.cpp` : log après sortie de la carte
+
+### Branche feature/core0-async-rendering
+
+Travail préservé sur le rendu NAV asynchrone Core 0 (commit `7548079`). Voir `DEBUG_ASYNC_NAV.md` à la racine pour le plan de debug. Ne pas fusionner — contient des bugs non résolus (tuiles NAV queueées mais non traitées par Core 0).

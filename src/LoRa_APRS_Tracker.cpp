@@ -427,8 +427,16 @@ void loop() {
     // Reset watchdog timer
     esp_task_wdt_reset();
 
-    // Periodic SD log every 5 minutes to confirm system is running
+    // Periodic memory monitoring (every 60s serial, every 5 min SD log)
+    static uint32_t lastMemLog = 0;
     static uint32_t lastHeartbeat = 0;
+    if (millis() - lastMemLog >= 10000) {  // 10 seconds
+        lastMemLog = millis();
+        Serial.printf("[MEM] DRAM: %u  PSRAM: %u  Largest DRAM: %u\n",
+                      heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                      heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    }
     if (millis() - lastHeartbeat >= 300000) {  // 5 minutes
         lastHeartbeat = millis();
         SD_Logger::logf(SD_Logger::INFO, "LOOP", "Heartbeat - Free heap: %u KB", ESP.getFreeHeap() / 1024);

@@ -13,6 +13,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include "esp_heap_caps.h"
 #include <lvgl.h>
 
 #include "battery_utils.h"
@@ -150,7 +151,10 @@ static void btn_msg_clicked(lv_event_t *e) {
 
 static void btn_map_clicked(lv_event_t *e) {
     Serial.println("[LVGL] MAP button pressed");
-    Serial.printf("[LVGL-DEBUG] Free heap before MAP: %u bytes\n", ESP.getFreeHeap());
+    Serial.printf("[MEM] Before MAP - DRAM: %u  PSRAM: %u  Largest DRAM block: %u\n",
+                  heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                  heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                  heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
     UIPopups::closeAll();
     Serial.println("[LVGL-DEBUG] Popups closed");
 
