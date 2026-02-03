@@ -47,7 +47,7 @@ struct NavTileHeader {
 // Followed by: coordCount × (int16 x, int16 y) coordinate pairs
 // For polygons: followed by uint8 ringCount + ringCount × uint16 ringEnd
 struct NavFeatureHeader {
-    uint8_t geomType;       // 1=Point, 2=Line, 3=Polygon
+    uint8_t geomType;       // 1=Point, 2=Line, 3=Polygon, 4=Text
     uint16_t colorRgb565;
     uint8_t zoomPriority;   // High nibble = minZoom, low nibble = priority
     uint8_t widthPixels;

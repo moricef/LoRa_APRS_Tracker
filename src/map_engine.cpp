@@ -844,6 +844,23 @@ namespace MapEngine {
                             map.fillCircle(px, py, 3, colorRgb565);
                         break;
                     }
+                    case 4: { // Text label (GEOM_TEXT)
+                        uint8_t fontSize = fp[4];
+                        int16_t* coords = (int16_t*)(fp + 12);
+                        int px = (coords[0] >> 4) + ref.tileOffsetX;
+                        int py = (coords[1] >> 4) + ref.tileOffsetY;
+                        uint8_t textLen = *(fp + 12 + 4);
+                        if (textLen > 0 && textLen < 128) {
+                            char textBuf[128];
+                            memcpy(textBuf, fp + 12 + 5, textLen);
+                            textBuf[textLen] = '\0';
+                            int textSize = (fontSize >= 2) ? 3 : (fontSize == 1) ? 2 : 1;
+                            map.setTextSize(textSize);
+                            map.setTextColor(colorRgb565);
+                            map.drawString(textBuf, px, py);
+                        }
+                        break;
+                    }
                 }
             }
             globalLayers[pri].clear();
@@ -1086,6 +1103,23 @@ namespace MapEngine {
                         int py = (coords[1] >> 4) + yOffset;
                         if (px >= 0 && px < MAP_TILE_SIZE && py >= 0 && py < MAP_TILE_SIZE)
                             map.fillCircle(px, py, 3, colorRgb565);
+                        break;
+                    }
+                    case 4: { // Text label (GEOM_TEXT)
+                        uint8_t fontSize = fp[4];
+                        int16_t* coords = (int16_t*)(fp + 12);
+                        int px = (coords[0] >> 4) + xOffset;
+                        int py = (coords[1] >> 4) + yOffset;
+                        uint8_t textLen = *(fp + 12 + 4);
+                        if (textLen > 0 && textLen < 128) {
+                            char textBuf[128];
+                            memcpy(textBuf, fp + 12 + 5, textLen);
+                            textBuf[textLen] = '\0';
+                            int textSize = (fontSize >= 2) ? 3 : (fontSize == 1) ? 2 : 1;
+                            map.setTextSize(textSize);
+                            map.setTextColor(colorRgb565);
+                            map.drawString(textBuf, px, py);
+                        }
                         break;
                     }
                 }
