@@ -63,6 +63,7 @@ NimBLEAddress bleConnectedPeerAddr;  // Peer address for client connection
 // BLE Eco Mode variables
 bool        bleEcoMode          = true;     // BLE eco mode always active (automatic)
 bool        bleSleeping         = false;    // BLE is currently sleeping (stopped)
+bool        bleWakeRequested    = false;    // Deferred wake flag (set from LVGL, processed in main loop)
 uint32_t    bleLastActivityTime = 0;        // Last time BLE had activity (connection)
 const uint32_t BLE_ECO_TIMEOUT  = 5 * 60 * 1000;  // 5 minutes timeout
 
@@ -279,15 +280,26 @@ namespace BLE_Utils {
         bleNeedToReadName = false;
     }
 
-    // Check BLE eco mode timeout - call this from main loop
+    // Check BLE eco mode timeout + process deferred wake - call from main loop
     void checkEcoMode() {
+        // Process deferred wake request (from LVGL callback, runs in main loop with full stack)
+        if (bleWakeRequested && bleSleeping) {
+            bleWakeRequested = false;
+            Serial.println("[BLE] Waking up from eco mode (deferred)");
+            bleSleeping = false;
+            bleLastActivityTime = millis();
+            setup();
+            logger.log(logging::LoggerLevel::LOGGER_LEVEL_INFO, "BLE", "Eco mode: BLE restarted");
+            return;
+        }
+        bleWakeRequested = false;
+
         if (!bleEcoMode || !bluetoothActive || bleSleeping || bluetoothConnected) {
-            return;  // Eco mode disabled, BLE not active, already sleeping, or connected
+            return;
         }
 
         uint32_t now = millis();
         if (now - bleLastActivityTime >= BLE_ECO_TIMEOUT) {
-            // Timeout reached - put BLE to sleep
             bleSleeping = true;
             BLEDevice::deinit();
             logger.log(logging::LoggerLevel::LOGGER_LEVEL_INFO, "BLE", "Eco mode: BLE stopped after %d min inactivity", BLE_ECO_TIMEOUT / 60000);
@@ -295,15 +307,11 @@ namespace BLE_Utils {
         }
     }
 
-    // Wake up BLE from eco mode sleep
+    // Request BLE wake from eco mode (safe to call from LVGL callbacks)
     void wake() {
         if (!bleSleeping) return;
-
-        Serial.println("[BLE] Waking up from eco mode");
-        bleSleeping = false;
-        bleLastActivityTime = millis();
-        setup();  // Re-initialize BLE
-        logger.log(logging::LoggerLevel::LOGGER_LEVEL_INFO, "BLE", "Eco mode: BLE restarted");
+        bleWakeRequested = true;
+        Serial.println("[BLE] Wake requested (deferred to main loop)");
     }
 
     // Check if BLE is sleeping
