@@ -209,7 +209,7 @@ namespace UIMapManager {
 
     // Queue tiles from adjacent zoom levels for preloading
     void queueAdjacentZoomTiles(int centerTileX, int centerTileY, int currentZoom) {
-        if (tilePreloadQueue == nullptr) return;
+        if (tilePreloadQueue == nullptr || navModeActive) return;
 
         TileRequest req;
 
@@ -885,8 +885,10 @@ namespace UIMapManager {
 
             if (isNavMode) {
                 // NAV priority: free all raster cache to maximize PSRAM for NAV tiles
-                navModeActive = true;
-                MapEngine::clearTileCache();
+                if (!navModeActive) {
+                    navModeActive = true;
+                    MapEngine::clearTileCache();
+                }
 
                 // NAV viewport rendering (IceNav-v3 pattern)
                 // Temporarily unsubscribe loopTask from WDT — rendering at low zoom
@@ -1055,8 +1057,8 @@ namespace UIMapManager {
                 map_follow_gps = false;
                 Serial.println("[MAP] Touch pan started");
 
-                // Immediate preload: queue tiles in direction of movement
-                if (tilePreloadQueue != nullptr) {
+                // Immediate preload: queue tiles in direction of movement (raster only)
+                if (tilePreloadQueue != nullptr && !navModeActive) {
                     // Get current center tile
                     int centerTileX, centerTileY;
                     latLonToTile(map_center_lat, map_center_lon, map_current_zoom, &centerTileX, &centerTileY);

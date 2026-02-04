@@ -285,6 +285,12 @@ namespace BLE_Utils {
         // Process deferred wake request (from LVGL callback, runs in main loop with full stack)
         if (bleWakeRequested && bleSleeping) {
             bleWakeRequested = false;
+            // BT controller needs ~40KB DRAM to init — skip if not enough
+            size_t freeDram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (freeDram < 50000) {
+                Serial.printf("[BLE] Not enough DRAM to restart (%u bytes free, need 50000)\n", (unsigned)freeDram);
+                return;
+            }
             Serial.println("[BLE] Waking up from eco mode (deferred)");
             bleSleeping = false;
             bleLastActivityTime = millis();
