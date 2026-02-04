@@ -100,16 +100,12 @@ namespace SD_Logger {
                  millis(), levelStr, module, message);
 
         logFile.print(logLine);
+        size_t currentSize = logFile.size();
         logFile.close();
-
-        // Also print to Serial
-        Serial.print("[SD_LOG] ");
-        Serial.print(logLine);
 
         if (sdLogMutex) xSemaphoreGive(sdLogMutex);
 
-        // Check if rotation needed
-        if (logFile.size() > SD_LOG_MAX_SIZE) {
+        if (currentSize > SD_LOG_MAX_SIZE) {
             rotateLogs();
         }
     }

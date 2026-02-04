@@ -202,6 +202,7 @@ void setup() {
         LVGL_UI::updateInitStatus("Storage...");
     #endif
     STORAGE_Utils::setup();
+    STORAGE_Utils::loadStats();
     MSG_Utils::loadNumMessages();
 
     // Initialize SD logger for debugging reboots
@@ -419,6 +420,8 @@ void loop() {
             refreshDisplayTime = millis();
         }
     }
+
+    STORAGE_Utils::checkStatsSave();
 
     #ifdef USE_LVGL_UI
         LVGL_UI::loop();

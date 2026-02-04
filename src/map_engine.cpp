@@ -649,11 +649,23 @@ namespace MapEngine {
                 uint16_t feature_count;
                 memcpy(&feature_count, data + 4, 2);
 
+                Serial.printf("[NAV-DBG] Tile %d/%d: %u features, %u bytes\n",
+                              tileX, tileY, feature_count, (unsigned)fileSize);
+
                 // Parse features and dispatch to priority layers (IceNav-v3 zero-copy pattern)
                 uint8_t* p = data + 22;
+                int typeCounts[5] = {0, 0, 0, 0, 0};  // types 0-4
+                int skippedZoom = 0;
+                int skippedOverflow = 0;
+
                 for (uint16_t i = 0; i < feature_count; i++) {
                     if ((i & 63) == 0) esp_task_wdt_reset();
-                    if (p + 12 > data + fileSize) break;
+                    if (p + 12 > data + fileSize) {
+                        Serial.printf("[NAV-DBG]   BREAK at feature %d: header overflow (p=%u, end=%u)\n",
+                                      i, (unsigned)(p - data), (unsigned)fileSize);
+                        skippedOverflow = feature_count - i;
+                        break;
+                    }
 
                     uint8_t geomType = p[0];
                     uint8_t zoomPriority = p[3];
@@ -663,27 +675,35 @@ namespace MapEngine {
                     uint32_t feature_data_size = coordCount * 4;
                     uint16_t ringCount = 0;
 
-                    // Polygon ring data: uint8_t ringCount (1 byte) + ringCount × uint16_t ringEnds
-                    // (matching Python tile_generator.py: struct.pack('<B', ring_count))
+                    // Polygon ring data: uint16 ringCount (2 bytes) + ringCount × uint16 ringEnds
+                    // (matching Python tile_generator.py: struct.pack('<H', ring_count))
                     if (geomType == 3) {
                         uint8_t* ring_ptr = p + 12 + feature_data_size;
-                        if (ring_ptr + 1 <= data + fileSize) {
-                            ringCount = ring_ptr[0];  // Single byte
-                            if (ring_ptr + 1 + (ringCount * 2) <= data + fileSize)
-                                feature_data_size += 1 + (ringCount * 2);
+                        if (ring_ptr + 2 <= data + fileSize) {
+                            memcpy(&ringCount, ring_ptr, 2);
+                            if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize)
+                                feature_data_size += 2 + (ringCount * 2);
                             else
                                 ringCount = 0;
                         }
                     }
 
-                    if (p + 12 + feature_data_size > data + fileSize) break;
+                    if (p + 12 + feature_data_size > data + fileSize) {
+                        Serial.printf("[NAV-DBG]   BREAK at feature %d: data overflow (type=%d, coords=%d, size=%u, p=%u, end=%u)\n",
+                                      i, geomType, coordCount, feature_data_size, (unsigned)(p - data), (unsigned)fileSize);
+                        skippedOverflow = feature_count - i;
+                        break;
+                    }
 
                     // Zoom filtering (IceNav-v3 NavReader pattern)
                     uint8_t minZoom = zoomPriority >> 4;
                     if (minZoom > zoom) {
+                        skippedZoom++;
                         p += 12 + feature_data_size;
                         continue;
                     }
+
+                    if (geomType <= 4) typeCounts[geomType]++;
 
                     uint8_t priority = zoomPriority & 0x0F;
                     if (priority >= 16) priority = 15;
@@ -699,6 +719,10 @@ namespace MapEngine {
 
                     p += 12 + feature_data_size;
                 }
+
+                Serial.printf("[NAV-DBG]   Kept: pt=%d ln=%d poly=%d txt=%d | skipped: zoom=%d overflow=%d\n",
+                              typeCounts[1], typeCounts[2], typeCounts[3], typeCounts[4],
+                              skippedZoom, skippedOverflow);
             }
         }
 
@@ -745,7 +769,7 @@ namespace MapEngine {
                         int16_t* coords = (int16_t*)(fp + 12);
                         // ringEnds starts after 1-byte ringCount (not 2)
                         uint16_t* ringEnds = (ref.ringCount > 0)
-                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 1) : nullptr;
+                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 2) : nullptr;
 
                         if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount * 3 / 2);
                         if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount * 3 / 2);
@@ -827,7 +851,7 @@ namespace MapEngine {
                             maxPy < 0 || minPy >= viewportH) break;
 
                         for (size_t j = 1; j < validPoints; j++) {
-                            if (widthPixels == 1)
+                            if (widthPixels <= 2)
                                 map.drawLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], colorRgb565);
                             else
                                 map.drawWideLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
@@ -854,8 +878,11 @@ namespace MapEngine {
                             char textBuf[128];
                             memcpy(textBuf, fp + 12 + 5, textLen);
                             textBuf[textLen] = '\0';
-                            int textSize = (fontSize >= 2) ? 3 : (fontSize == 1) ? 2 : 1;
-                            map.setTextSize(textSize);
+                            const lgfx::GFXfont* font = (fontSize >= 2)
+                                ? &fonts::FreeSans9pt7b
+                                : &fonts::FreeSans9pt7b;
+                            map.setFont(font);
+                            map.setTextSize(1);
                             map.setTextColor(colorRgb565);
                             map.drawString(textBuf, px, py);
                         }
@@ -942,14 +969,14 @@ namespace MapEngine {
             uint32_t feature_data_size = coordCount * 4;
             uint16_t ringCount = 0;
 
-            // Polygon ring data: uint8_t ringCount (1 byte) + ringCount × uint16_t ringEnds
-            // (matching Python tile_generator.py: struct.pack('<B', ring_count))
+            // Polygon ring data: uint16 ringCount (2 bytes) + ringCount × uint16 ringEnds
+            // (matching Python tile_generator.py: struct.pack('<H', ring_count))
             if (geomType == 3) {
                 uint8_t* ring_ptr = p + 12 + feature_data_size;
-                if (ring_ptr + 1 <= data + fileSize) {
-                    ringCount = ring_ptr[0];  // Single byte
-                    if (ring_ptr + 1 + (ringCount * 2) <= data + fileSize) {
-                        feature_data_size += 1 + (ringCount * 2);
+                if (ring_ptr + 2 <= data + fileSize) {
+                    memcpy(&ringCount, ring_ptr, 2);
+                    if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
+                        feature_data_size += 2 + (ringCount * 2);
                     } else {
                         ringCount = 0;
                     }
@@ -1012,7 +1039,7 @@ namespace MapEngine {
                         int16_t* coords = (int16_t*)(fp + 12);
                         // ringEnds starts after 1-byte ringCount (not 2)
                         uint16_t* ringEnds = (ref.ringCount > 0)
-                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 1)
+                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 2)
                             : nullptr;
 
                         if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount * 3 / 2);
@@ -1089,7 +1116,7 @@ namespace MapEngine {
                             maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
 
                         for (size_t j = 1; j < validPoints; j++) {
-                            if (widthPixels == 1)
+                            if (widthPixels <= 2)
                                 map.drawLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], colorRgb565);
                             else
                                 map.drawWideLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
@@ -1106,7 +1133,6 @@ namespace MapEngine {
                         break;
                     }
                     case 4: { // Text label (GEOM_TEXT)
-                        uint8_t fontSize = fp[4];
                         int16_t* coords = (int16_t*)(fp + 12);
                         int px = (coords[0] >> 4) + xOffset;
                         int py = (coords[1] >> 4) + yOffset;
@@ -1115,8 +1141,8 @@ namespace MapEngine {
                             char textBuf[128];
                             memcpy(textBuf, fp + 12 + 5, textLen);
                             textBuf[textLen] = '\0';
-                            int textSize = (fontSize >= 2) ? 3 : (fontSize == 1) ? 2 : 1;
-                            map.setTextSize(textSize);
+                            map.setFont(&fonts::FreeSans9pt7b);
+                            map.setTextSize(1);
                             map.setTextColor(colorRgb565);
                             map.drawString(textBuf, px, py);
                         }

@@ -20,6 +20,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include <vector>
+#include <algorithm>
 #include <ArduinoJson.h>
 #include <TimeLib.h>
 #include "board_pinout.h"
@@ -438,6 +439,12 @@ namespace STORAGE_Utils {
         return contactsCache.size();
     }
 
+    // ========== Stats Persistence ==========
+
+    static const char* STATS_FILE = "/LoRa_Tracker/stats.json";
+    static bool statsSaveNeeded = false;
+    static uint32_t lastStatsSave = 0;
+
     // ========== Raw Frames Logging ==========
 
     static const char* FRAMES_FILE = "/LoRa_Tracker/frames.log";
@@ -562,6 +569,8 @@ const std::vector<String>& getLastFrames(int count) {
         linkStats.snrTotal += snr;
         if (snr < linkStats.snrMin) linkStats.snrMin = snr;
         if (snr > linkStats.snrMax) linkStats.snrMax = snr;
+
+        statsSaveNeeded = true;
 
         // Add to circular buffer (no memory allocation)
         rssiHistory[historyHead] = rssi;
@@ -700,27 +709,148 @@ const std::vector<String>& getLastFrames(int count) {
                 s.lastSnr = snr;
                 s.lastHeard = now(); // Unix timestamp from GPS/RTC
                 s.lastIsDirect = isDirect;
-                statsDirty = true;  // Mark for UI refresh
+                statsDirty = true;
+                statsSaveNeeded = true;
                 return;
             }
         }
 
-        // New station - add to list (limit to 20)
-        if (stationStats.size() < 20) {
-            StationStats newStation;
-            newStation.callsign = callsign;
-            newStation.count = 1;
-            newStation.lastRssi = rssi;
-            newStation.lastSnr = snr;
-            newStation.lastHeard = now();
-            newStation.lastIsDirect = isDirect;
+        // New station
+        StationStats newStation;
+        newStation.callsign = callsign;
+        newStation.count = 1;
+        newStation.lastRssi = rssi;
+        newStation.lastSnr = snr;
+        newStation.lastHeard = now();
+        newStation.lastIsDirect = isDirect;
+
+        if (stationStats.size() >= 20) {
+            // Evict the oldest station
+            auto oldest = std::min_element(stationStats.begin(), stationStats.end(),
+                [](const StationStats& a, const StationStats& b) {
+                    return a.lastHeard < b.lastHeard;
+                });
+            *oldest = newStation;
+        } else {
             stationStats.push_back(newStation);
-            statsDirty = true;  // Mark for UI refresh
         }
+        statsDirty = true;
+        statsSaveNeeded = true;
     }
 
     const std::vector<StationStats>& getStationStats() {
         return stationStats;
+    }
+
+    // ========== Stats Persistence Implementation ==========
+
+    void loadStats() {
+        if (!sdAvailable) {
+            Serial.println("[Storage] No SD card, stats not loaded");
+            return;
+        }
+
+        File file = SD.open(STATS_FILE, FILE_READ);
+        if (!file) {
+            Serial.println("[Storage] No stats file, starting fresh");
+            return;
+        }
+
+        DynamicJsonDocument doc(2048);
+        DeserializationError error = deserializeJson(doc, file);
+        file.close();
+
+        if (error) {
+            Serial.printf("[Storage] Stats JSON parse error: %s\n", error.c_str());
+            return;
+        }
+
+        // Restore LinkStats
+        if (doc.containsKey("link")) {
+            JsonObject link = doc["link"];
+            linkStats.rxCount   = link["rx"]       | (uint32_t)0;
+            linkStats.txCount   = link["tx"]       | (uint32_t)0;
+            linkStats.ackCount  = link["ack"]      | (uint32_t)0;
+            linkStats.rssiMin   = link["rssiMin"]  | 0;
+            linkStats.rssiMax   = link["rssiMax"]  | -200;
+            linkStats.rssiTotal = link["rssiTotal"]| (int32_t)0;
+            linkStats.snrMin    = link["snrMin"]   | 50.0f;
+            linkStats.snrMax    = link["snrMax"]   | -50.0f;
+            linkStats.snrTotal  = link["snrTotal"] | 0.0f;
+        }
+
+        // Restore StationStats
+        if (doc.containsKey("stations")) {
+            JsonArray stations = doc["stations"];
+            stationStats.clear();
+            for (JsonObject obj : stations) {
+                if (stationStats.size() >= 20) break;
+                StationStats s;
+                s.callsign    = obj["call"].as<String>();
+                s.count       = obj["cnt"]    | (uint32_t)0;
+                s.lastRssi    = obj["rssi"]   | 0;
+                s.lastSnr     = obj["snr"]    | 0.0f;
+                s.lastHeard   = obj["heard"]  | (uint32_t)0;
+                s.lastIsDirect= obj["direct"] | false;
+                if (s.callsign.length() > 0) {
+                    stationStats.push_back(s);
+                }
+            }
+        }
+
+        Serial.printf("[Storage] Loaded %d station stats\n", stationStats.size());
+    }
+
+    bool saveStats() {
+        if (!sdAvailable) {
+            return false;
+        }
+
+        DynamicJsonDocument doc(2048);
+
+        // Serialize LinkStats
+        JsonObject link = doc.createNestedObject("link");
+        link["rx"]        = linkStats.rxCount;
+        link["tx"]        = linkStats.txCount;
+        link["ack"]       = linkStats.ackCount;
+        link["rssiMin"]   = linkStats.rssiMin;
+        link["rssiMax"]   = linkStats.rssiMax;
+        link["rssiTotal"] = linkStats.rssiTotal;
+        link["snrMin"]    = linkStats.snrMin;
+        link["snrMax"]    = linkStats.snrMax;
+        link["snrTotal"]  = linkStats.snrTotal;
+
+        // Serialize StationStats
+        JsonArray stations = doc.createNestedArray("stations");
+        for (const StationStats& s : stationStats) {
+            JsonObject obj = stations.createNestedObject();
+            obj["call"]   = s.callsign;
+            obj["cnt"]    = s.count;
+            obj["rssi"]   = s.lastRssi;
+            obj["snr"]    = s.lastSnr;
+            obj["heard"]  = s.lastHeard;
+            obj["direct"] = s.lastIsDirect;
+        }
+
+        File file = SD.open(STATS_FILE, FILE_WRITE);
+        if (!file) {
+            Serial.println("[Storage] Failed to open stats file for writing");
+            return false;
+        }
+
+        serializeJson(doc, file);
+        file.close();
+
+        Serial.printf("[Storage] Saved stats (%d stations)\n", stationStats.size());
+        return true;
+    }
+
+    void checkStatsSave() {
+        if (statsSaveNeeded && (millis() - lastStatsSave > 300000)) {
+            saveStats();
+            statsSaveNeeded = false;
+            lastStatsSave = millis();
+        }
     }
 
     // Dirty flag accessors for conditional UI refresh

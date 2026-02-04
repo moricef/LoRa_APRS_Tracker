@@ -292,14 +292,6 @@ namespace UIMapManager {
         // Draw APRS symbol PNG via lv_canvas_draw_img (handles alpha + byte order)
         CachedSymbol* cache = parseAndGetSymbol(aprsSymbol);
         if (cache && cache->valid) {
-            // DEBUG: dump first few pixels of cached symbol
-            uint16_t* px = (uint16_t*)cache->img_dsc.data;
-            uint8_t* alpha = (uint8_t*)(cache->img_dsc.data + SYMBOL_SIZE * SYMBOL_SIZE * sizeof(uint16_t));
-            Serial.printf("[SYMBOL-DBG] %s at %d,%d  cf=%d  size=%ux%u  px[0]=0x%04X a[0]=%u px[12]=0x%04X a[12]=%u\n",
-                          callsign ? callsign : "?", symX, symY,
-                          cache->img_dsc.header.cf,
-                          cache->img_dsc.header.w, cache->img_dsc.header.h,
-                          px[0], alpha[0], px[12], alpha[12]);
             lv_draw_img_dsc_t img_dsc;
             lv_draw_img_dsc_init(&img_dsc);
             img_dsc.opa = LV_OPA_COVER;
@@ -470,20 +462,6 @@ namespace UIMapManager {
         uint8_t* alphaRow = symbolCombinedBuffer + alphaOffset;
         uint16_t* rgb565Row = (uint16_t*)symbolCombinedBuffer + rgb565Offset;
 
-        // DEBUG: log PNGdec decode mode on row 12
-        if (pDraw->y == 12) {
-            Serial.printf("[PNG-DEBUG] bpp=%d alpha=%d palette=%d w=%d\n",
-                          pDraw->iBpp, pDraw->iHasAlpha, pDraw->pPalette ? 1 : 0, pDraw->iWidth);
-            if (pDraw->pPalette) {
-                uint8_t* pal = (uint8_t*)pDraw->pPalette;
-                Serial.printf("[PALETTE] RGB888: [0]=%02X%02X%02X [1]=%02X%02X%02X [2]=%02X%02X%02X [3]=%02X%02X%02X\n",
-                              pal[0], pal[1], pal[2], pal[3], pal[4], pal[5],
-                              pal[6], pal[7], pal[8], pal[9], pal[10], pal[11]);
-                Serial.printf("[PALETTE] Alpha@768: [0]=%u [1]=%u [2]=%u [3]=%u\n",
-                              pal[768], pal[769], pal[770], pal[771]);
-            }
-        }
-
         // Handle palette (type 3) vs truecolor+alpha (type 6) vs others
         if (pDraw->iPixelType == PNG_PIXEL_INDEXED) {
             // Palette mode: convert palette indices to RGBA
@@ -508,13 +486,6 @@ namespace UIMapManager {
                 rgb565Row[x] = rgb565;
 #endif
                 alphaRow[x] = a;
-            }
-
-            // DEBUG: log converted RGB565 values on row 12
-            if (pDraw->y == 12) {
-                Serial.printf("[RGB565-OUT] px[0..3]: %04X %04X %04X %04X  alpha[0..3]: %02X %02X %02X %02X\n",
-                              rgb565Row[0], rgb565Row[1], rgb565Row[2], rgb565Row[3],
-                              alphaRow[0], alphaRow[1], alphaRow[2], alphaRow[3]);
             }
 
             for (int x = w; x < SYMBOL_SIZE; x++) {
@@ -542,17 +513,6 @@ namespace UIMapManager {
             symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
 #endif
 
-            // DEBUG: log raw RGBA pixels and RGB565 output on row 12
-            if (pDraw->y == 12) {
-                uint8_t* raw = pDraw->pPixels;
-                Serial.printf("[RAW-RGBA] px[0]=%02X%02X%02X/%02X px[12]=%02X%02X%02X/%02X pitch=%d\n",
-                              raw[0], raw[1], raw[2], raw[3],
-                              raw[48], raw[49], raw[50], raw[51],
-                              pDraw->iPitch);
-                Serial.printf("[RGB565-DIRECT] px[0..3]: %04X %04X %04X %04X  alpha[0..3]: %02X %02X %02X %02X\n",
-                              rgb565Row[0], rgb565Row[1], rgb565Row[2], rgb565Row[3],
-                              alphaRow[0], alphaRow[1], alphaRow[2], alphaRow[3]);
-            }
         }
 
         return 1;
@@ -588,9 +548,6 @@ namespace UIMapManager {
         // Decode PNG
         int rc = symbolPNG.open(path.c_str(), pngOpenFile, pngCloseFile, pngReadFile, pngSeekFile, pngSymbolCallback);
         if (rc == PNG_SUCCESS && pngFileOpened) {
-            Serial.printf("[PNG-OPEN] %s pixelType=%d bpp=%d size=%dx%d\n",
-                          path.c_str(), symbolPNG.getPixelType(), symbolPNG.getBpp(),
-                          symbolPNG.getWidth(), symbolPNG.getHeight());
             rc = symbolPNG.decode(nullptr, 0);
             symbolPNG.close();
 
