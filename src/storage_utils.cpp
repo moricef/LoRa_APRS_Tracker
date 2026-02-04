@@ -756,7 +756,7 @@ const std::vector<String>& getLastFrames(int count) {
             return;
         }
 
-        DynamicJsonDocument doc(2048);
+        DynamicJsonDocument doc(4096);
         DeserializationError error = deserializeJson(doc, file);
         file.close();
 
@@ -806,7 +806,7 @@ const std::vector<String>& getLastFrames(int count) {
             return false;
         }
 
-        DynamicJsonDocument doc(2048);
+        DynamicJsonDocument doc(4096);
 
         // Serialize LinkStats
         JsonObject link = doc.createNestedObject("link");

@@ -161,14 +161,12 @@ namespace SD_Logger {
     void rotateLogs() {
         if (!initialized || !STORAGE_Utils::isSDAvailable()) return;
 
-        log(INFO, "SD_LOG", "Rotating log file");
+        Serial.println("[SD_LOG] Rotating log file");
 
-        // Take mutex
         if (sdLogMutex && xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
             return;
         }
 
-        // Backup old log
         if (SD.exists(SD_LOG_FILE)) {
             SD.remove("/LoRa_Tracker/system.log.old");
             SD.rename(SD_LOG_FILE, "/LoRa_Tracker/system.log.old");
@@ -176,7 +174,7 @@ namespace SD_Logger {
 
         if (sdLogMutex) xSemaphoreGive(sdLogMutex);
 
-        log(INFO, "SD_LOG", "Log rotation complete");
+        Serial.println("[SD_LOG] Log rotation complete");
     }
 
     String getLogFilePath() {

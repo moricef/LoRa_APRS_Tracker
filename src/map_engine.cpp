@@ -12,6 +12,7 @@
 #undef MOTOLONG
 #include <PNGdec.h>
 #include "storage_utils.h"
+#include "FreeSans7pt7b.h"
 #include <SD.h>
 #include <esp_task_wdt.h>
 #include <algorithm>
@@ -878,10 +879,7 @@ namespace MapEngine {
                             char textBuf[128];
                             memcpy(textBuf, fp + 12 + 5, textLen);
                             textBuf[textLen] = '\0';
-                            const lgfx::GFXfont* font = (fontSize >= 2)
-                                ? &fonts::FreeSans9pt7b
-                                : &fonts::FreeSans9pt7b;
-                            map.setFont(font);
+                            map.setFont((lgfx::GFXfont*)&FreeSans7pt7b);
                             map.setTextSize(1);
                             map.setTextColor(colorRgb565);
                             map.drawString(textBuf, px, py);
@@ -1141,7 +1139,7 @@ namespace MapEngine {
                             char textBuf[128];
                             memcpy(textBuf, fp + 12 + 5, textLen);
                             textBuf[textLen] = '\0';
-                            map.setFont(&fonts::FreeSans9pt7b);
+                            map.setFont((lgfx::GFXfont*)&FreeSans7pt7b);
                             map.setTextSize(1);
                             map.setTextColor(colorRgb565);
                             map.drawString(textBuf, px, py);
