@@ -108,6 +108,9 @@ namespace UIMapManager {
     // Persistent viewport sprite for NAV rendering (avoids PSRAM fragmentation)
     static LGFX_Sprite* persistentViewportSprite = nullptr;
 
+    // NAV priority flag: when true, raster cache is disabled
+    static volatile bool navModeActive = false;
+
     // Timer callback for periodic station refresh (NOT full map redraw)
     static void map_refresh_timer_cb(lv_timer_t* timer) {
         if (screen_map && lv_scr_act() == screen_map
@@ -639,6 +642,9 @@ namespace UIMapManager {
 
     // Preload a tile into cache (no canvas drawing) - called from Core 1 task
     bool preloadTileToCache(int tileX, int tileY, int zoom) {
+        // NAV priority: don't cache raster tiles when NAV mode is active
+        if (navModeActive) return false;
+
         // 1. Check if already in cache
         if (MapEngine::findCachedTile(zoom, tileX, tileY) >= 0) {
             return true;
@@ -878,6 +884,10 @@ namespace UIMapManager {
             }
 
             if (isNavMode) {
+                // NAV priority: free all raster cache to maximize PSRAM for NAV tiles
+                navModeActive = true;
+                MapEngine::clearTileCache();
+
                 // NAV viewport rendering (IceNav-v3 pattern)
                 // Temporarily unsubscribe loopTask from WDT — rendering at low zoom
                 // can take 10-30s with thousands of features (IceNav doesn't subscribe either)
@@ -913,6 +923,7 @@ namespace UIMapManager {
                 esp_task_wdt_add(xTaskGetCurrentTaskHandle());
                 esp_task_wdt_reset();
             } else {
+                navModeActive = false;
                 // Raster per-tile rendering (PNG/JPG via cache)
                 for (int dy = -1; dy <= 1; dy++) {
                     for (int dx = -1; dx <= 1; dx++) {
@@ -1463,6 +1474,10 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                 }
 
                 if (isNavMode) {
+                    // NAV priority: free all raster cache to maximize PSRAM for NAV tiles
+                    navModeActive = true;
+                    MapEngine::clearTileCache();
+
                     // NAV viewport rendering (IceNav-v3 pattern)
                     // Temporarily unsubscribe loopTask from WDT — rendering can take 10-30s
                     esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
@@ -1493,6 +1508,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                     esp_task_wdt_add(xTaskGetCurrentTaskHandle());
                     esp_task_wdt_reset();
                 } else {
+                    navModeActive = false;
                     // Raster per-tile rendering (PNG/JPG via cache)
                     for (int dy = -1; dy <= 1; dy++) {
                         for (int dx = -1; dx <= 1; dx++) {

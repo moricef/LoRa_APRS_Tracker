@@ -12,7 +12,7 @@
 #undef MOTOLONG
 #include <PNGdec.h>
 #include "storage_utils.h"
-#include "FreeSans7pt7b.h"
+#include "FreeSansBold6pt7b.h"
 #include <SD.h>
 #include <esp_task_wdt.h>
 #include <algorithm>
@@ -618,8 +618,13 @@ namespace MapEngine {
                 int16_t tileOffsetY = (int16_t)(centerTileOriginY + dy * MAP_TILE_SIZE);
 
                 // Skip tiles entirely outside viewport
-                if (tileOffsetX + MAP_TILE_SIZE < 0 || tileOffsetX > viewportW ||
-                    tileOffsetY + MAP_TILE_SIZE < 0 || tileOffsetY > viewportH) continue;
+                bool skipX = (tileOffsetX + MAP_TILE_SIZE <= 0 || tileOffsetX >= viewportW);
+                bool skipY = (tileOffsetY + MAP_TILE_SIZE <= 0 || tileOffsetY >= viewportH);
+                if (skipX || skipY) {
+                    Serial.printf("[NAV-SKIP] Tile %d/%d: offset=(%d,%d) skipX=%d skipY=%d\n",
+                                  tileX, tileY, tileOffsetX, tileOffsetY, skipX, skipY);
+                    continue;
+                }
 
                 char tilePath[128];
                 snprintf(tilePath, sizeof(tilePath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
@@ -628,22 +633,37 @@ namespace MapEngine {
                 // Read tile file under SPI mutex
                 uint8_t* data = nullptr;
                 size_t fileSize = 0;
+                bool mutexOk = false, fileOk = false, sizeOk = false, allocOk = false;
 
                 if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    mutexOk = true;
                     File file = SD.open(tilePath, FILE_READ);
                     if (file) {
+                        fileOk = true;
                         fileSize = file.size();
                         if (fileSize >= 22) {
+                            sizeOk = true;
                             data = (uint8_t*)ps_malloc(fileSize);
-                            if (data) file.read(data, fileSize);
+                            if (data) {
+                                allocOk = true;
+                                file.read(data, fileSize);
+                            }
                         }
                         file.close();
                     }
                     xSemaphoreGiveRecursive(spiMutex);
                 }
 
-                if (!data) continue;
-                if (memcmp(data, "NAV1", 4) != 0) { free(data); continue; }
+                if (!data) {
+                    Serial.printf("[NAV-FAIL] Tile %d/%d: mutex=%d file=%d size=%d(%u) alloc=%d\n",
+                                  tileX, tileY, mutexOk, fileOk, sizeOk, (unsigned)fileSize, allocOk);
+                    continue;
+                }
+                if (memcmp(data, "NAV1", 4) != 0) {
+                    Serial.printf("[NAV-FAIL] Tile %d/%d: invalid header (not NAV1)\n", tileX, tileY);
+                    free(data);
+                    continue;
+                }
 
                 tileBuffers.push_back(data);
 
@@ -879,7 +899,7 @@ namespace MapEngine {
                             char textBuf[128];
                             memcpy(textBuf, fp + 12 + 5, textLen);
                             textBuf[textLen] = '\0';
-                            map.setFont((lgfx::GFXfont*)&FreeSans7pt7b);
+                            map.setFont((lgfx::GFXfont*)&FreeSansBold6pt7b);
                             map.setTextSize(1);
                             map.setTextColor(colorRgb565);
                             map.drawString(textBuf, px, py);
@@ -1139,7 +1159,7 @@ namespace MapEngine {
                             char textBuf[128];
                             memcpy(textBuf, fp + 12 + 5, textLen);
                             textBuf[textLen] = '\0';
-                            map.setFont((lgfx::GFXfont*)&FreeSans7pt7b);
+                            map.setFont((lgfx::GFXfont*)&FreeSansBold6pt7b);
                             map.setTextSize(1);
                             map.setTextColor(colorRgb565);
                             map.drawString(textBuf, px, py);
