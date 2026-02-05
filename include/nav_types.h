@@ -5,9 +5,8 @@
 #include <cstdlib>
 #include "esp_heap_caps.h"
 
-// Allocator that forces vectors into internal RAM (fast SRAM)
-// instead of PSRAM (slow, fragmentation-prone).
-// Pattern from IceNav-v3.
+// Allocator that places vectors in PSRAM to preserve scarce DRAM
+// for WiFi, BLE, LoRa, LVGL, and OS stacks.
 template <typename T>
 struct InternalAllocator {
     using value_type = T;
@@ -17,7 +16,7 @@ struct InternalAllocator {
     InternalAllocator(const InternalAllocator<U>&) noexcept {}
 
     T* allocate(std::size_t n) {
-        void* p = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        void* p = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_SPIRAM);
         if (!p) p = malloc(n * sizeof(T)); // fallback to default heap
         return static_cast<T*>(p);
     }
