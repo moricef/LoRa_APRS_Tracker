@@ -59,6 +59,14 @@ struct StationStats {
     bool lastIsDirect;
 };
 
+// Dashboard Last RX cache (RAM only, max 4, cleared at boot)
+struct DashboardRxEntry {
+    String callsign;
+    int rssi;
+    float snr;
+    uint32_t timestamp;     // millis() when received
+};
+
 namespace STORAGE_Utils {
 
     void    setup();
@@ -114,6 +122,9 @@ namespace STORAGE_Utils {
     // Per-station statistics
     void updateStationStats(const String& callsign, int rssi, float snr);
     const std::vector<StationStats>& getStationStats();
+
+    // Dashboard Last RX (RAM only, not persisted)
+    const std::vector<DashboardRxEntry>& getDashboardLastRx();
 
     // History for charts (last 50 values)
     const int HISTORY_SIZE = 50;
