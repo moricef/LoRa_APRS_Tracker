@@ -12,13 +12,17 @@ __(NOTE: To use Tx/Rx capabilities of this tracker you should have also an Tx/Rx
 
 ____________________________________________________
 
-## You can support this project to continue to grow:
+## You can support this LVGL UI fork to continue to grow:
 
-[<img src="https://github.com/richonguzman/LoRa_APRS_Tracker/blob/main/images/github-sponsors.png">](https://github.com/sponsors/richonguzman)     [<img src="https://github.com/richonguzman/LoRa_APRS_Tracker/blob/main/images/paypalme.png">](http://paypal.me/richonguzman)
+[<img src="https://github.com/richonguzman/LoRa_APRS_Tracker/blob/main/images/github-sponsors.png">](https://github.com/sponsors/moricef)     [<img src="https://github.com/richonguzman/LoRa_APRS_Tracker/blob/main/images/paypalme.png">](http://paypal.me/moricef)
 
 <br />
 
-# WEB FLASHER/INSTALLER is <a href="https://richonguzman.github.io/lora-tracker-web-flasher/installer.html" target="_blank">here</a>
+**This fork is based on the excellent work by [CA2RXU](https://github.com/richonguzman/LoRa_APRS_Tracker). Consider supporting the original project too:** [GitHub Sponsors](https://github.com/sponsors/richonguzman) | [PayPal](http://paypal.me/richonguzman)
+
+<br />
+
+# WEB FLASHER/INSTALLER is <a href="https://moricef.github.io/LoRa_APRS_Tracker/" target="_blank">here</a>
 
 ____________________________________________________
 
