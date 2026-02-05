@@ -608,11 +608,12 @@ namespace MapEngine {
         int minDy = -(centerTileOriginY / MAP_TILE_SIZE + 1);
         int maxDy = (viewportH - centerTileOriginY + MAP_TILE_SIZE - 1) / MAP_TILE_SIZE;
 
-        map.fillSprite(map.color565(0xF2, 0xEF, 0xE9));  // OSM-style beige background
-
         // --- Load all tiles and dispatch features (IceNav-v3 pattern: maps.cpp:1498-1543) ---
         std::vector<uint8_t*> tileBuffers;
         for (int i = 0; i < 16; i++) globalLayers[i].clear();
+
+        uint16_t bgColor = 0xF7BE;  // Default OSM beige (0xF2EFE9) if no tiles loaded
+        bool bgColorExtracted = false;
 
         for (int dy = minDy; dy <= maxDy; dy++) {
             for (int dx = minDx; dx <= maxDx; dx++) {
@@ -673,6 +674,14 @@ namespace MapEngine {
                     continue;
                 }
 
+                // Extract background color from first feature (background polygon) on first tile
+                if (!bgColorExtracted && fileSize >= 24) {
+                    // First feature at offset 22: type(1) + color(2) + ...
+                    memcpy(&bgColor, data + 23, 2);  // RGB565 at offset 23 (after type byte)
+                    bgColorExtracted = true;
+                    Serial.printf("[NAV-BG] Background color extracted: 0x%04X\n", bgColor);
+                }
+
                 tileBuffers.push_back(data);
 
                 uint16_t feature_count;
@@ -700,6 +709,22 @@ namespace MapEngine {
                     uint8_t zoomPriority = p[3];
                     uint16_t coordCount;
                     memcpy(&coordCount, p + 9, 2);
+
+                    // Skip first feature (background polygon) - already used for fillSprite
+                    if (i == 0) {
+                        uint32_t bg_data_size = coordCount * 4;
+                        if (geomType == 3) {  // Polygon
+                            uint8_t* ring_ptr = p + 12 + bg_data_size;
+                            if (ring_ptr + 2 <= data + fileSize) {
+                                uint16_t bgRingCount;
+                                memcpy(&bgRingCount, ring_ptr, 2);
+                                if (ring_ptr + 2 + (bgRingCount * 2) <= data + fileSize)
+                                    bg_data_size += 2 + (bgRingCount * 2);
+                            }
+                        }
+                        p += 12 + bg_data_size;
+                        continue;
+                    }
 
                     uint32_t feature_data_size = coordCount * 4;
                     uint16_t ringCount = 0;
@@ -764,6 +789,9 @@ namespace MapEngine {
                       minDx, maxDx, minDy, maxDy);
 
         // --- Render all layers (IceNav-v3 pattern: maps.cpp:1546-1569) ---
+        // Fill background with color from NAV background polygon
+        map.fillSprite(bgColor);
+
         map.startWrite();
 
         struct LabelRect { int16_t x, y, w, h; };
