@@ -369,11 +369,19 @@ namespace MapEngine {
                 uint16_t* src_buf = (uint16_t*)sprite->getBuffer();
                 lv_color_t* dest_buf = UIMapManager::map_canvas_buf;
 
-                // Use memcpy for fast row-by-row buffer copy
                 for (int y = 0; y < copy_h; y++) {
                     uint16_t* src_ptr = src_buf + ((src_y + y) * MAP_TILE_SIZE) + src_x;
                     lv_color_t* dest_ptr = dest_buf + ((dest_y + y) * MAP_CANVAS_WIDTH) + dest_x;
+#if LV_COLOR_16_SWAP
+                    // LGFX sprites are little-endian RGB565, LVGL canvas is big-endian
+                    uint16_t* dp = (uint16_t*)dest_ptr;
+                    for (int x = 0; x < copy_w; x++) {
+                        uint16_t px = src_ptr[x];
+                        dp[x] = (px >> 8) | (px << 8);
+                    }
+#else
                     memcpy(dest_ptr, src_ptr, copy_w * sizeof(lv_color_t));
+#endif
                 }
             }
             xSemaphoreGive(spriteMutex);

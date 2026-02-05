@@ -46,10 +46,17 @@ namespace UIMapManager {
     lv_obj_t* map_container = nullptr;
 
     // Map state variables
-    static const int map_available_zooms[] = {8, 9, 10, 11, 12, 13, 14, 15, 16}; 
-    const int map_zoom_count = sizeof(map_available_zooms) / sizeof(map_available_zooms[0]);
-    int map_zoom_index = 0;  // Index in map_available_zooms (starts at zoom 8)
-    int map_current_zoom = map_available_zooms[0]; // Initialize with first available zoom
+    // Vector (NAV) zooms: step 1 (8..18)
+    static const int nav_zooms[] = {8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+    static const int nav_zoom_count = sizeof(nav_zooms) / sizeof(nav_zooms[0]);
+    // Raster (PNG/JPG) zooms: step 2 (8,10,12,14,16,18)
+    static const int raster_zooms[] = {8, 10, 12, 14, 16, 18};
+    static const int raster_zoom_count = sizeof(raster_zooms) / sizeof(raster_zooms[0]);
+    // Active zoom table (points to nav_zooms or raster_zooms)
+    const int* map_available_zooms = raster_zooms;
+    int map_zoom_count = raster_zoom_count;
+    int map_zoom_index = 0;
+    int map_current_zoom = raster_zooms[0];
     float map_center_lat = 0.0f;
     float map_center_lon = 0.0f;
     String map_current_region = "";
@@ -110,6 +117,21 @@ namespace UIMapManager {
 
     // NAV priority flag: when true, raster cache is disabled
     static volatile bool navModeActive = false;
+
+    // Switch zoom table and recalculate index to nearest available zoom
+    void switchZoomTable(const int* newTable, int newCount) {
+        map_available_zooms = newTable;
+        map_zoom_count = newCount;
+        // Find closest zoom in new table
+        int bestIdx = 0;
+        int bestDiff = abs(map_current_zoom - newTable[0]);
+        for (int i = 1; i < newCount; i++) {
+            int diff = abs(map_current_zoom - newTable[i]);
+            if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+        }
+        map_zoom_index = bestIdx;
+        map_current_zoom = newTable[bestIdx];
+    }
 
     // Timer callback for periodic station refresh (NOT full map redraw)
     static void map_refresh_timer_cb(lv_timer_t* timer) {
@@ -888,6 +910,7 @@ namespace UIMapManager {
                 if (!navModeActive) {
                     navModeActive = true;
                     MapEngine::clearTileCache();
+                    switchZoomTable(nav_zooms, nav_zoom_count);
                 }
 
                 // NAV viewport rendering (IceNav-v3 pattern)
@@ -914,7 +937,17 @@ namespace UIMapManager {
                     if (hasTiles) {
                         uint16_t* src = (uint16_t*)persistentViewportSprite->getBuffer();
                         if (src && map_canvas_buf) {
+#if LV_COLOR_16_SWAP
+                            // LGFX sprite is little-endian RGB565, LVGL canvas is big-endian
+                            uint16_t* dst = (uint16_t*)map_canvas_buf;
+                            int totalPixels = MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT;
+                            for (int i = 0; i < totalPixels; i++) {
+                                uint16_t px = src[i];
+                                dst[i] = (px >> 8) | (px << 8);
+                            }
+#else
                             memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
+#endif
                         }
                     }
                 } else {
@@ -925,7 +958,10 @@ namespace UIMapManager {
                 esp_task_wdt_add(xTaskGetCurrentTaskHandle());
                 esp_task_wdt_reset();
             } else {
-                navModeActive = false;
+                if (navModeActive) {
+                    navModeActive = false;
+                    switchZoomTable(raster_zooms, raster_zoom_count);
+                }
                 // Raster per-tile rendering (PNG/JPG via cache)
                 for (int dy = -1; dy <= 1; dy++) {
                     for (int dx = -1; dx <= 1; dx++) {
@@ -1465,6 +1501,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                     // NAV priority: free all raster cache to maximize PSRAM for NAV tiles
                     navModeActive = true;
                     MapEngine::clearTileCache();
+                    switchZoomTable(nav_zooms, nav_zoom_count);
 
                     // NAV viewport rendering (IceNav-v3 pattern)
                     // Temporarily unsubscribe loopTask from WDT — rendering can take 10-30s
@@ -1488,7 +1525,16 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                         if (hasTiles && map_canvas_buf) {
                             uint16_t* src = (uint16_t*)persistentViewportSprite->getBuffer();
                             if (src) {
+#if LV_COLOR_16_SWAP
+                                uint16_t* dst = (uint16_t*)map_canvas_buf;
+                                int totalPixels = MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT;
+                                for (int i = 0; i < totalPixels; i++) {
+                                    uint16_t px = src[i];
+                                    dst[i] = (px >> 8) | (px << 8);
+                                }
+#else
                                 memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
+#endif
                             }
                         }
                     }
@@ -1497,6 +1543,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                     esp_task_wdt_reset();
                 } else {
                     navModeActive = false;
+                    switchZoomTable(raster_zooms, raster_zoom_count);
                     // Raster per-tile rendering (PNG/JPG via cache)
                     for (int dy = -1; dy <= 1; dy++) {
                         for (int dx = -1; dx <= 1; dx++) {
