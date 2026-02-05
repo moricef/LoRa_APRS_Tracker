@@ -669,6 +669,9 @@ static void eco_switch_changed(lv_event_t *e) {
         // Enable timeout slider and restore normal colors
         if (timeout_slider) {
             lv_obj_clear_state(timeout_slider, LV_STATE_DISABLED);
+            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x444466), LV_PART_MAIN);
+            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(UIColors::BTN_BLUE), LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(UIColors::TEXT_WHITE), LV_PART_KNOB);
             if (timeout_row) {
                 lv_obj_t* timeout_title = lv_obj_get_child(timeout_row, 0);
                 lv_obj_set_style_text_color(timeout_title, lv_color_hex(UIColors::TEXT_WHITE), 0);
@@ -676,9 +679,12 @@ static void eco_switch_changed(lv_event_t *e) {
             }
         }
     } else {
-        // Disable timeout slider and gray out labels
+        // Disable timeout slider and gray out everything
         if (timeout_slider) {
             lv_obj_add_state(timeout_slider, LV_STATE_DISABLED);
+            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DISABLED);
+            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x555555), LV_PART_INDICATOR | LV_STATE_DISABLED);
+            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x888888), LV_PART_KNOB | LV_STATE_DISABLED);
             if (timeout_row) {
                 lv_obj_t* timeout_title = lv_obj_get_child(timeout_row, 0);
                 lv_obj_set_style_text_color(timeout_title, lv_color_hex(0x666666), 0);
@@ -841,6 +847,9 @@ void UISettings::createDisplayScreen() {
         lv_obj_add_state(timeout_slider, LV_STATE_DISABLED);
         lv_obj_set_style_text_color(timeout_title, lv_color_hex(0x666666), 0);
         lv_obj_set_style_text_color(timeout_label, lv_color_hex(0x666666), 0);
+        lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DISABLED);
+        lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x555555), LV_PART_INDICATOR | LV_STATE_DISABLED);
+        lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x888888), LV_PART_KNOB | LV_STATE_DISABLED);
     }
 
     // Brightness row
