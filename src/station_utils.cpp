@@ -425,6 +425,7 @@ namespace STATION_Utils {
             case 1: filePath = "/freqIndex.txt"; break;
             case 2: filePath = "/brightness.txt"; break;
             case 3: filePath = "/displayEcoMode.txt"; break;
+            case 4: filePath = "/ecoTimeout.txt"; break;
             default: return; // Invalid type, exit function
         }
 
@@ -439,6 +440,7 @@ namespace STATION_Utils {
                 case 1: logMessage = "New Frequency Index"; break;
                 case 2: logMessage = "New Brightness"; break;
                 case 3: logMessage = "Display Eco Mode"; break;
+                case 4: logMessage = "ECO Timeout"; break;
                 default: return; // Invalid type, exit function
             }
             logger.log(logging::LoggerLevel::LOGGER_LEVEL_DEBUG, "Main", "%s saved to SPIFFS", logMessage.c_str());
@@ -453,6 +455,7 @@ namespace STATION_Utils {
             case 1: filePath = "/freqIndex.txt"; break;
             case 2: filePath = "/brightness.txt"; break;
             case 3: filePath = "/displayEcoMode.txt"; break;
+            case 4: filePath = "/ecoTimeout.txt"; break;
             default: return; // Invalid type, exit function
         }
 
@@ -468,6 +471,7 @@ namespace STATION_Utils {
                     #endif
                     break;
                 case 3: displayEcoMode = false; break;  // Default: off
+                case 4: break;  // Keep Config.display.timeout default from JSON
                 default: return; // Invalid type, exit function
             }
             return;
@@ -489,6 +493,11 @@ namespace STATION_Utils {
                 } else if (type == 3) {
                     displayEcoMode = (index != 0);
                     logMessage = "Display Eco Mode:";
+                } else if (type == 4) {
+                    if (index >= 2 && index <= 15) {
+                        Config.display.timeout = index;
+                    }
+                    logMessage = "ECO Timeout:";
                 }
                 logger.log(logging::LoggerLevel::LOGGER_LEVEL_DEBUG, "Main", "%s %s", logMessage.c_str(), firstLine);
             }

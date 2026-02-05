@@ -627,8 +627,12 @@ void UISettings::createCallsignScreen() {
 
 // Display screen widgets
 static lv_obj_t *eco_switch = nullptr;
+static lv_obj_t *timeout_slider = nullptr;
+static lv_obj_t *timeout_label = nullptr;
+static lv_obj_t *timeout_row = nullptr;
 static lv_obj_t *brightness_slider = nullptr;
 static lv_obj_t *brightness_label = nullptr;
+static lv_obj_t *brightness_row = nullptr;
 
 // Brightness range (PWM values)
 static const uint8_t BRIGHT_MIN = 50;
@@ -662,7 +666,17 @@ static void eco_switch_changed(lv_event_t *e) {
 
     if (displayEcoMode) {
         lastActivityTime = millis();
+        // Show timeout row
+        if (timeout_row) {
+            lv_obj_clear_flag(timeout_row, LV_OBJ_FLAG_HIDDEN);
+            if (brightness_row) lv_obj_set_pos(brightness_row, 0, 120);
+        }
     } else {
+        // Hide timeout row
+        if (timeout_row) {
+            lv_obj_add_flag(timeout_row, LV_OBJ_FLAG_HIDDEN);
+            if (brightness_row) lv_obj_set_pos(brightness_row, 0, 55);
+        }
         if (screenDimmed) {
             screenDimmed = false;
 #ifdef BOARD_BL_PIN
@@ -675,6 +689,23 @@ static void eco_switch_changed(lv_event_t *e) {
             }
         }
     }
+}
+
+static void timeout_slider_changed(lv_event_t *e) {
+    lv_obj_t *slider = lv_event_get_target(e);
+    int val = (int)lv_slider_get_value(slider);
+    Config.display.timeout = val;
+
+    if (timeout_label) {
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%ds", val);
+        lv_label_set_text(timeout_label, buf);
+    }
+}
+
+static void timeout_slider_released(lv_event_t *e) {
+    STATION_Utils::saveIndex(4, (uint8_t)Config.display.timeout);
+    Serial.printf("[UISettings] ECO Timeout saved: %ds\n", Config.display.timeout);
 }
 
 static void brightness_slider_changed(lv_event_t *e) {
@@ -763,21 +794,60 @@ void UISettings::createDisplayScreen() {
     }
     lv_obj_add_event_cb(eco_switch, eco_switch_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // Brightness row
-    lv_obj_t *bright_row = lv_obj_create(content);
-    lv_obj_set_size(bright_row, lv_pct(100), 70);
-    lv_obj_set_pos(bright_row, 0, 55);
-    lv_obj_set_style_bg_opa(bright_row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(bright_row, 0, 0);
-    lv_obj_set_style_pad_all(bright_row, 0, 0);
+    // ECO Timeout row
+    timeout_row = lv_obj_create(content);
+    lv_obj_set_size(timeout_row, lv_pct(100), 60);
+    lv_obj_set_pos(timeout_row, 0, 55);
+    lv_obj_set_style_bg_opa(timeout_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(timeout_row, 0, 0);
+    lv_obj_set_style_pad_all(timeout_row, 0, 0);
 
-    lv_obj_t *bright_title = lv_label_create(bright_row);
+    lv_obj_t *timeout_title = lv_label_create(timeout_row);
+    lv_label_set_text(timeout_title, "ECO Timeout");
+    lv_obj_set_style_text_color(timeout_title, lv_color_hex(UIColors::TEXT_WHITE), 0);
+    lv_obj_set_style_text_font(timeout_title, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(timeout_title, 0, 0);
+
+    timeout_label = lv_label_create(timeout_row);
+    char tbuf[8];
+    snprintf(tbuf, sizeof(tbuf), "%ds", Config.display.timeout);
+    lv_label_set_text(timeout_label, tbuf);
+    lv_obj_set_style_text_color(timeout_label, lv_color_hex(0xffd700), 0);
+    lv_obj_set_style_text_font(timeout_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(timeout_label, LV_ALIGN_TOP_RIGHT, 0, 0);
+
+    timeout_slider = lv_slider_create(timeout_row);
+    lv_obj_set_size(timeout_slider, lv_pct(80), 20);
+    lv_obj_align(timeout_slider, LV_ALIGN_TOP_MID, 0, 25);
+    lv_obj_set_style_pad_all(timeout_slider, 5, LV_PART_KNOB);
+    lv_slider_set_range(timeout_slider, 2, 15);
+    lv_slider_set_value(timeout_slider, Config.display.timeout, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x444466), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(UIColors::BTN_BLUE), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(UIColors::TEXT_WHITE), LV_PART_KNOB);
+    lv_obj_add_event_cb(timeout_slider, timeout_slider_changed, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(timeout_slider, timeout_slider_released, LV_EVENT_RELEASED, NULL);
+
+    // Hide timeout row if ECO mode is off
+    if (!displayEcoMode) {
+        lv_obj_add_flag(timeout_row, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // Brightness row
+    brightness_row = lv_obj_create(content);
+    lv_obj_set_size(brightness_row, lv_pct(100), 70);
+    lv_obj_set_pos(brightness_row, 0, displayEcoMode ? 120 : 55);
+    lv_obj_set_style_bg_opa(brightness_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(brightness_row, 0, 0);
+    lv_obj_set_style_pad_all(brightness_row, 0, 0);
+
+    lv_obj_t *bright_title = lv_label_create(brightness_row);
     lv_label_set_text(bright_title, "Brightness");
     lv_obj_set_style_text_color(bright_title, lv_color_hex(UIColors::TEXT_WHITE), 0);
     lv_obj_set_style_text_font(bright_title, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(bright_title, 0, 0);
 
-    brightness_label = lv_label_create(bright_row);
+    brightness_label = lv_label_create(brightness_row);
     int pct = pwmToPercent(screenBrightness);
     char buf[16];
     snprintf(buf, sizeof(buf), "%d%%", pct);
@@ -786,7 +856,7 @@ void UISettings::createDisplayScreen() {
     lv_obj_set_style_text_font(brightness_label, &lv_font_montserrat_14, 0);
     lv_obj_align(brightness_label, LV_ALIGN_TOP_RIGHT, 0, 0);
 
-    brightness_slider = lv_slider_create(bright_row);
+    brightness_slider = lv_slider_create(brightness_row);
     lv_obj_set_size(brightness_slider, lv_pct(80), 20);
     lv_obj_align(brightness_slider, LV_ALIGN_TOP_MID, 0, 30);
     lv_obj_set_style_pad_all(brightness_slider, 5, LV_PART_KNOB);
