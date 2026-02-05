@@ -1280,6 +1280,8 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
     bool found = false;
     
     if (map_current_region.isEmpty()) {
+        Serial.printf("[MAP] loadTileFromSD: map_current_region is empty! Cannot load %d/%d/%d\n",
+                      zoom, tileX, tileY);
         return false;
     }
 
@@ -1313,40 +1315,26 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         return false;
     }
 
-    // --- 5. If a file was found, create sprite and queue for rendering ---
+    // --- 5. SYNCHRONOUS decode + copy to canvas + cache ---
     LGFX_Sprite* newSprite = new LGFX_Sprite(&tft);
     newSprite->setPsram(true);
     if (newSprite->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE) != nullptr) {
-        MapEngine::RenderRequest request;
-        strncpy(request.path, found_path, sizeof(request.path) - 1);
-        request.path[sizeof(request.path) - 1] = '\0';
-        request.xOffset = 0;
-        request.yOffset = 0;
-        request.targetSprite = newSprite;
-        request.zoom = zoom;
-        request.tileX = tileX;
-        request.tileY = tileY;
-
-        if (MapEngine::mapRenderQueue == nullptr) {
-            Serial.println("[MAP] ERROR: Render queue is null. Task not started?");
-            newSprite->deleteSprite();
-            delete newSprite;
-            return false;
+        // renderTile() handles its own SPI mutex internally (recursive)
+        if (MapEngine::renderTile(found_path, 0, 0, *newSprite, (uint8_t)zoom)) {
+            // Copy to canvas IMMEDIATELY
+            MapEngine::copySpriteToCanvasWithClip(canvas, newSprite, offsetX, offsetY);
+            // Cache the sprite (addToCache takes ownership)
+            MapEngine::addToCache(found_path, zoom, tileX, tileY, newSprite);
+            return true;
         }
-
-        if (xQueueSend(MapEngine::mapRenderQueue, &request, 0) == pdPASS) {
-            return true; // Request queued successfully
-        } else {
-            Serial.printf("[MAP] ERROR: Render queue full for: %s. Discarding tile.\n", found_path);
-            newSprite->deleteSprite();
-            delete newSprite;
-            return false;
-        }
+        // Decode failed
+        newSprite->deleteSprite();
+        delete newSprite;
     } else {
         Serial.println("[MAP] ERROR: Sprite creation failed (Out of PSRAM?)");
         delete newSprite;
-        return false;
     }
+    return false;
 }
 
 
@@ -1359,6 +1347,9 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         // Discover and set the map region if it's not already defined
         discoverAndSetMapRegion();
         discoverAndSetNavRegion();
+
+        Serial.printf("[MAP] Regions discovered - Maps: '%s', VectMaps: '%s'\n",
+                      map_current_region.c_str(), nav_current_region.c_str());
 
         // Clean up old station buttons if screen is being recreated
         cleanup_station_buttons();
