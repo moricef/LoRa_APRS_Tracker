@@ -438,6 +438,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     // Load saved settings from storage
     STATION_Utils::loadIndex(2); // Screen Brightness value
     STATION_Utils::loadIndex(3); // Display Eco Mode
+    STATION_Utils::loadIndex(4); // ECO Timeout value
     // Ensure brightness is within valid range for slider
     if (screenBrightness < BRIGHT_MIN)
       screenBrightness = BRIGHT_MIN;
