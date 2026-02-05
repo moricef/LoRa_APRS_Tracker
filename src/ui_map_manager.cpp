@@ -938,17 +938,9 @@ namespace UIMapManager {
                     if (hasTiles) {
                         uint16_t* src = (uint16_t*)persistentViewportSprite->getBuffer();
                         if (src && map_canvas_buf) {
-#if LV_COLOR_16_SWAP
-                            // LGFX sprite is little-endian RGB565, LVGL canvas is big-endian
-                            uint16_t* dst = (uint16_t*)map_canvas_buf;
-                            int totalPixels = MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT;
-                            for (int i = 0; i < totalPixels; i++) {
-                                uint16_t px = src[i];
-                                dst[i] = (px >> 8) | (px << 8);
-                            }
-#else
+                            // NAV rendering uses LGFX native format (big-endian on ESP32)
+                            // No byte-swap needed - direct copy
                             memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
-#endif
                         }
                     }
                 } else {
@@ -1566,16 +1558,9 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                         if (hasTiles && map_canvas_buf) {
                             uint16_t* src = (uint16_t*)persistentViewportSprite->getBuffer();
                             if (src) {
-#if LV_COLOR_16_SWAP
-                                uint16_t* dst = (uint16_t*)map_canvas_buf;
-                                int totalPixels = MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT;
-                                for (int i = 0; i < totalPixels; i++) {
-                                    uint16_t px = src[i];
-                                    dst[i] = (px >> 8) | (px << 8);
-                                }
-#else
+                                // NAV rendering uses LGFX native format (big-endian on ESP32)
+                                // No byte-swap needed - direct copy
                                 memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
-#endif
                             }
                         }
                     }
