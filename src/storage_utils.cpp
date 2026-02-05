@@ -699,8 +699,38 @@ const std::vector<String>& getLastFrames(int count) {
         return digiStats;
     }
 
+    // ========== Dashboard Last RX (RAM only, max 4) ==========
+
+    static const int DASHBOARD_RX_SIZE = 4;
+    static std::vector<DashboardRxEntry> dashboardRx;
+
+    static void updateDashboardRx(const String& callsign, int rssi, float snr) {
+        // Add new entry at front
+        DashboardRxEntry entry;
+        entry.callsign = callsign;
+        entry.rssi = rssi;
+        entry.snr = snr;
+        entry.timestamp = now(); // Unix timestamp for fixed time display
+
+        dashboardRx.insert(dashboardRx.begin(), entry);
+
+        // Keep only last 4
+        if (dashboardRx.size() > DASHBOARD_RX_SIZE) {
+            dashboardRx.resize(DASHBOARD_RX_SIZE);
+        }
+    }
+
+    const std::vector<DashboardRxEntry>& getDashboardLastRx() {
+        return dashboardRx;
+    }
+
+    // ========== Per-station statistics ==========
+
     // Per-station statistics
     void updateStationStats(const String& callsign, int rssi, float snr, bool isDirect) {
+        // Update dashboard Last RX (RAM only, max 4)
+        updateDashboardRx(callsign, rssi, snr);
+
         // Check if station already exists
         for (auto& s : stationStats) {
             if (s.callsign.equalsIgnoreCase(callsign)) {

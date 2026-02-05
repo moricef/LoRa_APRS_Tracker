@@ -1,0 +1,288 @@
+.
+├── arborescence.txt
+├── assets
+│   ├── lora_aprs_bg.png
+│   └── lora_aprs_logo.png
+├── CLAUDE.md
+├── common_settings.ini
+├── data
+│   └── tracker_conf.json
+├── data_embed
+│   ├── bootstrap.css
+│   ├── bootstrap.css.gz
+│   ├── bootstrap.js
+│   ├── bootstrap.js.gz
+│   ├── favicon.png
+│   ├── favicon.png.gz
+│   ├── index.html
+│   ├── index.html.gz
+│   ├── script.js
+│   ├── script.js.gz
+│   ├── style.css
+│   └── style.css.gz
+├── docs
+│   ├── color-chart.html
+│   ├── firmware
+│   │   ├── bootloader.bin
+│   │   ├── firmware.bin
+│   │   ├── partitions.bin
+│   │   └── ttgo_t_deck_plus_433.bin
+│   ├── index.html
+│   ├── manifest.json
+│   └── tdeck_map_screenshot.jpg
+├── extra
+│   └── turn_slope_calculations.xlsx
+├── IceNav-v3
+│   ├── lvgl
+│   │   ├── lv_conf.h
+│   │   └── src
+│   ├── maps
+│   │   └── src
+│   ├── storage
+│   │   ├── storage.cpp
+│   │   └── storage.hpp
+│   └── tasks
+│       ├── tasks.cpp
+│       └── tasks.hpp
+├── images
+│   ├── github-sponsors.png
+│   ├── OledScreen2.jpeg
+│   ├── paypalme.png
+│   ├── Web001-Beacons.png
+│   ├── Web002-StationConfig.png
+│   ├── Web003-Display.png
+│   ├── Web004-LoRa.png
+│   ├── Web005-WxTelemetry.png
+│   ├── Web006-Bluetooth.png
+│   ├── Web007-Battery.png
+│   ├── Web008-Notifications.png
+│   ├── Web009-PttTrigger.png
+│   ├── Web010-Winlink.png
+│   ├── Web011-WiFiAP.png
+│   └── WebFlasherTrackerGithub.png
+├── include
+│   ├── aprs_is_utils.h
+│   ├── battery_utils.h
+│   ├── ble_utils.h
+│   ├── bluetooth_utils.h
+│   ├── button_utils.h
+│   ├── configuration.h
+│   ├── custom_characters.h
+│   ├── custom_colors.h
+│   ├── display.h
+│   ├── gps_utils.h
+│   ├── joystick_utils.h
+│   ├── keyboard_utils.h
+│   ├── kiss_utils.h
+│   ├── LGFX_TDeck.h
+│   ├── lora_aprs_bg.h
+│   ├── lora_aprs_logo.h
+│   ├── lora_utils.h
+│   ├── lvgl_ui.h
+│   ├── menu_utils.h
+│   ├── msg_utils.h
+│   ├── nav_types.h
+│   ├── notification_utils.h
+│   ├── power_utils.h
+│   ├── sd_logger.h
+│   ├── sleep_utils.h
+│   ├── smartbeacon_utils.h
+│   ├── station_utils.h
+│   ├── storage_utils.h
+│   ├── telemetry_utils.h
+│   ├── touch_utils.h
+│   ├── ui_common.h
+│   ├── ui_dashboard.h
+│   ├── ui_map_manager.h
+│   ├── ui_messaging.h
+│   ├── ui_popups.h
+│   ├── ui_settings.h
+│   ├── utils.h
+│   ├── web_utils.h
+│   ├── wifi_utils.h
+│   ├── winlink_utils.h
+│   └── wx_utils.h
+├── LICENSE
+├── METHODOLOGIE.md
+├── platformio.ini
+├── README_LVGL.md
+├── README.md
+├── src
+│   ├── aprs_is_utils.cpp
+│   ├── battery_utils.cpp
+│   ├── ble_utils.cpp
+│   ├── bluetooth_utils.cpp
+│   ├── button_utils.cpp
+│   ├── configuration.cpp
+│   ├── display.cpp
+│   ├── gps_utils.cpp
+│   ├── joystick_utils.cpp
+│   ├── keyboard_utils.cpp
+│   ├── kiss_utils.cpp
+│   ├── lora_aprs_bg.c
+│   ├── lora_aprs_logo.c
+│   ├── LoRa_APRS_Tracker.cpp
+│   ├── lora_utils.cpp
+│   ├── lv_font_mono_12.c
+│   ├── lv_font_mono_14.c
+│   ├── lv_font_mono_16.c
+│   ├── lvgl_ui.cpp
+│   ├── menu_utils.cpp
+│   ├── msg_utils.cpp
+│   ├── notification_utils.cpp
+│   ├── power_utils.cpp
+│   ├── sd_logger.cpp
+│   ├── sleep_utils.cpp
+│   ├── smartbeacon_utils.cpp
+│   ├── station_utils.cpp
+│   ├── storage_utils.cpp
+│   ├── telemetry_utils.cpp
+│   ├── touch_utils.cpp
+│   ├── ui_dashboard.cpp
+│   ├── ui_map_manager.cpp
+│   ├── ui_messaging.cpp
+│   ├── ui_popups.cpp
+│   ├── ui_settings.cpp
+│   ├── utils.cpp
+│   ├── web_utils.cpp
+│   ├── wifi_utils.cpp
+│   ├── winlink_utils.cpp
+│   └── wx_utils.cpp
+├── tools
+│   ├── add_contacts.sh
+│   ├── compress.py
+│   ├── convert_to_jpeg.py
+│   ├── convert_to_png.py
+│   ├── convert_to_raw.py
+│   ├── download_tiles.py
+│   ├── png_to_lvgl.py
+│   └── __pycache__
+│       └── convert_to_raw.cpython-313.pyc
+├── TOUCH_PAN_ANALYSIS.md
+├── variants
+│   ├── esp32_c3_DIY_LoRa_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── esp32_c3_DIY_LoRa_GPS_915
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ESP32_DIY_1W_LoRa_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ESP32_DIY_1W_LoRa_GPS_915
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ESP32_DIY_1W_LoRa_GPS_LLCC68
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ESP32_DIY_LoRa_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ESP32_DIY_LoRa_GPS_915
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ESP32S3_DIY_LoRa_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ESP32S3_DIY_LoRa_GPS_915
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── F4GOH_1W_LoRa_Tracker
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── F4GOH_1W_LoRa_Tracker_LLCC68
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── heltec_ht-ct62_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── heltec-lora32-v2_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── heltec-lora32-v2_GPS_915
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── heltec-lora32-v2_TNC
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── heltec_wifi_lora_32_v3_2_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── heltec_wifi_lora_32_v3_2_TNC
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── heltec_wifi_lora_32_v3_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── heltec_wifi_lora_32_v3_TNC
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── heltec_wireless_stick_lite_v3_GPS_display
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── heltec_wireless_tracker
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── OE5HWN_MeshCom
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── QRPLabs_LightTracker_Plus_1_0
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── RPC_Electronics_1W_LoRa_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── TROY_LoRa_APRS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo_t_beam_s3_SUPREME_v3
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-beam-v0_7
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-beam-v1
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-beam-v1_2
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-beam-v1_2_915
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-beam-v1_2_SX1262
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-beam-v1_915
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-beam-v1_SX1268
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo_t_deck_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo_t_deck_plus_433
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo_t_deck_plus_868
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-lora32-v2_1_GPS
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-lora32-v2_1_GPS_915
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-lora32-v2_1_TNC
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   ├── ttgo-t-lora32-v2_1_TNC_915
+│   │   ├── board_pinout.h
+│   │   └── platformio.ini
+│   └── Wemos_ESP32_Bat_LoRa_GPS
+│       ├── board_pinout.h
+│       └── platformio.ini
+└── VERSIONING.md
+
+61 directories, 225 files

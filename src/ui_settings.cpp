@@ -761,8 +761,8 @@ void UISettings::createDisplayScreen() {
 
     // Content area
     lv_obj_t *content = lv_obj_create(screen_display);
-    lv_obj_set_size(content, UI_SCREEN_WIDTH - 10, UI_SCREEN_HEIGHT - 45);
-    lv_obj_set_pos(content, 5, 40);
+    lv_obj_set_size(content, UI_SCREEN_WIDTH - 10, UI_SCREEN_HEIGHT - 40);
+    lv_obj_set_pos(content, 5, 35);
     lv_obj_set_style_bg_color(content, lv_color_hex(UIColors::BG_DARKER), 0);
     lv_obj_set_style_border_color(content, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_set_style_radius(content, 8, 0);
@@ -836,7 +836,7 @@ void UISettings::createDisplayScreen() {
     // Brightness row
     brightness_row = lv_obj_create(content);
     lv_obj_set_size(brightness_row, lv_pct(100), 70);
-    lv_obj_set_pos(brightness_row, 0, displayEcoMode ? 120 : 55);
+    lv_obj_set_pos(brightness_row, 0, 125);
     lv_obj_set_style_bg_opa(brightness_row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(brightness_row, 0, 0);
     lv_obj_set_style_pad_all(brightness_row, 0, 0);

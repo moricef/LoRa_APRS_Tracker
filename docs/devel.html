@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LoRa APRS Tracker - Web Installer (Stable)</title>
+  <title>LoRa APRS Tracker - Web Installer (Development)</title>
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
   <style>
     body {
@@ -15,7 +15,7 @@
       color: #eee;
     }
     h1 {
-      color: #4CAF50;
+      color: #ff9800;
       text-align: center;
     }
     h2 {
@@ -70,14 +70,24 @@
   </style>
 </head>
 <body>
-  <h1>LoRa APRS Tracker - Stable</h1>
-  <p style="text-align:center" class="version">T-Deck Plus 433 MHz - LVGL UI Edition TFT_eSPI<br>Firmware version: <strong>v1.6.1</strong> (Stable - 2026.01.26)</p>
+  <h1>LoRa APRS Tracker - Development ⚠️</h1>
+  <p style="text-align:center" class="version">T-Deck Plus 433 MHz - LVGL UI Edition - LovyanGFX library- Vector Tiles Map<br>Firmware version: <strong>v2.4.2+dev</strong> (Development Branch)</p>
+
+  <div class="warning">
+    <strong>⚠️ Development Build Warning:</strong>
+    <ul>
+      <li>This is a <strong>development/testing version</strong> with latest features and fixes</li>
+      <li>May contain <strong>unstable or experimental code</strong></li>
+      <li>Use the <a href="index.html" style="color:#ffd700;">Stable version</a> for production use</li>
+      <li>Report issues on <a href="https://github.com/moricef/LoRa_APRS_Tracker/issues">GitHub</a></li>
+    </ul>
+  </div>
 
   <div class="container">
     <h2>Firmware Installation</h2>
     <p>Connect your T-Deck Plus via USB and click the button:</p>
 
-    <esp-web-install-button class="install-btn" manifest="manifest-stable.json">
+    <esp-web-install-button class="install-btn" manifest="manifest-devel.json">
       <button slot="activate">Install Firmware</button>
       <span slot="unsupported">Browser not supported. Use Chrome, Edge, or Chromium.</span>
       <span slot="not-allowed">USB access not authorized.</span>

@@ -1023,14 +1023,14 @@ static void update_frame_item(int index, const String& rawLine) {
     static char summary[80];
     summary[0] = '\0'; // Initialize buffer
 
-    // Extract HH:MM:SS part (starts at index 14 of raw, 8 characters long)
-    // Ex: "[D]YYYY-MM-DD HH:MM:SS GMT: ..." -> HH:MM:SS is at raw[14]
-    char timeStr[9]; // HH:MM:SS\0
-    if (rawLen >= 22) { // Ensure line is long enough to contain time
-        strncpy(timeStr, raw + 14, 8);
-        timeStr[8] = '\0';
+    // Extract MM-DD HH:MM part (12 characters from raw[8])
+    // Ex: "[D]YYYY-MM-DD HH:MM:SS GMT: ..." -> MM-DD HH:MM is at raw[8]
+    char timeStr[13]; // MM-DD HH:MM\0
+    if (rawLen >= 22) { // Ensure line is long enough to contain date+time
+        strncpy(timeStr, raw + 8, 12); // Extract "MM-DD HH:MM"
+        timeStr[12] = '\0';
     } else {
-        strcpy(timeStr, "        "); // Fallback if frame is too short
+        strcpy(timeStr, "            "); // Fallback if frame is too short
     }
 
     // Determine start of actual APRS frame content (after "[X]YYYY-MM-DD HH:MM:SS GMT: ")

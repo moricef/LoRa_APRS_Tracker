@@ -418,32 +418,21 @@ void refreshLoRaInfo() {
 
 void updateLastRx() {
     if (!label_last_rx) return;
-    const std::vector<StationStats> &stations = STORAGE_Utils::getStationStats();
-    if (stations.empty()) {
+    const std::vector<DashboardRxEntry> &entries = STORAGE_Utils::getDashboardLastRx();
+    if (entries.empty()) {
         lv_label_set_text(label_last_rx, "Last RX:\n---");
         return;
     }
 
-    // Sort by reception date
-    std::vector<size_t> indices(stations.size());
-    for (size_t i = 0; i < stations.size(); i++) indices[i] = i;
-    std::sort(indices.begin(), indices.end(), [&stations](size_t a, size_t b) {
-        return stations[a].lastHeard > stations[b].lastHeard;
-    });
-
     String text = "Last RX:";
-    size_t count = (indices.size() < 4) ? indices.size() : 4; 
     char line[128];
 
-    for (size_t i = 0; i < count; i++) {
-        const StationStats &s = stations[indices[i]];
-        
-        // Green (#00ff00) for Direct, Orange (#ffa500) for Digi
-        const char* color = s.lastIsDirect ? "00ff00" : "ffa500";
-        
-        snprintf(line, sizeof(line), "\n#%s %02d:%02d %-9s RSSI:%-4d SNR:%-2.0f#",
-                 color, hour(s.lastHeard), minute(s.lastHeard),
-                 s.callsign.c_str(), s.lastRssi, s.lastSnr);
+    for (size_t i = 0; i < entries.size() && i < 4; i++) {
+        const DashboardRxEntry &e = entries[i];
+
+        // No timestamp - details available in MSG > Frames
+        snprintf(line, sizeof(line), "\n#00ff00 %-9s RSSI:%-4d SNR:%-2.0f#",
+                 e.callsign.c_str(), e.rssi, e.snr);
         text += line;
     }
     lv_label_set_text(label_last_rx, text.c_str());
