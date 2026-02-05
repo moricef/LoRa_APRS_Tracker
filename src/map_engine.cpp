@@ -759,7 +759,7 @@ namespace MapEngine {
         map.startWrite();
 
         struct LabelRect { int16_t x, y, w, h; };
-        std::vector<LabelRect> placedLabels;
+        std::vector<LabelRect, InternalAllocator<LabelRect>> placedLabels;
         placedLabels.reserve(128);
 
         int featureCount = 0;
