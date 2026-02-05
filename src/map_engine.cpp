@@ -12,7 +12,7 @@
 #undef MOTOLONG
 #include <PNGdec.h>
 #include "storage_utils.h"
-#include "FreeSansBold6pt7b.h"
+#include "OpenSansBold6pt7b.h"
 #include <SD.h>
 #include <esp_task_wdt.h>
 #include <algorithm>
@@ -758,6 +758,10 @@ namespace MapEngine {
         // --- Render all layers (IceNav-v3 pattern: maps.cpp:1546-1569) ---
         map.startWrite();
 
+        struct LabelRect { int16_t x, y, w, h; };
+        std::vector<LabelRect> placedLabels;
+        placedLabels.reserve(128);
+
         int featureCount = 0;
         for (int pri = 0; pri < 16; pri++) {
             if (globalLayers[pri].empty()) continue;
@@ -765,6 +769,14 @@ namespace MapEngine {
             for (const auto& ref : globalLayers[pri]) {
                 // WDT reset every 32 features during rendering (prevents WDT timeout)
                 if ((++featureCount & 31) == 0) esp_task_wdt_reset();
+
+                // Yield to LVGL every 512 features to keep touch responsive
+                // (~100ms chunks instead of 2.5s blocking)
+                if ((featureCount & 511) == 0) {
+                    map.endWrite();
+                    lv_timer_handler();
+                    map.startWrite();
+                }
 
                 uint8_t* fp = ref.ptr;
 
@@ -899,10 +911,43 @@ namespace MapEngine {
                             char textBuf[128];
                             memcpy(textBuf, fp + 12 + 5, textLen);
                             textBuf[textLen] = '\0';
-                            map.setFont((lgfx::GFXfont*)&FreeSansBold6pt7b);
+                            map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
                             map.setTextSize(1);
+
+                            // Measure label bbox for collision detection
+                            int tw = map.textWidth(textBuf);
+                            int th = map.fontHeight();
+                            int lx = px - tw / 2;  // center horizontally
+                            int ly = py - th;       // above the point
+                            const int PAD = 4;
+
+                            // Viewport bounds check (label must be at least partially visible)
+                            if (lx + tw < 0 || lx >= viewportW || ly + th < 0 || ly >= viewportH) break;
+
+                            // Check collision with already placed labels
+                            bool collision = false;
+                            for (const auto& r : placedLabels) {
+                                if (lx - PAD < r.x + r.w && lx + tw + PAD > r.x &&
+                                    ly - PAD < r.y + r.h && ly + th + PAD > r.y) {
+                                    collision = true;
+                                    break;
+                                }
+                            }
+                            if (collision) break;
+
+                            // Lift tile clipRect so labels can span tile boundaries
+                            map.clearClipRect();
+
+                            // Draw label
                             map.setTextColor(colorRgb565);
-                            map.drawString(textBuf, px, py);
+                            map.setTextDatum(lgfx::top_center);
+                            map.drawString(textBuf, px, ly);
+                            map.setTextDatum(lgfx::top_left); // restore default
+
+                            // Restore tile clipRect for subsequent features
+                            map.setClipRect(ref.tileOffsetX, ref.tileOffsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
+
+                            placedLabels.push_back({(int16_t)lx, (int16_t)ly, (int16_t)tw, (int16_t)th});
                         }
                         break;
                     }
@@ -1159,7 +1204,7 @@ namespace MapEngine {
                             char textBuf[128];
                             memcpy(textBuf, fp + 12 + 5, textLen);
                             textBuf[textLen] = '\0';
-                            map.setFont((lgfx::GFXfont*)&FreeSansBold6pt7b);
+                            map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
                             map.setTextSize(1);
                             map.setTextColor(colorRgb565);
                             map.drawString(textBuf, px, py);

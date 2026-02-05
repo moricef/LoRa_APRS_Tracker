@@ -158,6 +158,9 @@ static void btn_map_clicked(lv_event_t *e) {
     UIPopups::closeAll();
     Serial.println("[LVGL-DEBUG] Popups closed");
 
+    // Show loading popup
+    UIPopups::showMapLoading();
+
     // Recreate map screen each time to update positions
     if (UIMapManager::screen_map) {
         Serial.println("[LVGL-DEBUG] Deleting old screen_map");
@@ -167,6 +170,10 @@ static void btn_map_clicked(lv_event_t *e) {
     Serial.println("[LVGL-DEBUG] Creating new map screen");
     UIMapManager::create_map_screen();
     Serial.println("[LVGL-DEBUG] Map screen created, loading animation");
+
+    // Hide loading popup now that map is ready
+    UIPopups::hideMapLoading();
+
     lv_scr_load_anim(UIMapManager::screen_map, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
     Serial.println("[LVGL-DEBUG] btn_map_clicked DONE");
 }

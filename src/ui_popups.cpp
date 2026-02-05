@@ -238,6 +238,42 @@ void hideBeaconPending() {
 }
 
 // =============================================================================
+// Map Loading Popup
+// =============================================================================
+
+static lv_obj_t *map_loading_msgbox = nullptr;
+
+void showMapLoading() {
+    Serial.println("[UIPopups] showMapLoading");
+
+    if (map_loading_msgbox && lv_obj_is_valid(map_loading_msgbox)) {
+        lv_obj_del(map_loading_msgbox);
+        map_loading_msgbox = nullptr;
+    }
+
+    map_loading_msgbox = lv_msgbox_create(lv_layer_top(), "MAP",
+                                          "Loading map...", NULL, false);
+    lv_obj_set_size(map_loading_msgbox, 200, 80);
+    lv_obj_set_style_bg_color(map_loading_msgbox, lv_color_hex(0x003311), 0);
+    lv_obj_set_style_bg_opa(map_loading_msgbox, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(map_loading_msgbox, lv_color_hex(0x009933), 0);
+    lv_obj_set_style_border_width(map_loading_msgbox, 3, 0);
+    lv_obj_set_style_text_color(map_loading_msgbox, lv_color_hex(0x00ff66), 0);
+    lv_obj_center(map_loading_msgbox);
+
+    lv_refr_now(NULL);
+
+    Serial.println("[UIPopups] Map loading msgbox created");
+}
+
+void hideMapLoading() {
+    if (map_loading_msgbox && lv_obj_is_valid(map_loading_msgbox)) {
+        lv_obj_del(map_loading_msgbox);
+        map_loading_msgbox = nullptr;
+    }
+}
+
+// =============================================================================
 // WiFi Eco Mode Popup
 // =============================================================================
 

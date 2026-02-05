@@ -25,6 +25,10 @@ namespace UIPopups {
     void showBeaconPending();
     void hideBeaconPending();
 
+    // Map loading popup
+    void showMapLoading();
+    void hideMapLoading();
+
     // WiFi Eco Mode popup
     void showWiFiEcoMode();
 
