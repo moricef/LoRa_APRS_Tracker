@@ -24,6 +24,10 @@ static LGFX_Sprite* targetSprite_ = nullptr;
 
 namespace MapEngine {
 
+    // VLW Unicode font for map labels
+    static lgfx::VLWfont vlwFont;
+    static bool vlwFontLoaded = false;
+
     // Handles for the asynchronous rendering system
     QueueHandle_t mapRenderQueue = nullptr;
     SemaphoreHandle_t spriteMutex = nullptr;
@@ -262,7 +266,82 @@ namespace MapEngine {
     void clearTileCache() {
         initTileCache();
     }
-    
+
+    // Shrink projection buffers to baseline capacity to prevent memory bloat
+    void shrinkProjectionBuffers() {
+        const size_t BASELINE_CAPACITY = 1024;
+        if (proj16X.capacity() > BASELINE_CAPACITY * 2) {
+            proj16X.clear();
+            proj16X.shrink_to_fit();
+            proj16X.reserve(BASELINE_CAPACITY);
+        }
+        if (proj16Y.capacity() > BASELINE_CAPACITY * 2) {
+            proj16Y.clear();
+            proj16Y.shrink_to_fit();
+            proj16Y.reserve(BASELINE_CAPACITY);
+        }
+        if (proj32X.capacity() > BASELINE_CAPACITY * 2) {
+            proj32X.clear();
+            proj32X.shrink_to_fit();
+            proj32X.reserve(BASELINE_CAPACITY);
+        }
+        if (proj32Y.capacity() > BASELINE_CAPACITY * 2) {
+            proj32Y.clear();
+            proj32Y.shrink_to_fit();
+            proj32Y.reserve(BASELINE_CAPACITY);
+        }
+    }
+
+    // Load VLW Unicode font for map labels from SD card
+    static uint8_t* vlwFontData = nullptr;
+
+    bool loadMapFont() {
+        if (vlwFontLoaded) return true;
+
+        const char* fontPath = "/LoRa_Tracker/fonts/OpenSans-Bold-12.vlw";
+        if (!SD.exists(fontPath)) {
+            Serial.printf("[MAP] VLW font not found: %s (will use fallback GFX font)\n", fontPath);
+            return false;
+        }
+
+        File file = SD.open(fontPath, FILE_READ);
+        if (!file) {
+            Serial.printf("[MAP] Failed to open VLW font: %s\n", fontPath);
+            return false;
+        }
+
+        size_t fileSize = file.size();
+        vlwFontData = (uint8_t*)heap_caps_malloc(fileSize, MALLOC_CAP_SPIRAM);
+        if (!vlwFontData) {
+            Serial.printf("[MAP] Failed to allocate %d bytes in PSRAM for VLW font\n", fileSize);
+            file.close();
+            return false;
+        }
+
+        size_t bytesRead = file.read(vlwFontData, fileSize);
+        file.close();
+
+        if (bytesRead != fileSize) {
+            Serial.printf("[MAP] Failed to read VLW font: read %d/%d bytes\n", bytesRead, fileSize);
+            heap_caps_free(vlwFontData);
+            vlwFontData = nullptr;
+            return false;
+        }
+
+        lgfx::PointerWrapper wrapper;
+        wrapper.set(vlwFontData, fileSize);
+        if (vlwFont.loadFont(&wrapper)) {
+            vlwFontLoaded = true;
+            Serial.printf("[MAP] Loaded VLW font: %s (%d bytes in PSRAM)\n", fontPath, fileSize);
+            return true;
+        }
+
+        Serial.printf("[MAP] VLW font validation failed\n");
+        heap_caps_free(vlwFontData);
+        vlwFontData = nullptr;
+        return false;
+    }
+
     // Find a tile in cache by its coordinates, returns index or -1
     int findCachedTile(int zoom, int tileX, int tileY) {
         uint32_t tileHash = (static_cast<uint32_t>(zoom) << 28) | (static_cast<uint32_t>(tileX) << 14) | static_cast<uint32_t>(tileY);
@@ -1024,8 +1103,17 @@ namespace MapEngine {
                             char textBuf[128];
                             memcpy(textBuf, fp + 12 + 5, textLen);
                             textBuf[textLen] = '\0';
-                            map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
-                            map.setTextSize(1);
+
+                            // Use VLW Unicode font if loaded, fallback to GFX font
+                            if (vlwFontLoaded) {
+                                map.setFont(&vlwFont);
+                                // Scale VLW font based on fontSize (0=small, 1=medium, 2=large)
+                                float scale = (fontSize == 0) ? 0.8f : (fontSize == 1) ? 1.0f : 1.2f;
+                                map.setTextSize(scale);
+                            } else {
+                                map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
+                                map.setTextSize(1);
+                            }
 
                             // Measure label bbox for collision detection
                             int tw = map.textWidth(textBuf);
@@ -1370,6 +1458,7 @@ namespace MapEngine {
                         break;
                     }
                     case 4: { // Text label (GEOM_TEXT)
+                        uint8_t fontSize = fp[4];
                         int16_t* coords = (int16_t*)(fp + 12);
                         int px = (coords[0] >> 4) + xOffset;
                         int py = (coords[1] >> 4) + yOffset;
@@ -1378,8 +1467,17 @@ namespace MapEngine {
                             char textBuf[128];
                             memcpy(textBuf, fp + 12 + 5, textLen);
                             textBuf[textLen] = '\0';
-                            map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
-                            map.setTextSize(1);
+
+                            // Use VLW Unicode font if loaded, fallback to GFX font
+                            if (vlwFontLoaded) {
+                                map.setFont(&vlwFont);
+                                // Scale VLW font based on fontSize (0=small, 1=medium, 2=large)
+                                float scale = (fontSize == 0) ? 0.8f : (fontSize == 1) ? 1.0f : 1.2f;
+                                map.setTextSize(scale);
+                            } else {
+                                map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
+                                map.setTextSize(1);
+                            }
                             map.setTextColor(colorRgb565);
                             map.drawString(textBuf, px, py);
                         }

@@ -32,11 +32,11 @@ extern SemaphoreHandle_t spiMutex; // Declared extern for SPI bus mutex access
 
 // Map constants
 #define MAP_TILE_SIZE 256
-#define MAP_CANVAS_WIDTH   600
-#define MAP_CANVAS_HEIGHT  520
+#define MAP_CANVAS_WIDTH   832  // 320 visible + 2×256 margin
+#define MAP_CANVAS_HEIGHT  752  // 240 visible + 2×256 margin
 #define MAP_VISIBLE_WIDTH 320  // Visible area on screen
 #define MAP_VISIBLE_HEIGHT 200
-#define MAP_CANVAS_MARGIN 128  // Margin on each side (half tile)
+#define MAP_CANVAS_MARGIN 256  // Margin on each side (allows 246px pan = 77% screen width)
 
 // Dimensions de l'affichage
 #define SCREEN_WIDTH  320

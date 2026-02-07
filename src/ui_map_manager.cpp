@@ -1125,6 +1125,14 @@ namespace UIMapManager {
             drag_start_lat = map_center_lat;
             drag_start_lon = map_center_lon;
             touch_dragging = false;
+
+            // Cancel pending reload timer to allow immediate pan response
+            // Avoids starting a redraw just as user begins a new pan
+            if (pending_reload_timer) {
+                lv_timer_del(pending_reload_timer);
+                pending_reload_timer = nullptr;
+            }
+
             Serial.printf("[MAP] Touch PRESSED at %d,%d - start pos: %.4f, %.4f\n",
                           point.x, point.y, drag_start_lat, drag_start_lon);
         }
@@ -1431,6 +1439,9 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
 
         Serial.printf("[MAP] Regions discovered - Maps: '%s', VectMaps: '%s'\n",
                       map_current_region.c_str(), nav_current_region.c_str());
+
+        // Load Unicode font for map labels (VLW from SD)
+        MapEngine::loadMapFont();
 
         // Clean up old station buttons if screen is being recreated
         cleanup_station_buttons();

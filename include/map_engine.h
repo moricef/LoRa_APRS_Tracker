@@ -45,6 +45,8 @@ namespace MapEngine {
     void stopRenderTask();
     void initTileCache();
     void clearTileCache();
+    void shrinkProjectionBuffers();
+    bool loadMapFont();
     bool renderNavViewport(float centerLat, float centerLon, uint8_t zoom,
                            LGFX_Sprite &map, const char* region);
     bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map, uint8_t zoom = 0);
