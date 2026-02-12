@@ -339,6 +339,18 @@ void loop() {
         #ifdef USE_LVGL_UI
             LVGL_UI::refreshFramesList();
         #endif
+
+        // Repeater mode: retransmit received packet with proper APRS digipeating
+        if (Config.lora.repeaterMode) {
+            String digipeatedPacket = APRSPacketLib::generateDigipeatedPacket(packet.text, currentBeacon->callsign, Config.path);
+            if (digipeatedPacket != "X") {
+                logger.log(logging::LoggerLevel::LOGGER_LEVEL_INFO, "Repeater", "Digipeating: %s", digipeatedPacket.c_str());
+                delay(random(100, 500)); // Random delay to avoid collisions
+                LoRa_Utils::sendNewPacket(digipeatedPacket);
+            } else {
+                logger.log(logging::LoggerLevel::LOGGER_LEVEL_WARN, "Repeater", "Packet won't be repeated (Missing WIDEn-N)");
+            }
+        }
     }
     
     MSG_Utils::checkReceivedMessage(packet);
