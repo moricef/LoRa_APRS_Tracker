@@ -125,6 +125,94 @@ namespace STATION_Utils {
         mapStationsCount = 0;
     }
 
+    // Douglas-Peucker algorithm: perpendicular distance from point to line segment
+    static float perpendicularDistance(float px, float py, float x1, float y1, float x2, float y2) {
+        float dx = x2 - x1;
+        float dy = y2 - y1;
+
+        // Line segment length squared
+        float lenSq = dx * dx + dy * dy;
+        if (lenSq == 0.0f) {
+            // Degenerate case: start == end
+            float ddx = px - x1;
+            float ddy = py - y1;
+            return sqrtf(ddx * ddx + ddy * ddy);
+        }
+
+        // Project point onto line, clamped to segment
+        float t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+        t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+
+        float projX = x1 + t * dx;
+        float projY = y1 + t * dy;
+
+        float ddx = px - projX;
+        float ddy = py - projY;
+        return sqrtf(ddx * ddx + ddy * ddy);
+    }
+
+    // Douglas-Peucker simplification: reduce trace points while keeping shape
+    static void douglasPeuckerSimplify(TracePoint* trace, int start, int end, bool* keep, float epsilon) {
+        if (end <= start + 1) return;
+
+        // Find point with max distance from line segment [start, end]
+        float maxDist = 0.0f;
+        int maxIndex = start;
+
+        for (int i = start + 1; i < end; i++) {
+            float dist = perpendicularDistance(
+                trace[i].lat, trace[i].lon,
+                trace[start].lat, trace[start].lon,
+                trace[end].lat, trace[end].lon
+            );
+            if (dist > maxDist) {
+                maxDist = dist;
+                maxIndex = i;
+            }
+        }
+
+        // If max distance > epsilon, keep that point and recurse
+        if (maxDist > epsilon) {
+            keep[maxIndex] = true;
+            douglasPeuckerSimplify(trace, start, maxIndex, keep, epsilon);
+            douglasPeuckerSimplify(trace, maxIndex, end, keep, epsilon);
+        }
+    }
+
+    // Simplify station trace when it exceeds TRACE_MAX_POINTS
+    static void simplifyTrace(MapStation* station) {
+        if (station->traceCount < TRACE_MAX_POINTS) return;
+
+        // Build linear array from circular buffer
+        TracePoint linear[TRACE_MAX_POINTS];
+        for (int i = 0; i < station->traceCount; i++) {
+            int idx = (station->traceHead - station->traceCount + i + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
+            linear[i] = station->trace[idx];
+        }
+
+        // Mark which points to keep (first and last always kept)
+        bool keep[TRACE_MAX_POINTS];
+        for (int i = 0; i < TRACE_MAX_POINTS; i++) keep[i] = false;
+        keep[0] = true;
+        keep[station->traceCount - 1] = true;
+
+        // Apply Douglas-Peucker with tolerance (0.0002° ≈ 22m)
+        douglasPeuckerSimplify(linear, 0, station->traceCount - 1, keep, 0.0002f);
+
+        // Rebuild trace with kept points only
+        int newCount = 0;
+        for (int i = 0; i < station->traceCount; i++) {
+            if (keep[i]) {
+                station->trace[newCount++] = linear[i];
+            }
+        }
+
+        station->traceCount = newCount;
+        station->traceHead = newCount % TRACE_MAX_POINTS;
+
+        Serial.printf("[STATION] Trace simplified: %d -> %d points\n", TRACE_MAX_POINTS, newCount);
+    }
+
     // Add or update a station for the map
     void addMapStation(const String& callsign, float lat, float lon, const String& symbol, const String& overlay, int rssi) {
         // Skip if no valid position
@@ -137,6 +225,12 @@ namespace STATION_Utils {
                 float dlat = fabs(mapStations[i].latitude - lat);
                 float dlon = fabs(mapStations[i].longitude - lon);
                 if (dlat > 0.0001f || dlon > 0.0001f) {
+                    // Simplify trace if full, to keep origin and end visible
+                    if (mapStations[i].traceCount >= TRACE_MAX_POINTS) {
+                        simplifyTrace(&mapStations[i]);
+                    }
+
+                    // Add old position to trace
                     mapStations[i].trace[mapStations[i].traceHead].lat = mapStations[i].latitude;
                     mapStations[i].trace[mapStations[i].traceHead].lon = mapStations[i].longitude;
                     mapStations[i].traceHead = (mapStations[i].traceHead + 1) % TRACE_MAX_POINTS;

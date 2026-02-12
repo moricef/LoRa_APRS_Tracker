@@ -276,6 +276,7 @@ bool Configuration::readFile() {
 
         if (!data["loraConfig"].containsKey("sendInfo")) needsRewrite = true;
         lora.sendInfo                   = data["loraConfig"]["sendInfo"] | true;
+        if (!data["loraConfig"].containsKey("repeaterMode")) needsRewrite = true;
         lora.repeaterMode               = data["loraConfig"]["repeaterMode"] | false;
 
         if (!data["telemetry"].containsKey("active") ||

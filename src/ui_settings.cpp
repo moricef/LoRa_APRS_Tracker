@@ -62,6 +62,7 @@ static lv_obj_t *screen_speed = nullptr;
 static lv_obj_t *screen_callsign = nullptr;
 static lv_obj_t *screen_display = nullptr;
 static lv_obj_t *screen_sound = nullptr;
+static lv_obj_t *screen_repeater = nullptr;
 static lv_obj_t *screen_wifi = nullptr;
 static lv_obj_t *screen_bluetooth = nullptr;
 static lv_obj_t *screen_webconf = nullptr;
@@ -105,6 +106,7 @@ static void setup_item_frequency(lv_event_t *e);
 static void setup_item_speed(lv_event_t *e);
 static void setup_item_display(lv_event_t *e);
 static void setup_item_sound(lv_event_t *e);
+static void setup_item_repeater(lv_event_t *e);
 static void setup_item_wifi(lv_event_t *e);
 static void setup_item_bluetooth(lv_event_t *e);
 static void setup_item_webconf(lv_event_t *e);
@@ -213,6 +215,14 @@ static void setup_item_sound(lv_event_t *e) {
         UISettings::createSoundScreen();
     }
     lv_scr_load_anim(screen_sound, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+}
+
+static void setup_item_repeater(lv_event_t *e) {
+    Serial.println("[UISettings] Repeater selected");
+    if (!screen_repeater) {
+        UISettings::createRepeaterScreen();
+    }
+    lv_scr_load_anim(screen_repeater, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_wifi(lv_event_t *e) {
@@ -329,6 +339,9 @@ void UISettings::createSetupScreen() {
 
     btn = lv_list_add_btn(list, LV_SYMBOL_AUDIO, "Sound");
     lv_obj_add_event_cb(btn, setup_item_sound, LV_EVENT_CLICKED, NULL);
+
+    btn = lv_list_add_btn(list, LV_SYMBOL_LOOP, "Repeater");
+    lv_obj_add_event_cb(btn, setup_item_repeater, LV_EVENT_CLICKED, NULL);
 
     btn = lv_list_add_btn(list, LV_SYMBOL_WIFI, "WiFi");
     lv_obj_add_event_cb(btn, setup_item_wifi, LV_EVENT_CLICKED, NULL);
@@ -1213,6 +1226,99 @@ static void update_wifi_screen_status() {
 static void wifi_screen_timer_cb(lv_timer_t *timer) {
     update_wifi_screen_status();
 }
+
+// =============================================================================
+// Repeater Screen
+// =============================================================================
+
+static void repeater_switch_changed(lv_event_t *e) {
+    lv_obj_t *sw = lv_event_get_target(e);
+    Config.lora.repeaterMode = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    Config.writeFile();
+    Serial.printf("[UISettings] Repeater mode: %s\n", Config.lora.repeaterMode ? "ON" : "OFF");
+}
+
+void UISettings::createRepeaterScreen() {
+    screen_repeater = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(screen_repeater, lv_color_hex(UIColors::BG_DARK), 0);
+
+    // Title bar
+    lv_obj_t *title_bar = lv_obj_create(screen_repeater);
+    lv_obj_set_size(title_bar, UI_SCREEN_WIDTH, 35);
+    lv_obj_set_pos(title_bar, 0, 0);
+    lv_obj_set_style_bg_color(title_bar, lv_color_hex(UIColors::TEXT_PURPLE), 0);
+    lv_obj_set_style_border_width(title_bar, 0, 0);
+    lv_obj_set_style_radius(title_bar, 0, 0);
+    lv_obj_set_style_pad_all(title_bar, 5, 0);
+
+    // Back button
+    lv_obj_t *btn_back = lv_btn_create(title_bar);
+    lv_obj_set_size(btn_back, 60, 25);
+    lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
+    lv_obj_add_event_cb(btn_back, btn_back_to_setup_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_back = lv_label_create(btn_back);
+    lv_label_set_text(lbl_back, "< BACK");
+    lv_obj_center(lbl_back);
+
+    // Title
+    lv_obj_t *title = lv_label_create(title_bar);
+    lv_label_set_text(title, "Repeater");
+    lv_obj_set_style_text_color(title, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_18, 0);
+    lv_obj_align(title, LV_ALIGN_CENTER, 20, 0);
+
+    // Content area
+    lv_obj_t *content = lv_obj_create(screen_repeater);
+    lv_obj_set_size(content, UI_SCREEN_WIDTH - 10, UI_SCREEN_HEIGHT - 45);
+    lv_obj_set_pos(content, 5, 40);
+    lv_obj_set_style_bg_color(content, lv_color_hex(UIColors::BG_DARKER), 0);
+    lv_obj_set_style_border_color(content, lv_color_hex(UIColors::BG_HEADER), 0);
+    lv_obj_set_style_radius(content, 8, 0);
+    lv_obj_set_style_pad_all(content, 15, 0);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // Repeater ON/OFF row
+    lv_obj_t *repeater_row = lv_obj_create(content);
+    lv_obj_set_size(repeater_row, lv_pct(100), 40);
+    lv_obj_set_style_bg_opa(repeater_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(repeater_row, 0, 0);
+    lv_obj_set_style_pad_all(repeater_row, 0, 0);
+
+    lv_obj_t *repeater_label = lv_label_create(repeater_row);
+    lv_label_set_text(repeater_label, "Repeater Mode");
+    lv_obj_set_style_text_color(repeater_label, lv_color_hex(UIColors::TEXT_WHITE), 0);
+    lv_obj_set_style_text_font(repeater_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(repeater_label, LV_ALIGN_LEFT_MID, 0, 0);
+
+    lv_obj_t *repeater_switch = lv_switch_create(repeater_row);
+    lv_obj_set_size(repeater_switch, 50, 25);
+    lv_obj_align(repeater_switch, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(repeater_switch, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(repeater_switch, lv_color_hex(UIColors::TEXT_GREEN),
+                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(repeater_switch, lv_color_hex(UIColors::TEXT_WHITE), LV_PART_KNOB);
+    if (Config.lora.repeaterMode) {
+        lv_obj_add_state(repeater_switch, LV_STATE_CHECKED);
+    }
+    lv_obj_add_event_cb(repeater_switch, repeater_switch_changed, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Description
+    lv_obj_t *desc_label = lv_label_create(content);
+    lv_label_set_long_mode(desc_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(desc_label, lv_pct(95));
+    lv_label_set_text(desc_label,
+        "When enabled, received LoRa packets will be automatically retransmitted.\n\n"
+        "This allows the tracker to act as a digipeater, extending the range of the APRS network.");
+    lv_obj_set_style_text_color(desc_label, lv_color_hex(0xaaaaaa), 0);
+    lv_obj_set_style_text_font(desc_label, &lv_font_montserrat_12, 0);
+
+    Serial.println("[UISettings] Repeater screen created");
+}
+
+// =============================================================================
+// WiFi Screen
+// =============================================================================
 
 void UISettings::createWifiScreen() {
     screen_wifi = lv_obj_create(NULL);

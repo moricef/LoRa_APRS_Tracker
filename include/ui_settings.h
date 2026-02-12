@@ -21,6 +21,7 @@ namespace UISettings {
     void createCallsignScreen();
     void createDisplayScreen();
     void createSoundScreen();
+    void createRepeaterScreen();
     void createWifiScreen();
     void createBluetoothScreen();
     void createAboutScreen();

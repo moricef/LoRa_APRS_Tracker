@@ -352,7 +352,7 @@ void loop() {
             }
         }
     }
-    
+
     MSG_Utils::checkReceivedMessage(packet);
     MSG_Utils::processOutputBuffer();
     MSG_Utils::clean15SegBuffer();
