@@ -695,6 +695,14 @@ const std::vector<String>& getLastFrames(int count) {
         return linkStats;
     }
 
+    float getAvgRssi() {
+        return linkStats.rxCount > 0 ? (float)linkStats.rssiTotal / linkStats.rxCount : 0.0f;
+    }
+
+    float getAvgSnr() {
+        return linkStats.rxCount > 0 ? linkStats.snrTotal / linkStats.rxCount : 0.0f;
+    }
+
     const std::vector<DigiStats>& getDigiStats() {
         return digiStats;
     }
@@ -737,6 +745,8 @@ const std::vector<String>& getLastFrames(int count) {
                 s.count++;
                 s.lastRssi = rssi;
                 s.lastSnr = snr;
+                s.rssiTotal += rssi;
+                s.snrTotal += snr;
                 s.lastHeard = now(); // Unix timestamp from GPS/RTC
                 s.lastIsDirect = isDirect;
                 statsDirty = true;
@@ -751,6 +761,8 @@ const std::vector<String>& getLastFrames(int count) {
         newStation.count = 1;
         newStation.lastRssi = rssi;
         newStation.lastSnr = snr;
+        newStation.rssiTotal = rssi;
+        newStation.snrTotal = snr;
         newStation.lastHeard = now();
         newStation.lastIsDirect = isDirect;
 
@@ -820,8 +832,17 @@ const std::vector<String>& getLastFrames(int count) {
                 s.count       = obj["cnt"]    | (uint32_t)0;
                 s.lastRssi    = obj["rssi"]   | 0;
                 s.lastSnr     = obj["snr"]    | 0.0f;
+                s.rssiTotal   = obj["rssiTotal"] | (int32_t)0;
+                s.snrTotal    = obj["snrTotal"]  | 0.0f;
                 s.lastHeard   = obj["heard"]  | (uint32_t)0;
                 s.lastIsDirect= obj["direct"] | false;
+
+                // Migration: initialize totals from last values if missing (old format)
+                if (s.rssiTotal == 0 && s.snrTotal == 0.0f && s.count > 0) {
+                    s.rssiTotal = s.lastRssi * s.count;
+                    s.snrTotal = s.lastSnr * s.count;
+                }
+
                 if (s.callsign.length() > 0) {
                     stationStats.push_back(s);
                 }
@@ -858,6 +879,8 @@ const std::vector<String>& getLastFrames(int count) {
             obj["cnt"]    = s.count;
             obj["rssi"]   = s.lastRssi;
             obj["snr"]    = s.lastSnr;
+            obj["rssiTotal"] = s.rssiTotal;
+            obj["snrTotal"]  = s.snrTotal;
             obj["heard"]  = s.lastHeard;
             obj["direct"] = s.lastIsDirect;
         }

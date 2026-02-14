@@ -55,6 +55,8 @@ struct StationStats {
     uint32_t count;         // Total packets received
     int lastRssi;
     float lastSnr;
+    int32_t rssiTotal;      // For average calculation
+    float snrTotal;         // For average calculation
     uint32_t lastHeard;     // Unix timestamp
     bool lastIsDirect;
 };
@@ -117,6 +119,8 @@ namespace STORAGE_Utils {
     void updateAckStats();
     void updateDigiStats(const String& path);
     LinkStats getStats();
+    float getAvgRssi();
+    float getAvgSnr();
     const std::vector<DigiStats>& getDigiStats();
 
     // Per-station statistics

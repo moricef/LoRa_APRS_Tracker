@@ -1204,12 +1204,14 @@ static void populate_stats(lv_obj_t *cont) {
                 snprintf(buf, sizeof(buf), "%d", s.count);
                 lv_table_set_cell_value(stats_table, row, 1, buf);
 
-                // RSSI
-                snprintf(buf, sizeof(buf), "%d", s.lastRssi);
+                // RSSI (average)
+                float avgRssi = s.count > 0 ? (float)s.rssiTotal / s.count : 0.0f;
+                snprintf(buf, sizeof(buf), "%.1f", avgRssi);
                 lv_table_set_cell_value(stats_table, row, 2, buf);
 
-                // SNR
-                snprintf(buf, sizeof(buf), "%.1f", s.lastSnr);
+                // SNR (average)
+                float avgSnr = s.count > 0 ? s.snrTotal / s.count : 0.0f;
+                snprintf(buf, sizeof(buf), "%.1f", avgSnr);
                 lv_table_set_cell_value(stats_table, row, 3, buf);
             }
         }
