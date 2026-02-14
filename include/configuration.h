@@ -112,6 +112,7 @@ public:
 class Lora {
 public:
     bool    sendInfo;
+    bool    repeaterMode;
 };
 
 class PTT {

@@ -108,6 +108,7 @@ bool Configuration::writeFile() {
         data["battery"]["sleepVoltage"]             = battery.sleepVoltage;
 
         data["loraConfig"]["sendInfo"]              = lora.sendInfo;
+        data["loraConfig"]["repeaterMode"]          = lora.repeaterMode;
 
         data["telemetry"]["active"]                 = telemetry.active;
         data["telemetry"]["sendTelemetry"]          = telemetry.sendTelemetry;
@@ -275,6 +276,7 @@ bool Configuration::readFile() {
 
         if (!data["loraConfig"].containsKey("sendInfo")) needsRewrite = true;
         lora.sendInfo                   = data["loraConfig"]["sendInfo"] | true;
+        lora.repeaterMode               = data["loraConfig"]["repeaterMode"] | false;
 
         if (!data["telemetry"].containsKey("active") ||
             !data["telemetry"].containsKey("sendTelemetry") ||
@@ -484,6 +486,7 @@ void Configuration::setDefaultValues() {
     battery.sleepVoltage            = 2.9;
 
     lora.sendInfo                   = true;
+    lora.repeaterMode               = false;
 
     telemetry.active                 = false;
     telemetry.sendTelemetry          = false;
