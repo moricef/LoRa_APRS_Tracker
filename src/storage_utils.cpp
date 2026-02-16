@@ -117,6 +117,9 @@ namespace STORAGE_Utils {
 
                     // Create directory structure
                     createDirectoryStructure();
+
+                    // Load last 20 frames from SD into RAM cache
+                    loadFramesFromSD();
                 }
             } else {
                 Serial.println("[Storage] SD card init failed, using SPIFFS");
@@ -532,6 +535,46 @@ const std::vector<String>& getLastFrames(int count) {
     
     return framesCacheOrdered;
 }
+
+    // Load last 20 frames from SD card into RAM cache (called at boot)
+    void loadFramesFromSD() {
+        if (!sdAvailable) {
+            Serial.println("[Storage] No SD card, frames not loaded");
+            return;
+        }
+
+        File file = SD.open(FRAMES_FILE, FILE_READ);
+        if (!file) {
+            Serial.println("[Storage] No frames file, starting fresh");
+            return;
+        }
+
+        // Read all lines into a temporary buffer
+        std::vector<String> allLines;
+        allLines.reserve(100); // Reserve space to avoid reallocations
+        while (file.available()) {
+            String line = file.readStringUntil('\n');
+            if (line.length() > 0) {
+                allLines.push_back(line);
+            }
+        }
+        file.close();
+
+        // Keep only the last 20 lines
+        int totalLines = allLines.size();
+        int startIdx = (totalLines > 20) ? (totalLines - 20) : 0;
+        int loadCount = totalLines - startIdx;
+
+        // Load into cache RAM (oldest first, so newest is at head)
+        for (int i = 0; i < loadCount; i++) {
+            framesCache[framesCacheHead] = allLines[startIdx + i];
+            framesCacheHead = (framesCacheHead + 1) % FRAMES_CACHE_SIZE;
+            if (framesCacheCount < FRAMES_CACHE_SIZE) framesCacheCount++;
+        }
+
+        Serial.printf("[Storage] Loaded %d frames from SD\n", loadCount);
+        framesDirty = true;
+    }
 
     // ========== Link Statistics ==========
 

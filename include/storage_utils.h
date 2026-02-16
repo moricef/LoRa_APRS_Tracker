@@ -111,6 +111,7 @@ namespace STORAGE_Utils {
     void updateStationStats(const String& callsign, int rssi, float snr, bool isDirect);
     const std::vector<String>& getLastFrames(int count);
     void checkFramesLogRotation();
+    void loadFramesFromSD();
 
     // Link statistics
     void resetStats();
