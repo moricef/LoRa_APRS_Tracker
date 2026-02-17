@@ -937,24 +937,18 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= viewportW ||
                             maxPy < 0 || minPy >= viewportH) break;
 
-                        // Casing: circles at all vertices first (uniform caps), then segment bodies
-                        if (hasCasing) {
-                            uint8_t casingWidth = widthPixels + 2;
-                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.35f);
-                            for (size_t j = 0; j < validPoints; j++)
-                                map.fillCircle(pxArr[j], pyArr[j], casingWidth / 2, casingColor);
+                        // Casing first: thin drawWideLine underneath, +1px wider
+                        if (hasCasing && widthPixels > 2) {
+                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.70f);
+                            uint8_t casingWidth = widthPixels + 1;
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
                         }
-                        // Road fill: circles with radius=casingWidth/2 to fully cover casing caps at joints,
-                        // then segment bodies. Without casing, just draw lines.
+                        // Road fill on top
                         if (widthPixels <= 2) {
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                         } else {
-                            uint8_t coverR = hasCasing ? (widthPixels + 2) / 2 : widthPixels / 2;
-                            for (size_t j = 0; j < validPoints; j++)
-                                map.fillCircle(pxArr[j], pyArr[j], coverR, colorRgb565);
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
                         }
@@ -1299,24 +1293,18 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= MAP_TILE_SIZE ||
                             maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
 
-                        // Casing: circles at all vertices first (uniform caps), then segment bodies
-                        if (hasCasing) {
-                            uint8_t casingWidth = widthPixels + 2;
-                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.35f);
-                            for (size_t j = 0; j < validPoints; j++)
-                                map.fillCircle(pxArr[j], pyArr[j], casingWidth / 2, casingColor);
+                        // Casing first: thin drawWideLine underneath, +1px wider
+                        if (hasCasing && widthPixels > 2) {
+                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.70f);
+                            uint8_t casingWidth = widthPixels + 1;
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
                         }
-                        // Road fill: circles with radius=casingWidth/2 to fully cover casing caps at joints,
-                        // then segment bodies. Without casing, just draw lines.
+                        // Road fill on top
                         if (widthPixels <= 2) {
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                         } else {
-                            uint8_t coverR = hasCasing ? (widthPixels + 2) / 2 : widthPixels / 2;
-                            for (size_t j = 0; j < validPoints; j++)
-                                map.fillCircle(pxArr[j], pyArr[j], coverR, colorRgb565);
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
                         }

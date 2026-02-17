@@ -33,6 +33,16 @@ See `VERSIONING.md` for full details and history.
 - **Claude** : Écriture et modification du code uniquement. **NE JAMAIS compiler** (`pio run`).
 - **Utilisateur** : Compilation (`pio run`) et upload (`pio run -t upload`). C'est l'utilisateur qui compile, pas Claude.
 
+## Méthodologie debug
+
+Quand un bug visuel ou comportemental est signalé :
+
+1. **Diagnostiquer AVANT de coder.** Émettre une hypothèse claire. Proposer un test minimal pour la valider (désactiver une feature, ajouter un log, simplifier le rendu). Ne pas coder de fix tant que la cause n'est pas isolée.
+2. **Maximum 2 tentatives de fix.** Si le 2e fix ne résout pas le problème, s'arrêter. Repenser le diagnostic depuis zéro. Ne pas empiler des workarounds.
+3. **Ne pas committer du code de debug ou des tentatives non validées.** Ne committer que des fixes confirmés par l'utilisateur après test sur le matériel.
+4. **Lire et comprendre les primitives avant de les utiliser.** Exemple : avant d'utiliser `drawWideLine`, comprendre exactement ce qu'elle dessine (capsule ? rectangle ? anti-aliasing ?). Ne pas deviner.
+5. **Analyser les propositions externes (Gemini, ChatGPT, etc.) avec esprit critique.** Ne pas les appliquer aveuglément. Identifier ce qui est correct, ce qui est faux, et ce qui manque.
+
 ## Workflow
 
 1. Code changes → compile → test
