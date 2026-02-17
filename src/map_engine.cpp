@@ -611,6 +611,9 @@ namespace MapEngine {
         // --- Load all tiles and dispatch features (IceNav-v3 pattern: maps.cpp:1498-1543) ---
         std::vector<uint8_t*> tileBuffers;
         for (int i = 0; i < 16; i++) globalLayers[i].clear();
+        // Text labels collected separately — rendered last, on top of all geometry
+        std::vector<FeatureRef, InternalAllocator<FeatureRef>> textRefs;
+        textRefs.reserve(64);
 
         uint16_t bgColor = 0xF7BE;  // Default OSM beige (0xF2EFE9) if no tiles loaded
         bool bgColorExtracted = false;
@@ -795,10 +798,6 @@ namespace MapEngine {
         // --- Render all layers (IceNav-v3 pattern: maps.cpp:1546-1569) ---
         // Fill background with color from NAV background polygon
         map.fillSprite(bgColor);
-
-        // Text labels collected separately — rendered last, on top of all geometry
-        std::vector<FeatureRef, InternalAllocator<FeatureRef>> textRefs;
-        textRefs.reserve(64);
 
         map.startWrite();
 
