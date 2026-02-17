@@ -769,7 +769,11 @@ namespace MapEngine {
                     ref.coordCount = coordCount;
                     ref.tileOffsetX = tileOffsetX;
                     ref.tileOffsetY = tileOffsetY;
-                    globalLayers[priority].push_back(ref);
+                    // Text labels rendered last (separate pass) so they appear above all geometry
+                    if (geomType == 4)
+                        textRefs.push_back(ref);
+                    else
+                        globalLayers[priority].push_back(ref);
 
                     p += 12 + feature_data_size;
                 }
@@ -791,6 +795,10 @@ namespace MapEngine {
         // --- Render all layers (IceNav-v3 pattern: maps.cpp:1546-1569) ---
         // Fill background with color from NAV background polygon
         map.fillSprite(bgColor);
+
+        // Text labels collected separately — rendered last, on top of all geometry
+        std::vector<FeatureRef, InternalAllocator<FeatureRef>> textRefs;
+        textRefs.reserve(64);
 
         map.startWrite();
 
@@ -1010,7 +1018,45 @@ namespace MapEngine {
             taskYIELD();
         }
 
+        // Label pass — rendered after all geometry so labels appear on top
         map.clearClipRect();
+        map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
+        map.setTextSize(1);
+        for (const auto& ref : textRefs) {
+            if ((++featureCount & 31) == 0) esp_task_wdt_reset();
+            uint8_t* fp = ref.ptr;
+            uint16_t colorRgb565;
+            memcpy(&colorRgb565, fp + 1, 2);
+            int16_t* coords = (int16_t*)(fp + 12);
+            int px = (coords[0] >> 4) + ref.tileOffsetX;
+            int py = (coords[1] >> 4) + ref.tileOffsetY;
+            uint8_t textLen = *(fp + 12 + 4);
+            if (textLen == 0 || textLen >= 128) continue;
+            char textBuf[128];
+            memcpy(textBuf, fp + 12 + 5, textLen);
+            textBuf[textLen] = '\0';
+            int tw = map.textWidth(textBuf);
+            int th = map.fontHeight();
+            int lx = px - tw / 2;
+            int ly = py - th;
+            const int PAD = 4;
+            if (lx + tw < 0 || lx >= viewportW || ly + th < 0 || ly >= viewportH) continue;
+            bool collision = false;
+            for (const auto& r : placedLabels) {
+                if (lx - PAD < r.x + r.w && lx + tw + PAD > r.x &&
+                    ly - PAD < r.y + r.h && ly + th + PAD > r.y) {
+                    collision = true; break;
+                }
+            }
+            if (collision) continue;
+            map.setTextColor(colorRgb565);
+            map.setTextDatum(lgfx::top_center);
+            map.drawString(textBuf, px, ly);
+            map.setTextDatum(lgfx::top_left);
+            placedLabels.push_back({(int16_t)lx, (int16_t)ly, (int16_t)tw, (int16_t)th});
+        }
+        textRefs.clear();
+
         map.endWrite();
 
         // Free all tile buffers (IceNav-v3: maps.cpp:1574-1577)
@@ -1071,6 +1117,8 @@ namespace MapEngine {
 
         // --- Dispatch features to 16 priority layers (IceNav-v3 pattern) ---
         for (int i = 0; i < 16; i++) globalLayers[i].clear();
+        std::vector<FeatureRef, InternalAllocator<FeatureRef>> textRefs;
+        textRefs.reserve(32);
 
         uint8_t* p = data + 22;
         for (uint16_t i = 0; i < feature_count; i++) {
@@ -1118,7 +1166,10 @@ namespace MapEngine {
             ref.geomType = geomType;
             ref.ringCount = ringCount;
             ref.coordCount = coordCount;
-            globalLayers[priority].push_back(ref);
+            if (geomType == 4)
+                textRefs.push_back(ref);
+            else
+                globalLayers[priority].push_back(ref);
 
             p += 12 + feature_data_size;
         }
@@ -1285,7 +1336,26 @@ namespace MapEngine {
             taskYIELD();
         }
 
+        // Label pass — on top of all geometry
         map.clearClipRect();
+        map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
+        map.setTextSize(1);
+        for (const auto& ref : textRefs) {
+            uint8_t* fp = ref.ptr;
+            uint16_t colorRgb565;
+            memcpy(&colorRgb565, fp + 1, 2);
+            int16_t* coords = (int16_t*)(fp + 12);
+            int px = (coords[0] >> 4) + xOffset;
+            int py = (coords[1] >> 4) + yOffset;
+            uint8_t textLen = *(fp + 12 + 4);
+            if (textLen == 0 || textLen >= 128) continue;
+            char textBuf[128];
+            memcpy(textBuf, fp + 12 + 5, textLen);
+            textBuf[textLen] = '\0';
+            map.setTextColor(colorRgb565);
+            map.drawString(textBuf, px, py);
+        }
+
         map.endWrite();
 
         free(data);
