@@ -907,12 +907,20 @@ namespace MapEngine {
                         size_t validPoints = 0;
                         int16_t lastPx = -32768, lastPy = -32768;
 
+                        // Simplification: skip vertices within widthPixels/2 of last kept
+                        int distThreshSq = (widthPixels * widthPixels) / 4;
+                        if (distThreshSq < 1) distThreshSq = 1;
+
                         for (size_t j = 0; j < numCoords; j++) {
                             int16_t px = (coords[j * 2] >> 4) + ref.tileOffsetX;
                             int16_t py = (coords[j * 2 + 1] >> 4) + ref.tileOffsetY;
 
-                            // Skip consecutive duplicate pixels (IceNav-v3 L1310-1311)
-                            if (validPoints > 0 && px == lastPx && py == lastPy) continue;
+                            if (validPoints > 0) {
+                                int dx = px - lastPx;
+                                int dy = py - lastPy;
+                                // Skip if too close, but always keep the last vertex
+                                if ((dx*dx + dy*dy) < distThreshSq && j < numCoords - 1) continue;
+                            }
 
                             pxArr[validPoints] = px;
                             pyArr[validPoints] = py;
@@ -929,39 +937,26 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= viewportW ||
                             maxPy < 0 || minPy >= viewportH) break;
 
-                        // Pass 1: casing (border), +1px wider + darker
-                        // Vertex culling: skip vertices within widthPixels of last drawn vertex.
-                        // Prevents capsule/sausage artifacts on roads with many close-together vertices.
+                        // Casing: circles at all vertices first (uniform caps), then segment bodies
                         if (hasCasing) {
-                            uint8_t casingWidth = widthPixels + 1;
+                            uint8_t casingWidth = widthPixels + 2;
                             uint16_t casingColor = darkenRGB565(colorRgb565, 0.35f);
-                            int minDist2 = (int)widthPixels * widthPixels;
-                            size_t lastIdx = 0;
-                            for (size_t j = 1; j < validPoints; j++) {
-                                int dx = pxArr[j] - pxArr[lastIdx];
-                                int dy = pyArr[j] - pyArr[lastIdx];
-                                if ((dx*dx + dy*dy) >= minDist2 || j == validPoints - 1) {
-                                    map.drawWideLine(pxArr[lastIdx], pyArr[lastIdx], pxArr[j], pyArr[j], casingWidth, casingColor);
-                                    lastIdx = j;
-                                }
-                            }
+                            for (size_t j = 0; j < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], casingWidth / 2, casingColor);
+                            for (size_t j = 1; j < validPoints; j++)
+                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
                         }
-
-                        // Pass 2: road fill (same vertex culling)
+                        // Road fill: circles with radius=casingWidth/2 to fully cover casing caps at joints,
+                        // then segment bodies. Without casing, just draw lines.
                         if (widthPixels <= 2) {
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                         } else {
-                            int minDist2 = (int)widthPixels * widthPixels;
-                            size_t lastIdx = 0;
-                            for (size_t j = 1; j < validPoints; j++) {
-                                int dx = pxArr[j] - pxArr[lastIdx];
-                                int dy = pyArr[j] - pyArr[lastIdx];
-                                if ((dx*dx + dy*dy) >= minDist2 || j == validPoints - 1) {
-                                    map.drawWideLine(pxArr[lastIdx], pyArr[lastIdx], pxArr[j], pyArr[j], widthPixels, colorRgb565);
-                                    lastIdx = j;
-                                }
-                            }
+                            uint8_t coverR = hasCasing ? (widthPixels + 2) / 2 : widthPixels / 2;
+                            for (size_t j = 0; j < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], coverR, colorRgb565);
+                            for (size_t j = 1; j < validPoints; j++)
+                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
                         }
                         break;
                     }
@@ -1278,10 +1273,18 @@ namespace MapEngine {
                         size_t validPoints = 0;
                         int16_t lastPx = -32768, lastPy = -32768;
 
+                        // Simplification: skip vertices within widthPixels/2 of last kept
+                        int distThreshSq2 = (widthPixels * widthPixels) / 4;
+                        if (distThreshSq2 < 1) distThreshSq2 = 1;
+
                         for (size_t j = 0; j < numCoords; j++) {
                             int16_t px = (coords[j * 2] >> 4) + xOffset;
                             int16_t py = (coords[j * 2 + 1] >> 4) + yOffset;
-                            if (validPoints > 0 && px == lastPx && py == lastPy) continue;
+                            if (validPoints > 0) {
+                                int dx = px - lastPx;
+                                int dy = py - lastPy;
+                                if ((dx*dx + dy*dy) < distThreshSq2 && j < numCoords - 1) continue;
+                            }
                             pxArr[validPoints] = px;
                             pyArr[validPoints] = py;
                             if (px < minPx) minPx = px;
@@ -1296,39 +1299,26 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= MAP_TILE_SIZE ||
                             maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
 
-                        // Pass 1: casing (border), +1px wider + darker
-                        // Vertex culling: skip vertices within widthPixels of last drawn vertex.
-                        // Prevents capsule/sausage artifacts on roads with many close-together vertices.
+                        // Casing: circles at all vertices first (uniform caps), then segment bodies
                         if (hasCasing) {
-                            uint8_t casingWidth = widthPixels + 1;
+                            uint8_t casingWidth = widthPixels + 2;
                             uint16_t casingColor = darkenRGB565(colorRgb565, 0.35f);
-                            int minDist2 = (int)widthPixels * widthPixels;
-                            size_t lastIdx = 0;
-                            for (size_t j = 1; j < validPoints; j++) {
-                                int dx = pxArr[j] - pxArr[lastIdx];
-                                int dy = pyArr[j] - pyArr[lastIdx];
-                                if ((dx*dx + dy*dy) >= minDist2 || j == validPoints - 1) {
-                                    map.drawWideLine(pxArr[lastIdx], pyArr[lastIdx], pxArr[j], pyArr[j], casingWidth, casingColor);
-                                    lastIdx = j;
-                                }
-                            }
+                            for (size_t j = 0; j < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], casingWidth / 2, casingColor);
+                            for (size_t j = 1; j < validPoints; j++)
+                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
                         }
-
-                        // Pass 2: road fill (same vertex culling)
+                        // Road fill: circles with radius=casingWidth/2 to fully cover casing caps at joints,
+                        // then segment bodies. Without casing, just draw lines.
                         if (widthPixels <= 2) {
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                         } else {
-                            int minDist2 = (int)widthPixels * widthPixels;
-                            size_t lastIdx = 0;
-                            for (size_t j = 1; j < validPoints; j++) {
-                                int dx = pxArr[j] - pxArr[lastIdx];
-                                int dy = pyArr[j] - pyArr[lastIdx];
-                                if ((dx*dx + dy*dy) >= minDist2 || j == validPoints - 1) {
-                                    map.drawWideLine(pxArr[lastIdx], pyArr[lastIdx], pxArr[j], pyArr[j], widthPixels, colorRgb565);
-                                    lastIdx = j;
-                                }
-                            }
+                            uint8_t coverR = hasCasing ? (widthPixels + 2) / 2 : widthPixels / 2;
+                            for (size_t j = 0; j < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], coverR, colorRgb565);
+                            for (size_t j = 1; j < validPoints; j++)
+                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
                         }
                         break;
                     }
