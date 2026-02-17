@@ -7,13 +7,14 @@
 
 // Allocator that places vectors in PSRAM to preserve scarce DRAM
 // for WiFi, BLE, LoRa, LVGL, and OS stacks.
+// Uses MALLOC_CAP_SPIRAM with fallback to default heap.
 template <typename T>
-struct InternalAllocator {
+struct PSRAMAllocator {
     using value_type = T;
 
-    InternalAllocator() noexcept = default;
+    PSRAMAllocator() noexcept = default;
     template <typename U>
-    InternalAllocator(const InternalAllocator<U>&) noexcept {}
+    PSRAMAllocator(const PSRAMAllocator<U>&) noexcept {}
 
     T* allocate(std::size_t n) {
         void* p = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_SPIRAM);
@@ -25,9 +26,9 @@ struct InternalAllocator {
     }
 
     template <typename U>
-    bool operator==(const InternalAllocator<U>&) const noexcept { return true; }
+    bool operator==(const PSRAMAllocator<U>&) const noexcept { return true; }
     template <typename U>
-    bool operator!=(const InternalAllocator<U>&) const noexcept { return false; }
+    bool operator!=(const PSRAMAllocator<U>&) const noexcept { return false; }
 };
 
 namespace UIMapManager {

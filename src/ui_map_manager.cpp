@@ -90,6 +90,11 @@ namespace UIMapManager {
     static uint32_t symbolCacheAccessCounter = 0;
     static bool symbolCacheInitialized = false;
 
+    // Own GPS trace (separate from received stations)
+    static TracePoint ownTrace[TRACE_MAX_POINTS];
+    static uint8_t ownTraceCount = 0;
+    static uint8_t ownTraceHead = 0;
+
     // Forward declarations
     void draw_station_traces();
     void update_station_objects();
@@ -809,12 +814,65 @@ namespace UIMapManager {
         schedule_map_reload();
     }
 
+    // Add a point to own GPS trace (called from sendBeacon when position changes)
+    void addOwnTracePoint(float lat, float lon) {
+        // Check if position changed significantly (delta > ~11m)
+        if (ownTraceCount > 0) {
+            int lastIdx = (ownTraceHead - 1 + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
+            float dlat = fabs(ownTrace[lastIdx].lat - lat);
+            float dlon = fabs(ownTrace[lastIdx].lon - lon);
+            if (dlat < 0.0001f && dlon < 0.0001f) {
+                return; // No significant movement, skip
+            }
+        }
+
+        // Add point to circular buffer
+        ownTrace[ownTraceHead].lat = lat;
+        ownTrace[ownTraceHead].lon = lon;
+        ownTraceHead = (ownTraceHead + 1) % TRACE_MAX_POINTS;
+        if (ownTraceCount < TRACE_MAX_POINTS) {
+            ownTraceCount++;
+        }
+
+        Serial.printf("[MAP] Own trace point added: %.6f, %.6f (count=%d)\n", lat, lon, ownTraceCount);
+    }
+
     // Draw GPS traces for mobile stations on the canvas
     void draw_station_traces() {
         if (!map_canvas) return;
 
         lv_draw_line_dsc_t line_dsc;
         lv_draw_line_dsc_init(&line_dsc);
+
+        // Draw own GPS trace first (purple/violet)
+        if (ownTraceCount > 0 && gps.location.isValid()) {
+            line_dsc.color = lv_color_hex(0x9933FF);  // Purple/violet
+            line_dsc.width = 2;
+            line_dsc.opa   = LV_OPA_COVER;
+
+            int totalPts = ownTraceCount + 1;
+            lv_point_t pts[TRACE_MAX_POINTS + 1];
+
+            for (int i = 0; i < ownTraceCount; i++) {
+                int idx = (ownTraceHead - ownTraceCount + i + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
+                int px, py;
+                latLonToPixel(ownTrace[idx].lat, ownTrace[idx].lon,
+                              map_center_lat, map_center_lon, map_current_zoom, &px, &py);
+                pts[i].x = px;
+                pts[i].y = py;
+            }
+
+            // Current GPS position as last point
+            int cx, cy;
+            latLonToPixel(gps.location.lat(), gps.location.lng(),
+                          map_center_lat, map_center_lon, map_current_zoom, &cx, &cy);
+            pts[ownTraceCount].x = cx;
+            pts[ownTraceCount].y = cy;
+
+            lv_canvas_draw_line(map_canvas, pts, totalPts, &line_dsc);
+        }
+
+        // Draw received stations traces (blue)
         line_dsc.color = lv_color_hex(0x0055FF);
         line_dsc.width = 2;
         line_dsc.opa   = LV_OPA_COVER;
@@ -911,6 +969,9 @@ namespace UIMapManager {
                 if (!navModeActive) {
                     navModeActive = true;
                     MapEngine::clearTileCache();
+                    Serial.printf("[MEM] After clearTileCache - PSRAM free: %u KB, largest block: %u KB\n",
+                                  ESP.getFreePsram() / 1024,
+                                  heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
                     switchZoomTable(nav_zooms, nav_zoom_count);
                 }
 
@@ -919,18 +980,10 @@ namespace UIMapManager {
                 // can take 10-30s with thousands of features (IceNav doesn't subscribe either)
                 esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
 
-                // Allocate persistent sprite once to avoid PSRAM fragmentation
-                if (!persistentViewportSprite) {
-                    persistentViewportSprite = new LGFX_Sprite(&tft);
-                    persistentViewportSprite->setPsram(true);
-                    if (persistentViewportSprite->createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) == nullptr) {
-                        Serial.println("[MAP] Failed to create persistent viewport sprite");
-                        delete persistentViewportSprite;
-                        persistentViewportSprite = nullptr;
-                    }
-                }
-
                 if (persistentViewportSprite) {
+                    Serial.printf("[MEM] Before renderNavViewport - PSRAM free: %u KB, largest block: %u KB\n",
+                                  ESP.getFreePsram() / 1024,
+                                  heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
                     hasTiles = MapEngine::renderNavViewport(
                         map_center_lat, map_center_lon, (uint8_t)map_current_zoom,
                         *persistentViewportSprite, nav_current_region.c_str());
@@ -1476,6 +1529,24 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         if (!map_canvas_buf) {
             map_canvas_buf = (lv_color_t*)heap_caps_malloc(MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
         }
+        // Allocate persistent viewport sprite EARLY (before raster cache fills PSRAM)
+        // to guarantee a contiguous 624KB block is available.
+        if (!persistentViewportSprite) {
+            persistentViewportSprite = new LGFX_Sprite(&tft);
+            persistentViewportSprite->setPsram(true);
+            if (persistentViewportSprite->createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) == nullptr) {
+                Serial.println("[MAP] Failed to create persistent viewport sprite");
+                delete persistentViewportSprite;
+                persistentViewportSprite = nullptr;
+            } else {
+                Serial.printf("[MAP] Viewport sprite allocated: %dx%d (%u KB PSRAM)\n",
+                              MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT,
+                              MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * 2 / 1024);
+                Serial.printf("[MEM] PSRAM free: %u KB, largest block: %u KB\n",
+                              ESP.getFreePsram() / 1024,
+                              heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
+            }
+        }
         if (map_canvas_buf) {
             map_canvas = lv_canvas_create(map_container);
             lv_obj_clear_flag(map_canvas, LV_OBJ_FLAG_CLICKABLE);
@@ -1534,35 +1605,30 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                     // NAV priority: free all raster cache to maximize PSRAM for NAV tiles
                     navModeActive = true;
                     MapEngine::clearTileCache();
+                    Serial.printf("[MEM] After clearTileCache - PSRAM free: %u KB, largest block: %u KB\n",
+                                  ESP.getFreePsram() / 1024,
+                                  heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
                     switchZoomTable(nav_zooms, nav_zoom_count);
 
                     // NAV viewport rendering (IceNav-v3 pattern)
                     // Temporarily unsubscribe loopTask from WDT — rendering can take 10-30s
                     esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
 
-                    // Allocate persistent sprite once to avoid PSRAM fragmentation
-                    if (!persistentViewportSprite) {
-                        persistentViewportSprite = new LGFX_Sprite(&tft);
-                        persistentViewportSprite->setPsram(true);
-                        if (persistentViewportSprite->createSprite(MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT) == nullptr) {
-                            Serial.println("[MAP] Failed to create persistent viewport sprite");
-                            delete persistentViewportSprite;
-                            persistentViewportSprite = nullptr;
-                        }
-                    }
-
                     if (persistentViewportSprite) {
+                        Serial.printf("[MEM] Before renderNavViewport - PSRAM free: %u KB, largest block: %u KB\n",
+                                      ESP.getFreePsram() / 1024,
+                                      heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
                         hasTiles = MapEngine::renderNavViewport(
                             map_center_lat, map_center_lon, (uint8_t)map_current_zoom,
                             *persistentViewportSprite, nav_current_region.c_str());
                         if (hasTiles && map_canvas_buf) {
                             uint16_t* src = (uint16_t*)persistentViewportSprite->getBuffer();
                             if (src) {
-                                // NAV rendering uses LGFX native format (big-endian on ESP32)
-                                // No byte-swap needed - direct copy
                                 memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
                             }
                         }
+                    } else {
+                        Serial.println("[MAP] No viewport sprite available for NAV rendering");
                     }
 
                     esp_task_wdt_add(xTaskGetCurrentTaskHandle());

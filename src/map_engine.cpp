@@ -30,16 +30,16 @@ namespace MapEngine {
     static TaskHandle_t mapRenderTaskHandle = nullptr;
     static lv_obj_t* canvas_to_invalidate_ = nullptr;
 
-    // Static vectors for AEL polygon filler (internal RAM for speed)
-    static std::vector<UIMapManager::Edge, InternalAllocator<UIMapManager::Edge>> edgePool;
-    static std::vector<int, InternalAllocator<int>> edgeBuckets;
+    // Static vectors for AEL polygon filler (PSRAM to preserve DRAM)
+    static std::vector<UIMapManager::Edge, PSRAMAllocator<UIMapManager::Edge>> edgePool;
+    static std::vector<int, PSRAMAllocator<int>> edgeBuckets;
 
-    // Static vectors for coordinate projection (internal RAM, pre-reserved)
+    // Static vectors for coordinate projection (PSRAM, pre-reserved)
     // IceNav-v3 pattern: separate int16_t buffers for lines, int buffers for polygons
-    static std::vector<int16_t, InternalAllocator<int16_t>> proj16X;
-    static std::vector<int16_t, InternalAllocator<int16_t>> proj16Y;
-    static std::vector<int, InternalAllocator<int>> proj32X;
-    static std::vector<int, InternalAllocator<int>> proj32Y;
+    static std::vector<int16_t, PSRAMAllocator<int16_t>> proj16X;
+    static std::vector<int16_t, PSRAMAllocator<int16_t>> proj16Y;
+    static std::vector<int, PSRAMAllocator<int>> proj32X;
+    static std::vector<int, PSRAMAllocator<int>> proj32Y;
 
     // Feature reference for zero-copy rendering (IceNav-v3 pattern: pointer into tile buffer)
     struct FeatureRef {
@@ -51,7 +51,7 @@ namespace MapEngine {
         int16_t tileOffsetY;    // Pixel offset of tile top-left in viewport (IceNav: tilePixelOffsetY)
     };
     // 16 priority layers (IceNav-v3 pattern: dispatch by getPriority() low nibble)
-    static std::vector<FeatureRef, InternalAllocator<FeatureRef>> globalLayers[16];
+    static std::vector<FeatureRef, PSRAMAllocator<FeatureRef>> globalLayers[16];
 
     // Tile cache system
     #define TILE_CACHE_SIZE 40  // Number of tiles to cache (40 × 128KB = 5.2MB PSRAM)
@@ -246,7 +246,7 @@ namespace MapEngine {
         tileCache.reserve(maxCachedTiles);
         cacheAccessCounter = 0;
 
-        // Pre-reserve AEL, projection, and feature index buffers in internal RAM
+        // Pre-reserve AEL, projection, and feature index buffers in PSRAM
         // (IceNav-v3 constructor pattern: maps.cpp:57-63)
         edgePool.reserve(1024);
         edgeBuckets.reserve(768);
@@ -256,7 +256,7 @@ namespace MapEngine {
         proj32Y.reserve(1024);
         for (int i = 0; i < 16; i++) globalLayers[i].reserve(256);
 
-        Serial.printf("[MAP] Cache %d tiles, render buffers pre-reserved (internal RAM)\n", maxCachedTiles);
+        Serial.printf("[MAP] Cache %d tiles, render buffers pre-reserved (PSRAM)\n", maxCachedTiles);
     }
 
     void clearTileCache() {
@@ -611,15 +611,38 @@ namespace MapEngine {
         // --- Load all tiles and dispatch features (IceNav-v3 pattern: maps.cpp:1498-1543) ---
         std::vector<uint8_t*> tileBuffers;
         for (int i = 0; i < 16; i++) globalLayers[i].clear();
+        // One-time PSRAM reserve: reduces reallocations on first render
+        static bool layersReserved = false;
+        if (!layersReserved) {
+            for (int i = 0; i < 16; i++) globalLayers[i].reserve(256);
+            layersReserved = true;
+        }
         // Text labels collected separately — rendered last, on top of all geometry
-        std::vector<FeatureRef, InternalAllocator<FeatureRef>> textRefs;
-        textRefs.reserve(64);
+        std::vector<FeatureRef, PSRAMAllocator<FeatureRef>> textRefs;
+        textRefs.reserve(128);
 
         uint16_t bgColor = 0xF7BE;  // Default OSM beige (0xF2EFE9) if no tiles loaded
         bool bgColorExtracted = false;
+        bool psramExhausted = false;
 
+        // Build tile list sorted center-outward so PSRAM exhaustion
+        // degrades edges first instead of cutting a whole quadrant
+        struct TileSlot { int dx, dy; int distSq; };
+        TileSlot tileOrder[36];  // 6×6 max
+        int tileCount = 0;
         for (int dy = minDy; dy <= maxDy; dy++) {
             for (int dx = minDx; dx <= maxDx; dx++) {
+                if (tileCount < 36) {
+                    tileOrder[tileCount++] = { dx, dy, dx*dx + dy*dy };
+                }
+            }
+        }
+        std::sort(tileOrder, tileOrder + tileCount,
+                  [](const TileSlot& a, const TileSlot& b) { return a.distSq < b.distSq; });
+
+        for (int ti = 0; ti < tileCount && !psramExhausted; ti++) {
+                int dx = tileOrder[ti].dx;
+                int dy = tileOrder[ti].dy;
                 esp_task_wdt_reset();
 
                 int tileX = centerTileIdxX + dx;
@@ -669,6 +692,13 @@ namespace MapEngine {
                 if (!data) {
                     Serial.printf("[NAV-FAIL] Tile %d/%d: mutex=%d file=%d size=%d(%u) alloc=%d\n",
                                   tileX, tileY, mutexOk, fileOk, sizeOk, (unsigned)fileSize, allocOk);
+                    // If file exists but ps_malloc failed → PSRAM exhausted, stop loading
+                    if (sizeOk && !allocOk) {
+                        Serial.printf("[NAV] PSRAM exhausted (needed %u KB, largest block: %u KB) — stopping tile load\n",
+                                      (unsigned)(fileSize / 1024),
+                                      (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
+                        psramExhausted = true;
+                    }
                     continue;
                 }
                 if (memcmp(data, "NAV1", 4) != 0) {
@@ -773,10 +803,31 @@ namespace MapEngine {
                     ref.tileOffsetX = tileOffsetX;
                     ref.tileOffsetY = tileOffsetY;
                     // Text labels rendered last (separate pass) so they appear above all geometry
-                    if (geomType == 4)
+                    // Safety: when vector is at capacity, push_back doubles the allocation.
+                    // New buffer = capacity*2*sizeof(FeatureRef), allocated BEFORE old is freed.
+                    // Check largest contiguous PSRAM block can hold the new buffer.
+                    if (geomType == 4) {
+                        if (textRefs.size() == textRefs.capacity()) {
+                            size_t needed = (textRefs.capacity() < 1 ? 1 : textRefs.capacity() * 2) * sizeof(FeatureRef);
+                            if (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < needed) {
+                                skippedOverflow++;
+                                p += 12 + feature_data_size;
+                                continue;
+                            }
+                        }
                         textRefs.push_back(ref);
-                    else
-                        globalLayers[priority].push_back(ref);
+                    } else {
+                        auto& layer = globalLayers[priority];
+                        if (layer.size() == layer.capacity()) {
+                            size_t needed = (layer.capacity() < 1 ? 1 : layer.capacity() * 2) * sizeof(FeatureRef);
+                            if (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < needed) {
+                                skippedOverflow++;
+                                p += 12 + feature_data_size;
+                                continue;
+                            }
+                        }
+                        layer.push_back(ref);
+                    }
 
                     p += 12 + feature_data_size;
                 }
@@ -784,7 +835,6 @@ namespace MapEngine {
                 Serial.printf("[NAV-DBG]   Kept: pt=%d ln=%d poly=%d txt=%d | skipped: zoom=%d overflow=%d\n",
                               typeCounts[1], typeCounts[2], typeCounts[3], typeCounts[4],
                               skippedZoom, skippedOverflow);
-            }
         }
 
         // Log load stats (IceNav-v3 pattern: maps.cpp:1582-1587)
@@ -937,20 +987,45 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= viewportW ||
                             maxPy < 0 || minPy >= viewportH) break;
 
-                        // Casing first: thin drawWideLine underneath, +1px wider
-                        if (hasCasing && widthPixels > 2) {
-                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.70f);
-                            uint8_t casingWidth = widthPixels + 1;
-                            for (size_t j = 1; j < validPoints; j++)
-                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
-                        }
-                        // Road fill on top
-                        if (widthPixels <= 2) {
-                            for (size_t j = 1; j < validPoints; j++)
+                        // Road fill — parallel drawLine calls instead of drawWideLine
+                        // (drawWideLine overwrites clipRect internally, causing tile bleed)
+                        for (size_t j = 1; j < validPoints; j++) {
+                            if (widthPixels <= 2) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
-                        } else {
-                            for (size_t j = 1; j < validPoints; j++)
-                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
+                            } else {
+                                float sdx = pxArr[j] - pxArr[j-1];
+                                float sdy = pyArr[j] - pyArr[j-1];
+                                float slen = sqrtf(sdx*sdx + sdy*sdy);
+                                if (slen < 0.5f) continue;
+                                float pnx = -sdy / slen;  // perpendicular unit
+                                float pny =  sdx / slen;
+                                int halfW = widthPixels / 2;
+                                for (int w = -halfW; w <= halfW; w++) {
+                                    int ox = (int)(pnx * w);
+                                    int oy = (int)(pny * w);
+                                    map.drawLine(pxArr[j-1]+ox, pyArr[j-1]+oy,
+                                                 pxArr[j]+ox,   pyArr[j]+oy, colorRgb565);
+                                }
+                            }
+                        }
+                        // Casing: parallel border lines on top of road edges
+                        if (hasCasing && widthPixels > 2) {
+                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.30f);
+                            float halfW = widthPixels * 0.5f + 1.5f;
+                            float ext = widthPixels * 0.5f; // extend past caps
+                            for (size_t j = 1; j < validPoints; j++) {
+                                float dx = pxArr[j] - pxArr[j-1];
+                                float dy = pyArr[j] - pyArr[j-1];
+                                float len = sqrtf(dx*dx + dy*dy);
+                                if (len < 0.5f) continue;
+                                float ux = dx / len, uy = dy / len; // unit along segment
+                                float nx = -uy * halfW, ny = ux * halfW; // perpendicular
+                                float ex = ux * ext, ey = uy * ext; // extension
+                                map.drawLine((int)(pxArr[j-1]+nx-ex), (int)(pyArr[j-1]+ny-ey),
+                                             (int)(pxArr[j]+nx+ex),   (int)(pyArr[j]+ny+ey),   casingColor);
+                                map.drawLine((int)(pxArr[j-1]-nx-ex), (int)(pyArr[j-1]-ny-ey),
+                                             (int)(pxArr[j]-nx+ex),   (int)(pyArr[j]-ny+ey),   casingColor);
+                            }
                         }
                         break;
                     }
@@ -1119,7 +1194,7 @@ namespace MapEngine {
 
         // --- Dispatch features to 16 priority layers (IceNav-v3 pattern) ---
         for (int i = 0; i < 16; i++) globalLayers[i].clear();
-        std::vector<FeatureRef, InternalAllocator<FeatureRef>> textRefs;
+        std::vector<FeatureRef, PSRAMAllocator<FeatureRef>> textRefs;
         textRefs.reserve(32);
 
         uint8_t* p = data + 22;
@@ -1293,20 +1368,45 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= MAP_TILE_SIZE ||
                             maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
 
-                        // Casing first: thin drawWideLine underneath, +1px wider
-                        if (hasCasing && widthPixels > 2) {
-                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.70f);
-                            uint8_t casingWidth = widthPixels + 1;
-                            for (size_t j = 1; j < validPoints; j++)
-                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
-                        }
-                        // Road fill on top
-                        if (widthPixels <= 2) {
-                            for (size_t j = 1; j < validPoints; j++)
+                        // Road fill — parallel drawLine calls instead of drawWideLine
+                        // (drawWideLine overwrites clipRect internally, causing tile bleed)
+                        for (size_t j = 1; j < validPoints; j++) {
+                            if (widthPixels <= 2) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
-                        } else {
-                            for (size_t j = 1; j < validPoints; j++)
-                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
+                            } else {
+                                float sdx = pxArr[j] - pxArr[j-1];
+                                float sdy = pyArr[j] - pyArr[j-1];
+                                float slen = sqrtf(sdx*sdx + sdy*sdy);
+                                if (slen < 0.5f) continue;
+                                float pnx = -sdy / slen;  // perpendicular unit
+                                float pny =  sdx / slen;
+                                int halfW = widthPixels / 2;
+                                for (int w = -halfW; w <= halfW; w++) {
+                                    int ox = (int)(pnx * w);
+                                    int oy = (int)(pny * w);
+                                    map.drawLine(pxArr[j-1]+ox, pyArr[j-1]+oy,
+                                                 pxArr[j]+ox,   pyArr[j]+oy, colorRgb565);
+                                }
+                            }
+                        }
+                        // Casing: parallel border lines on top of road edges
+                        if (hasCasing && widthPixels > 2) {
+                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.30f);
+                            float halfW = widthPixels * 0.5f + 1.5f;
+                            float ext = widthPixels * 0.5f; // extend past caps
+                            for (size_t j = 1; j < validPoints; j++) {
+                                float dx = pxArr[j] - pxArr[j-1];
+                                float dy = pyArr[j] - pyArr[j-1];
+                                float len = sqrtf(dx*dx + dy*dy);
+                                if (len < 0.5f) continue;
+                                float ux = dx / len, uy = dy / len; // unit along segment
+                                float nx = -uy * halfW, ny = ux * halfW; // perpendicular
+                                float ex = ux * ext, ey = uy * ext; // extension
+                                map.drawLine((int)(pxArr[j-1]+nx-ex), (int)(pyArr[j-1]+ny-ey),
+                                             (int)(pxArr[j]+nx+ex),   (int)(pyArr[j]+ny+ey),   casingColor);
+                                map.drawLine((int)(pxArr[j-1]-nx-ex), (int)(pyArr[j-1]-ny-ey),
+                                             (int)(pxArr[j]-nx+ex),   (int)(pyArr[j]-ny+ey),   casingColor);
+                            }
                         }
                         break;
                     }

@@ -41,7 +41,9 @@ Quand un bug visuel ou comportemental est signalé :
 2. **Maximum 2 tentatives de fix.** Si le 2e fix ne résout pas le problème, s'arrêter. Repenser le diagnostic depuis zéro. Ne pas empiler des workarounds.
 3. **Ne pas committer du code de debug ou des tentatives non validées.** Ne committer que des fixes confirmés par l'utilisateur après test sur le matériel.
 4. **Lire et comprendre les primitives avant de les utiliser.** Exemple : avant d'utiliser `drawWideLine`, comprendre exactement ce qu'elle dessine (capsule ? rectangle ? anti-aliasing ?). Ne pas deviner.
-5. **Analyser les propositions externes (Gemini, ChatGPT, etc.) avec esprit critique.** Ne pas les appliquer aveuglément. Identifier ce qui est correct, ce qui est faux, et ce qui manque.
+5. **Lire le code source des primitives LovyanGFX avant de les utiliser.** Certaines fonctions (`drawWideLine`, `draw_wedgeline`) modifient l'état global (`clipRect`) en interne. Toujours vérifier les effets de bord dans `.pio/libdeps/.../LovyanGFX/src/lgfx/v1/LGFXBase.cpp`.
+6. **Ne jamais plafonner silencieusement un conteneur.** Si un vecteur utilise `PSRAMAllocator`, le laisser grandir. Un OOM PSRAM est préférable à un rendu tronqué sans erreur visible.
+7. **Analyser les propositions externes (Gemini, ChatGPT, etc.) avec esprit critique.** Ne pas les appliquer aveuglément. Identifier ce qui est correct, ce qui est faux, et ce qui manque.
 
 ## Workflow
 
