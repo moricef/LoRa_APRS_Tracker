@@ -945,6 +945,13 @@ namespace MapEngine {
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
                         }
+                        // Pass 3: cover casing semicircle caps at intermediate joints with road color
+                        // (casing drawWideLine leaves a dark disk at each joint; road fill doesn't cover it fully)
+                        if (hasCasing && widthPixels > 2) {
+                            uint8_t coverRadius = (widthPixels + 1) / 2;
+                            for (size_t j = 1; j + 1 < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], coverRadius, colorRgb565);
+                        }
                         break;
                     }
                     case 1: { // Point (IceNav-v3: renderNavPoint with bounds check)
@@ -1293,6 +1300,13 @@ namespace MapEngine {
                         } else {
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
+                        }
+                        // Pass 3: cover casing semicircle caps at intermediate joints with road color
+                        // (casing drawWideLine leaves a dark disk at each joint; road fill doesn't cover it fully)
+                        if (hasCasing && widthPixels > 2) {
+                            uint8_t coverRadius = (widthPixels + 1) / 2;
+                            for (size_t j = 1; j + 1 < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], coverRadius, colorRgb565);
                         }
                         break;
                     }
