@@ -850,8 +850,10 @@ namespace MapEngine {
                         if (!px_hp || !py_hp) break;
 
                         for (uint16_t j = 0; j < ref.coordCount; j++) {
-                            px_hp[j] = coords[j * 2];
-                            py_hp[j] = coords[j * 2 + 1];
+                            // Clamp HP coords to [0, 4096] — values outside this range
+                            // cause aberrant AEL shapes (disk/circle artefacts)
+                            px_hp[j] = std::max(0, std::min(4096, (int)coords[j * 2]));
+                            py_hp[j] = std::max(0, std::min(4096, (int)coords[j * 2 + 1]));
                         }
 
                         if (fillPolygons) {
@@ -878,7 +880,8 @@ namespace MapEngine {
                     }
                     case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
                         if (ref.coordCount < 2) break;
-                        uint8_t widthPixels = fp[4];
+                        bool hasCasing = (fp[4] & 0x80) != 0;  // bit 7 = casing flag
+                        uint8_t widthPixels = fp[4] & 0x7F;     // bits 6-0 = actual width
                         if (widthPixels == 0) widthPixels = 1;
                         int16_t* coords = (int16_t*)(fp + 12);
 
@@ -919,6 +922,15 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= viewportW ||
                             maxPy < 0 || minPy >= viewportH) break;
 
+                        // Pass 1: casing (border), wider + darker
+                        if (hasCasing) {
+                            uint8_t casingWidth = widthPixels + 2;
+                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.35f);
+                            for (size_t j = 1; j < validPoints; j++)
+                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
+                        }
+
+                        // Pass 2: road fill
                         for (size_t j = 1; j < validPoints; j++) {
                             if (widthPixels <= 2)
                                 map.drawLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], colorRgb565);
@@ -1150,8 +1162,8 @@ namespace MapEngine {
                         int* py_hp = proj32Y.data();
 
                         for (uint16_t j = 0; j < ref.coordCount; j++) {
-                            px_hp[j] = coords[j * 2];
-                            py_hp[j] = coords[j * 2 + 1];
+                            px_hp[j] = std::max(0, std::min(4096, (int)coords[j * 2]));
+                            py_hp[j] = std::max(0, std::min(4096, (int)coords[j * 2 + 1]));
                         }
 
                         if (fillPolygons) {
@@ -1177,7 +1189,8 @@ namespace MapEngine {
                     }
                     case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
                         if (ref.coordCount < 2) break;
-                        uint8_t widthPixels = fp[4];
+                        bool hasCasing = (fp[4] & 0x80) != 0;  // bit 7 = casing flag
+                        uint8_t widthPixels = fp[4] & 0x7F;     // bits 6-0 = actual width
                         if (widthPixels == 0) widthPixels = 1;
                         int16_t* coords = (int16_t*)(fp + 12);
 
@@ -1214,6 +1227,15 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= MAP_TILE_SIZE ||
                             maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
 
+                        // Pass 1: casing (border), wider + darker
+                        if (hasCasing) {
+                            uint8_t casingWidth = widthPixels + 2;
+                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.35f);
+                            for (size_t j = 1; j < validPoints; j++)
+                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
+                        }
+
+                        // Pass 2: road fill
                         for (size_t j = 1; j < validPoints; j++) {
                             if (widthPixels <= 2)
                                 map.drawLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], colorRgb565);
