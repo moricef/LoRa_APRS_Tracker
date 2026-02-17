@@ -919,20 +919,8 @@ namespace MapEngine {
                                 ref.ringCount, ringEnds);
                         }
 
-                        // Draw outline for exterior ring (IceNav-v3: renderNavPolygon L1392-1401)
-                        uint16_t outerRingEnd = (ref.ringCount > 0) ? ringEnds[0] : ref.coordCount;
-                        if (outerRingEnd >= 3 && outerRingEnd <= ref.coordCount) {
-                            uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
-                            for (int k = 0; k < outerRingEnd; k++) {
-                                if ((k & 63) == 0) esp_task_wdt_reset();
-                                int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
-                                int x0 = (px_hp[k] >> 4) + ref.tileOffsetX;
-                                int y0 = (py_hp[k] >> 4) + ref.tileOffsetY;
-                                int x1 = (px_hp[next] >> 4) + ref.tileOffsetX;
-                                int y1 = (py_hp[next] >> 4) + ref.tileOffsetY;
-                                map.drawLine(x0, y0, x1, y1, borderColor);
-                            }
-                        }
+                        // Polygon outline: TEMPORARILY DISABLED for tile boundary debug
+                        // (hypothesis: clamped coords draw outlines at tile edges)
                         break;
                     }
                     case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
@@ -1304,20 +1292,8 @@ namespace MapEngine {
                                 colorRgb565, xOffset, yOffset, ref.ringCount, ringEnds);
                         }
 
-                        // Draw outline for exterior ring (IceNav-v3 L1392-1401)
-                        uint16_t outerRingEnd = (ref.ringCount > 0) ? ringEnds[0] : ref.coordCount;
-                        if (outerRingEnd >= 3) {
-                            uint16_t borderColor = darkenRGB565(colorRgb565, 0.15f);
-                            for (int k = 0; k < outerRingEnd; k++) {
-                                if ((k & 63) == 0) esp_task_wdt_reset();
-                                int next = (k + 1 == outerRingEnd) ? 0 : k + 1;
-                                int x0 = (px_hp[k] >> 4) + xOffset;
-                                int y0 = (py_hp[k] >> 4) + yOffset;
-                                int x1 = (px_hp[next] >> 4) + xOffset;
-                                int y1 = (py_hp[next] >> 4) + yOffset;
-                                map.drawLine(x0, y0, x1, y1, borderColor);
-                            }
-                        }
+                        // Polygon outline: TEMPORARILY DISABLED for tile boundary debug
+                        // (hypothesis: clamped coords draw outlines at tile edges)
                         break;
                     }
                     case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
