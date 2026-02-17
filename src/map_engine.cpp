@@ -922,20 +922,25 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= viewportW ||
                             maxPy < 0 || minPy >= viewportH) break;
 
-                        // Pass 1: casing (border), wider + darker
+                        // Pass 1: casing (border), +1px wider + darker
                         if (hasCasing) {
-                            uint8_t casingWidth = widthPixels + 2;
+                            uint8_t casingWidth = widthPixels + 1;
                             uint16_t casingColor = darkenRGB565(colorRgb565, 0.35f);
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
+                            for (size_t j = 1; j + 1 < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], casingWidth / 2, casingColor);
                         }
 
-                        // Pass 2: road fill
-                        for (size_t j = 1; j < validPoints; j++) {
-                            if (widthPixels <= 2)
-                                map.drawLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], colorRgb565);
-                            else
-                                map.drawWideLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
+                        // Pass 2: road fill; fillCircle at joints avoids pearl-necklace effect
+                        if (widthPixels <= 2) {
+                            for (size_t j = 1; j < validPoints; j++)
+                                map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
+                        } else {
+                            for (size_t j = 1; j < validPoints; j++)
+                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
+                            for (size_t j = 1; j + 1 < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], widthPixels / 2, colorRgb565);
                         }
                         break;
                     }
@@ -1227,20 +1232,25 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= MAP_TILE_SIZE ||
                             maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
 
-                        // Pass 1: casing (border), wider + darker
+                        // Pass 1: casing (border), +1px wider + darker
                         if (hasCasing) {
-                            uint8_t casingWidth = widthPixels + 2;
+                            uint8_t casingWidth = widthPixels + 1;
                             uint16_t casingColor = darkenRGB565(colorRgb565, 0.35f);
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
+                            for (size_t j = 1; j + 1 < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], casingWidth / 2, casingColor);
                         }
 
-                        // Pass 2: road fill
-                        for (size_t j = 1; j < validPoints; j++) {
-                            if (widthPixels <= 2)
-                                map.drawLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], colorRgb565);
-                            else
-                                map.drawWideLine(pxArr[j - 1], pyArr[j - 1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
+                        // Pass 2: road fill; fillCircle at joints avoids pearl-necklace effect
+                        if (widthPixels <= 2) {
+                            for (size_t j = 1; j < validPoints; j++)
+                                map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
+                        } else {
+                            for (size_t j = 1; j < validPoints; j++)
+                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
+                            for (size_t j = 1; j + 1 < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], widthPixels / 2, colorRgb565);
                         }
                         break;
                     }
