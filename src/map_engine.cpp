@@ -937,7 +937,7 @@ namespace MapEngine {
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
                             for (size_t j = 1; j + 1 < validPoints; j++)
-                                map.fillCircle(pxArr[j], pyArr[j], casingWidth / 2, casingColor);
+                                map.fillCircle(pxArr[j], pyArr[j], casingWidth / 2 - 1, casingColor);
                         }
 
                         // Pass 2: road fill; fillCircle at joints avoids pearl-necklace effect
@@ -948,7 +948,7 @@ namespace MapEngine {
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
                             for (size_t j = 1; j + 1 < validPoints; j++)
-                                map.fillCircle(pxArr[j], pyArr[j], widthPixels / 2, colorRgb565);
+                                map.fillCircle(pxArr[j], pyArr[j], widthPixels / 2 - 1, colorRgb565);
                         }
                         break;
                     }
@@ -1290,7 +1290,7 @@ namespace MapEngine {
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], casingWidth, casingColor);
                             for (size_t j = 1; j + 1 < validPoints; j++)
-                                map.fillCircle(pxArr[j], pyArr[j], casingWidth / 2, casingColor);
+                                map.fillCircle(pxArr[j], pyArr[j], casingWidth / 2 - 1, casingColor);
                         }
 
                         // Pass 2: road fill; fillCircle at joints avoids pearl-necklace effect
@@ -1301,7 +1301,7 @@ namespace MapEngine {
                             for (size_t j = 1; j < validPoints; j++)
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], widthPixels, colorRgb565);
                             for (size_t j = 1; j + 1 < validPoints; j++)
-                                map.fillCircle(pxArr[j], pyArr[j], widthPixels / 2, colorRgb565);
+                                map.fillCircle(pxArr[j], pyArr[j], widthPixels / 2 - 1, colorRgb565);
                         }
                         break;
                     }
