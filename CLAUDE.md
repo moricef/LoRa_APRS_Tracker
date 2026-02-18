@@ -44,6 +44,14 @@ Quand un bug visuel ou comportemental est signalé :
 5. **Lire le code source des primitives LovyanGFX avant de les utiliser.** Certaines fonctions (`drawWideLine`, `draw_wedgeline`) modifient l'état global (`clipRect`) en interne. Toujours vérifier les effets de bord dans `.pio/libdeps/.../LovyanGFX/src/lgfx/v1/LGFXBase.cpp`.
 6. **Ne jamais plafonner silencieusement un conteneur.** Si un vecteur utilise `PSRAMAllocator`, le laisser grandir. Un OOM PSRAM est préférable à un rendu tronqué sans erreur visible.
 7. **Analyser les propositions externes (Gemini, ChatGPT, etc.) avec esprit critique.** Ne pas les appliquer aveuglément. Identifier ce qui est correct, ce qui est faux, et ce qui manque.
+8. **Ne jamais refactorer un chemin de rendu sans porter TOUTE la logique.** Si du code est déplacé d'un endroit à un autre (ex: labels séparés dans un pass textRefs), vérifier que toutes les fonctionnalités (font VLW, scaling, collision, etc.) sont reprises. Le dead code laissé derrière est un bug silencieux.
+9. **Road casing abandonné.** Les primitives LovyanGFX (drawWideLine, fillCircle+drawLine) ne permettent pas un casing propre sur ESP32. Ne pas retenter — utiliser drawWideLine simple comme IceNav-v3.
+
+## Invariants critiques (NE PAS MODIFIER)
+
+- **Labels texte NAV** : les GEOM_TEXT sont rendus dans le pass `textRefs` (après toute la géométrie), PAS dans le `case 4` des globalLayers. La font VLW Unicode DOIT être settée avant ce pass (`map.setFont(&vlwFont)` si `vlwFontLoaded`). Le `case 4` dans le switch des globalLayers est du dead code — ne pas y mettre de logique de rendu.
+- **VLW PointerWrapper** : `vlwFontWrapper` DOIT être `static` car `VLWfont::loadFont()` stocke un pointeur `_fontData` vers le wrapper pour lire les bitmaps des glyphes à la demande. Un wrapper stack-local = dangling pointer = crash ou `|` à la place des accents.
+- **Building outlines** : seuls les polygones avec `fp[4] & 0x80` (hasOutline) reçoivent un outline. Ne pas appliquer d'outline à tous les polygones.
 
 ## Workflow
 
