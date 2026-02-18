@@ -919,8 +919,6 @@ namespace MapEngine {
                                 ref.ringCount, ringEnds);
                         }
 
-                        // Polygon outline: TEMPORARILY DISABLED for tile boundary debug
-                        // (hypothesis: clamped coords draw outlines at tile edges)
                         break;
                     }
                     case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
@@ -975,44 +973,16 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= viewportW ||
                             maxPy < 0 || minPy >= viewportH) break;
 
-                        // Road fill — parallel drawLine calls instead of drawWideLine
-                        // (drawWideLine overwrites clipRect internally, causing tile bleed)
+                        // Road casing disabled — drawWideLine AA causes black outline
+                        // on the 1px casing band (never fully opaque). TODO: implement
+                        // casing with fillRect-based segments + fillCircle joins instead.
                         for (size_t j = 1; j < validPoints; j++) {
                             if (widthPixels <= 2) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                             } else {
-                                float sdx = pxArr[j] - pxArr[j-1];
-                                float sdy = pyArr[j] - pyArr[j-1];
-                                float slen = sqrtf(sdx*sdx + sdy*sdy);
-                                if (slen < 0.5f) continue;
-                                float pnx = -sdy / slen;  // perpendicular unit
-                                float pny =  sdx / slen;
-                                int halfW = widthPixels / 2;
-                                for (int w = -halfW; w <= halfW; w++) {
-                                    int ox = (int)(pnx * w);
-                                    int oy = (int)(pny * w);
-                                    map.drawLine(pxArr[j-1]+ox, pyArr[j-1]+oy,
-                                                 pxArr[j]+ox,   pyArr[j]+oy, colorRgb565);
-                                }
-                            }
-                        }
-                        // Casing: parallel border lines on top of road edges
-                        if (hasCasing && widthPixels > 2) {
-                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.30f);
-                            float halfW = widthPixels * 0.5f + 1.5f;
-                            float ext = widthPixels * 0.5f; // extend past caps
-                            for (size_t j = 1; j < validPoints; j++) {
-                                float dx = pxArr[j] - pxArr[j-1];
-                                float dy = pyArr[j] - pyArr[j-1];
-                                float len = sqrtf(dx*dx + dy*dy);
-                                if (len < 0.5f) continue;
-                                float ux = dx / len, uy = dy / len; // unit along segment
-                                float nx = -uy * halfW, ny = ux * halfW; // perpendicular
-                                float ex = ux * ext, ey = uy * ext; // extension
-                                map.drawLine((int)(pxArr[j-1]+nx-ex), (int)(pyArr[j-1]+ny-ey),
-                                             (int)(pxArr[j]+nx+ex),   (int)(pyArr[j]+ny+ey),   casingColor);
-                                map.drawLine((int)(pxArr[j-1]-nx-ex), (int)(pyArr[j-1]-ny-ey),
-                                             (int)(pxArr[j]-nx+ex),   (int)(pyArr[j]-ny+ey),   casingColor);
+                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j],
+                                                 widthPixels / 2.0f, colorRgb565);
+                                map.setClipRect(ref.tileOffsetX, ref.tileOffsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
                             }
                         }
                         break;
@@ -1292,8 +1262,9 @@ namespace MapEngine {
                                 colorRgb565, xOffset, yOffset, ref.ringCount, ringEnds);
                         }
 
-                        // Polygon outline: TEMPORARILY DISABLED for tile boundary debug
-                        // (hypothesis: clamped coords draw outlines at tile edges)
+                        // Polygon outlines disabled — uint32_t color path through
+                        // LovyanGFX drawLine renders wrong colors (always dark gray).
+                        // TODO: re-enable for buildings only when NAV tiles have zoom_priority.
                         break;
                     }
                     case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
@@ -1344,44 +1315,14 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= MAP_TILE_SIZE ||
                             maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
 
-                        // Road fill — parallel drawLine calls instead of drawWideLine
-                        // (drawWideLine overwrites clipRect internally, causing tile bleed)
+                        // Road casing disabled — see renderNavViewport comment
                         for (size_t j = 1; j < validPoints; j++) {
                             if (widthPixels <= 2) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                             } else {
-                                float sdx = pxArr[j] - pxArr[j-1];
-                                float sdy = pyArr[j] - pyArr[j-1];
-                                float slen = sqrtf(sdx*sdx + sdy*sdy);
-                                if (slen < 0.5f) continue;
-                                float pnx = -sdy / slen;  // perpendicular unit
-                                float pny =  sdx / slen;
-                                int halfW = widthPixels / 2;
-                                for (int w = -halfW; w <= halfW; w++) {
-                                    int ox = (int)(pnx * w);
-                                    int oy = (int)(pny * w);
-                                    map.drawLine(pxArr[j-1]+ox, pyArr[j-1]+oy,
-                                                 pxArr[j]+ox,   pyArr[j]+oy, colorRgb565);
-                                }
-                            }
-                        }
-                        // Casing: parallel border lines on top of road edges
-                        if (hasCasing && widthPixels > 2) {
-                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.30f);
-                            float halfW = widthPixels * 0.5f + 1.5f;
-                            float ext = widthPixels * 0.5f; // extend past caps
-                            for (size_t j = 1; j < validPoints; j++) {
-                                float dx = pxArr[j] - pxArr[j-1];
-                                float dy = pyArr[j] - pyArr[j-1];
-                                float len = sqrtf(dx*dx + dy*dy);
-                                if (len < 0.5f) continue;
-                                float ux = dx / len, uy = dy / len; // unit along segment
-                                float nx = -uy * halfW, ny = ux * halfW; // perpendicular
-                                float ex = ux * ext, ey = uy * ext; // extension
-                                map.drawLine((int)(pxArr[j-1]+nx-ex), (int)(pyArr[j-1]+ny-ey),
-                                             (int)(pxArr[j]+nx+ex),   (int)(pyArr[j]+ny+ey),   casingColor);
-                                map.drawLine((int)(pxArr[j-1]-nx-ex), (int)(pyArr[j-1]-ny-ey),
-                                             (int)(pxArr[j]-nx+ex),   (int)(pyArr[j]-ny+ey),   casingColor);
+                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j],
+                                                 widthPixels / 2.0f, colorRgb565);
+                                map.setClipRect(xOffset, yOffset, MAP_TILE_SIZE, MAP_TILE_SIZE);
                             }
                         }
                         break;
