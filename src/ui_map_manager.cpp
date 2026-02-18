@@ -816,13 +816,13 @@ namespace UIMapManager {
 
     // Add a point to own GPS trace (called from sendBeacon when position changes)
     void addOwnTracePoint(float lat, float lon) {
-        // Check if position changed significantly (delta > ~11m)
+        // Filter GPS jitter: skip if distance to last point < ~33m
         if (ownTraceCount > 0) {
             int lastIdx = (ownTraceHead - 1 + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
             float dlat = fabs(ownTrace[lastIdx].lat - lat);
             float dlon = fabs(ownTrace[lastIdx].lon - lon);
-            if (dlat < 0.0001f && dlon < 0.0001f) {
-                return; // No significant movement, skip
+            if (dlat < 0.0003f && dlon < 0.0003f) {
+                return;
             }
         }
 
