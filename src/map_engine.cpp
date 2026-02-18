@@ -919,6 +919,26 @@ namespace MapEngine {
                                 ref.ringCount, ringEnds);
                         }
 
+                        // Building outline (bit 7 of fp[4])
+                        if ((fp[4] & 0x80) != 0) {
+                            uint16_t outlineColor = darkenRGB565(colorRgb565, 0.35f);
+                            uint16_t ringStart = 0;
+                            uint16_t numRings = (ref.ringCount > 0) ? ref.ringCount : 1;
+                            for (uint16_t r = 0; r < numRings; r++) {
+                                uint16_t ringEnd = (ringEnds && r < ref.ringCount) ? ringEnds[r] : ref.coordCount;
+                                if (ringEnd > ref.coordCount) ringEnd = ref.coordCount;
+                                for (uint16_t j = ringStart; j < ringEnd; j++) {
+                                    uint16_t next = (j + 1 < ringEnd) ? j + 1 : ringStart;
+                                    int x0 = (px_hp[j] >> 4) + ref.tileOffsetX;
+                                    int y0 = (py_hp[j] >> 4) + ref.tileOffsetY;
+                                    int x1 = (px_hp[next] >> 4) + ref.tileOffsetX;
+                                    int y1 = (py_hp[next] >> 4) + ref.tileOffsetY;
+                                    map.drawLine(x0, y0, x1, y1, outlineColor);
+                                }
+                                ringStart = ringEnd;
+                            }
+                        }
+
                         break;
                     }
                     case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
@@ -973,9 +993,31 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= viewportW ||
                             maxPy < 0 || minPy >= viewportH) break;
 
-                        // Road casing disabled — drawWideLine AA causes black outline
-                        // on the 1px casing band (never fully opaque). TODO: implement
-                        // casing with fillRect-based segments + fillCircle joins instead.
+                        // Pass 1 — Casing (darker outline, no AA)
+                        if (hasCasing && widthPixels > 2) {
+                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.30f);
+                            int casingR = widthPixels / 2 + 1;
+                            // 1a. fillCircle at each vertex (round joins)
+                            for (size_t j = 0; j < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], casingR, casingColor);
+                            // 1b. Parallel drawLine segments (thick line without AA)
+                            for (size_t j = 1; j < validPoints; j++) {
+                                float dx = pxArr[j] - pxArr[j-1];
+                                float dy = pyArr[j] - pyArr[j-1];
+                                float len = sqrtf(dx*dx + dy*dy);
+                                if (len < 0.5f) continue;
+                                float nx = -dy / len;
+                                float ny =  dx / len;
+                                for (int w = -casingR; w <= casingR; w++) {
+                                    int ox = (int)roundf(nx * w);
+                                    int oy = (int)roundf(ny * w);
+                                    map.drawLine(pxArr[j-1]+ox, pyArr[j-1]+oy,
+                                                 pxArr[j]+ox, pyArr[j]+oy, casingColor);
+                                }
+                            }
+                        }
+
+                        // Pass 2 — Fill (road color)
                         for (size_t j = 1; j < validPoints; j++) {
                             if (widthPixels <= 2) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
@@ -1262,9 +1304,26 @@ namespace MapEngine {
                                 colorRgb565, xOffset, yOffset, ref.ringCount, ringEnds);
                         }
 
-                        // Polygon outlines disabled — uint32_t color path through
-                        // LovyanGFX drawLine renders wrong colors (always dark gray).
-                        // TODO: re-enable for buildings only when NAV tiles have zoom_priority.
+                        // Building outline (bit 7 of fp[4])
+                        if ((fp[4] & 0x80) != 0) {
+                            uint16_t outlineColor = darkenRGB565(colorRgb565, 0.35f);
+                            uint16_t ringStart = 0;
+                            uint16_t numRings = (ref.ringCount > 0) ? ref.ringCount : 1;
+                            for (uint16_t r = 0; r < numRings; r++) {
+                                uint16_t ringEnd = (ringEnds && r < ref.ringCount) ? ringEnds[r] : ref.coordCount;
+                                if (ringEnd > ref.coordCount) ringEnd = ref.coordCount;
+                                for (uint16_t j = ringStart; j < ringEnd; j++) {
+                                    uint16_t next = (j + 1 < ringEnd) ? j + 1 : ringStart;
+                                    int x0 = (px_hp[j] >> 4) + xOffset;
+                                    int y0 = (py_hp[j] >> 4) + yOffset;
+                                    int x1 = (px_hp[next] >> 4) + xOffset;
+                                    int y1 = (py_hp[next] >> 4) + yOffset;
+                                    map.drawLine(x0, y0, x1, y1, outlineColor);
+                                }
+                                ringStart = ringEnd;
+                            }
+                        }
+
                         break;
                     }
                     case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
@@ -1315,7 +1374,29 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= MAP_TILE_SIZE ||
                             maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
 
-                        // Road casing disabled — see renderNavViewport comment
+                        // Pass 1 — Casing (darker outline, no AA)
+                        if (hasCasing && widthPixels > 2) {
+                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.30f);
+                            int casingR = widthPixels / 2 + 1;
+                            for (size_t j = 0; j < validPoints; j++)
+                                map.fillCircle(pxArr[j], pyArr[j], casingR, casingColor);
+                            for (size_t j = 1; j < validPoints; j++) {
+                                float dx = pxArr[j] - pxArr[j-1];
+                                float dy = pyArr[j] - pyArr[j-1];
+                                float len = sqrtf(dx*dx + dy*dy);
+                                if (len < 0.5f) continue;
+                                float nx = -dy / len;
+                                float ny =  dx / len;
+                                for (int w = -casingR; w <= casingR; w++) {
+                                    int ox = (int)roundf(nx * w);
+                                    int oy = (int)roundf(ny * w);
+                                    map.drawLine(pxArr[j-1]+ox, pyArr[j-1]+oy,
+                                                 pxArr[j]+ox, pyArr[j]+oy, casingColor);
+                                }
+                            }
+                        }
+
+                        // Pass 2 — Fill (road color)
                         for (size_t j = 1; j < validPoints; j++) {
                             if (widthPixels <= 2) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
