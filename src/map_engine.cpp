@@ -993,37 +993,12 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= viewportW ||
                             maxPy < 0 || minPy >= viewportH) break;
 
-                        // Pass 1 — Casing (darker outline, no AA)
-                        if (hasCasing && widthPixels > 2) {
-                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.30f);
-                            int casingR = widthPixels / 2 + 1;
-                            // 1a. fillCircle at each vertex (round joins)
-                            for (size_t j = 0; j < validPoints; j++)
-                                map.fillCircle(pxArr[j], pyArr[j], casingR, casingColor);
-                            // 1b. Parallel drawLine segments (thick line without AA)
-                            for (size_t j = 1; j < validPoints; j++) {
-                                float dx = pxArr[j] - pxArr[j-1];
-                                float dy = pyArr[j] - pyArr[j-1];
-                                float len = sqrtf(dx*dx + dy*dy);
-                                if (len < 0.5f) continue;
-                                float nx = -dy / len;
-                                float ny =  dx / len;
-                                for (int w = -casingR; w <= casingR; w++) {
-                                    int ox = (int)roundf(nx * w);
-                                    int oy = (int)roundf(ny * w);
-                                    map.drawLine(pxArr[j-1]+ox, pyArr[j-1]+oy,
-                                                 pxArr[j]+ox, pyArr[j]+oy, casingColor);
-                                }
-                            }
-                        }
-
-                        // Pass 2 — Fill (road color)
                         for (size_t j = 1; j < validPoints; j++) {
                             if (widthPixels <= 2) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                             } else {
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j],
-                                                 widthPixels / 2.0f, colorRgb565);
+                                                 widthPixels, colorRgb565);
                                 map.setClipRect(ref.tileOffsetX, ref.tileOffsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
                             }
                         }
@@ -1374,35 +1349,12 @@ namespace MapEngine {
                         if (validPoints < 2 || maxPx < 0 || minPx >= MAP_TILE_SIZE ||
                             maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
 
-                        // Pass 1 — Casing (darker outline, no AA)
-                        if (hasCasing && widthPixels > 2) {
-                            uint16_t casingColor = darkenRGB565(colorRgb565, 0.30f);
-                            int casingR = widthPixels / 2 + 1;
-                            for (size_t j = 0; j < validPoints; j++)
-                                map.fillCircle(pxArr[j], pyArr[j], casingR, casingColor);
-                            for (size_t j = 1; j < validPoints; j++) {
-                                float dx = pxArr[j] - pxArr[j-1];
-                                float dy = pyArr[j] - pyArr[j-1];
-                                float len = sqrtf(dx*dx + dy*dy);
-                                if (len < 0.5f) continue;
-                                float nx = -dy / len;
-                                float ny =  dx / len;
-                                for (int w = -casingR; w <= casingR; w++) {
-                                    int ox = (int)roundf(nx * w);
-                                    int oy = (int)roundf(ny * w);
-                                    map.drawLine(pxArr[j-1]+ox, pyArr[j-1]+oy,
-                                                 pxArr[j]+ox, pyArr[j]+oy, casingColor);
-                                }
-                            }
-                        }
-
-                        // Pass 2 — Fill (road color)
                         for (size_t j = 1; j < validPoints; j++) {
                             if (widthPixels <= 2) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                             } else {
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j],
-                                                 widthPixels / 2.0f, colorRgb565);
+                                                 widthPixels, colorRgb565);
                                 map.setClipRect(xOffset, yOffset, MAP_TILE_SIZE, MAP_TILE_SIZE);
                             }
                         }
