@@ -106,6 +106,7 @@ namespace UIMapManager {
     void btn_map_left_clicked(lv_event_t* e);
     void btn_map_right_clicked(lv_event_t* e);
     void create_map_screen();
+    void addOwnTracePoint(float lat, float lon);
 
 } // namespace UIMapManager
 

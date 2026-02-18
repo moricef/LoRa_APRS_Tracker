@@ -34,6 +34,7 @@
 #include "logger.h"
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
+#include "ui_map_manager.h"
 #endif
 
 extern Configuration        Config;
@@ -506,6 +507,11 @@ namespace STATION_Utils {
             lastTxLng       = gps.location.lng();
             previousHeading = currentHeading;
             lastTxDistance  = 0.0;
+
+            // Add own position to GPS trace on map
+            #ifdef USE_LVGL_UI
+                UIMapManager::addOwnTracePoint(lastTxLat, lastTxLng);
+            #endif
         }
         lastTxTime  = millis();
         sendUpdate  = false;
