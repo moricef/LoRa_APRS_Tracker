@@ -294,6 +294,7 @@ namespace MapEngine {
 
     // Load VLW Unicode font for map labels from SD card
     static uint8_t* vlwFontData = nullptr;
+    static lgfx::PointerWrapper vlwFontWrapper;  // Must outlive vlwFont (VLWfont keeps _fontData pointer)
 
     bool loadMapFont() {
         if (vlwFontLoaded) return true;
@@ -328,9 +329,8 @@ namespace MapEngine {
             return false;
         }
 
-        lgfx::PointerWrapper wrapper;
-        wrapper.set(vlwFontData, fileSize);
-        if (vlwFont.loadFont(&wrapper)) {
+        vlwFontWrapper.set(vlwFontData, fileSize);
+        if (vlwFont.loadFont(&vlwFontWrapper)) {
             vlwFontLoaded = true;
             Serial.printf("[MAP] Loaded VLW font: %s (%d bytes in PSRAM)\n", fontPath, fileSize);
             return true;
@@ -1162,6 +1162,15 @@ namespace MapEngine {
         map.clearClipRect();
         map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
         map.setTextSize(1);
+        // Set VLW Unicode font for text labels (must be before textWidth/drawString)
+        if (vlwFontLoaded) {
+            map.setFont(&vlwFont);
+            map.setTextSize(1.0f);
+        } else {
+            map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
+            map.setTextSize(1);
+        }
+
         for (const auto& ref : textRefs) {
             if ((++featureCount & 31) == 0) esp_task_wdt_reset();
             uint8_t* fp = ref.ptr;
@@ -1170,11 +1179,19 @@ namespace MapEngine {
             int16_t* coords = (int16_t*)(fp + 12);
             int px = (coords[0] >> 4) + ref.tileOffsetX;
             int py = (coords[1] >> 4) + ref.tileOffsetY;
+            uint8_t fontSize = fp[4];
             uint8_t textLen = *(fp + 12 + 4);
             if (textLen == 0 || textLen >= 128) continue;
             char textBuf[128];
             memcpy(textBuf, fp + 12 + 5, textLen);
             textBuf[textLen] = '\0';
+
+            // Scale VLW font based on fontSize (0=small, 1=medium, 2=large)
+            if (vlwFontLoaded) {
+                float scale = (fontSize == 0) ? 0.8f : (fontSize == 1) ? 1.0f : 1.2f;
+                map.setTextSize(scale);
+            }
+
             int tw = map.textWidth(textBuf);
             int th = map.fontHeight();
             int lx = px - tw / 2;
@@ -1491,8 +1508,13 @@ namespace MapEngine {
 
         // Label pass — on top of all geometry
         map.clearClipRect();
-        map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
-        map.setTextSize(1);
+        if (vlwFontLoaded) {
+            map.setFont(&vlwFont);
+            map.setTextSize(1.0f);
+        } else {
+            map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
+            map.setTextSize(1);
+        }
         for (const auto& ref : textRefs) {
             uint8_t* fp = ref.ptr;
             uint16_t colorRgb565;
@@ -1500,11 +1522,16 @@ namespace MapEngine {
             int16_t* coords = (int16_t*)(fp + 12);
             int px = (coords[0] >> 4) + xOffset;
             int py = (coords[1] >> 4) + yOffset;
+            uint8_t fontSize = fp[4];
             uint8_t textLen = *(fp + 12 + 4);
             if (textLen == 0 || textLen >= 128) continue;
             char textBuf[128];
             memcpy(textBuf, fp + 12 + 5, textLen);
             textBuf[textLen] = '\0';
+            if (vlwFontLoaded) {
+                float scale = (fontSize == 0) ? 0.8f : (fontSize == 1) ? 1.0f : 1.2f;
+                map.setTextSize(scale);
+            }
             map.setTextColor(colorRgb565);
             map.drawString(textBuf, px, py);
         }
