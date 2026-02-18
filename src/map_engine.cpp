@@ -986,10 +986,10 @@ namespace MapEngine {
                         if (!px_hp || !py_hp) break;
 
                         for (uint16_t j = 0; j < ref.coordCount; j++) {
-                            // Clamp HP coords to [0, 4096] — values outside this range
-                            // cause aberrant AEL shapes (disk/circle artefacts)
-                            px_hp[j] = std::max(0, std::min(4096, (int)coords[j * 2]));
-                            py_hp[j] = std::max(0, std::min(4096, (int)coords[j * 2 + 1]));
+                            // Pass HP coords as-is — negative or >4096 values are normal
+                            // for features clipped with margin. setClipRect handles visibility.
+                            px_hp[j] = (int)coords[j * 2];
+                            py_hp[j] = (int)coords[j * 2 + 1];
                         }
 
                         if (fillPolygons) {
@@ -998,8 +998,8 @@ namespace MapEngine {
                                 ref.ringCount, ringEnds);
                         }
 
-                        // Building outline (bit 7 of fp[4])
-                        if ((fp[4] & 0x80) != 0) {
+                        // Building outline (bit 7 of fp[4]), z16+ only
+                        if ((fp[4] & 0x80) != 0 && zoom >= 16) {
                             uint16_t outlineColor = darkenRGB565(colorRgb565, 0.35f);
                             uint16_t ringStart = 0;
                             uint16_t numRings = (ref.ringCount > 0) ? ref.ringCount : 1;
@@ -1023,8 +1023,9 @@ namespace MapEngine {
                     case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
                         if (ref.coordCount < 2) break;
                         bool hasCasing = (fp[4] & 0x80) != 0;  // bit 7 = casing flag
-                        uint8_t widthPixels = fp[4] & 0x7F;     // bits 6-0 = actual width
-                        if (widthPixels == 0) widthPixels = 1;
+                        uint8_t widthRaw = fp[4] & 0x7F;        // bits 6-0 = half-pixels
+                        if (widthRaw == 0) widthRaw = 2;         // minimum 1.0px
+                        float widthF = widthRaw / 2.0f;          // convert to pixels
                         int16_t* coords = (int16_t*)(fp + 12);
 
                         // Pre-project all coords with dedup (IceNav-v3: renderNavLineString L1287-1324)
@@ -1042,8 +1043,9 @@ namespace MapEngine {
                         size_t validPoints = 0;
                         int16_t lastPx = -32768, lastPy = -32768;
 
-                        // Simplification: skip vertices within widthPixels/2 of last kept
-                        int distThreshSq = (widthPixels * widthPixels) / 4;
+                        // Simplification: skip vertices within width/2 of last kept
+                        int distThresh = (int)(widthF / 2.0f);
+                        int distThreshSq = distThresh * distThresh;
                         if (distThreshSq < 1) distThreshSq = 1;
 
                         for (size_t j = 0; j < numCoords; j++) {
@@ -1073,11 +1075,11 @@ namespace MapEngine {
                             maxPy < 0 || minPy >= viewportH) break;
 
                         for (size_t j = 1; j < validPoints; j++) {
-                            if (widthPixels <= 2) {
+                            if (widthF <= 1.0f) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                             } else {
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j],
-                                                 widthPixels, colorRgb565);
+                                                 widthF, colorRgb565);
                                 map.setClipRect(ref.tileOffsetX, ref.tileOffsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
                             }
                         }
@@ -1375,8 +1377,8 @@ namespace MapEngine {
                         int* py_hp = proj32Y.data();
 
                         for (uint16_t j = 0; j < ref.coordCount; j++) {
-                            px_hp[j] = std::max(0, std::min(4096, (int)coords[j * 2]));
-                            py_hp[j] = std::max(0, std::min(4096, (int)coords[j * 2 + 1]));
+                            px_hp[j] = (int)coords[j * 2];
+                            py_hp[j] = (int)coords[j * 2 + 1];
                         }
 
                         if (fillPolygons) {
@@ -1384,8 +1386,8 @@ namespace MapEngine {
                                 colorRgb565, xOffset, yOffset, ref.ringCount, ringEnds);
                         }
 
-                        // Building outline (bit 7 of fp[4])
-                        if ((fp[4] & 0x80) != 0) {
+                        // Building outline (bit 7 of fp[4]), z16+ only
+                        if ((fp[4] & 0x80) != 0 && currentZoom >= 16) {
                             uint16_t outlineColor = darkenRGB565(colorRgb565, 0.35f);
                             uint16_t ringStart = 0;
                             uint16_t numRings = (ref.ringCount > 0) ? ref.ringCount : 1;
@@ -1409,8 +1411,9 @@ namespace MapEngine {
                     case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
                         if (ref.coordCount < 2) break;
                         bool hasCasing = (fp[4] & 0x80) != 0;  // bit 7 = casing flag
-                        uint8_t widthPixels = fp[4] & 0x7F;     // bits 6-0 = actual width
-                        if (widthPixels == 0) widthPixels = 1;
+                        uint8_t widthRaw = fp[4] & 0x7F;        // bits 6-0 = half-pixels
+                        if (widthRaw == 0) widthRaw = 2;         // minimum 1.0px
+                        float widthF = widthRaw / 2.0f;          // convert to pixels
                         int16_t* coords = (int16_t*)(fp + 12);
 
                         // Pre-project with dedup (IceNav-v3 pattern)
@@ -1428,8 +1431,9 @@ namespace MapEngine {
                         size_t validPoints = 0;
                         int16_t lastPx = -32768, lastPy = -32768;
 
-                        // Simplification: skip vertices within widthPixels/2 of last kept
-                        int distThreshSq2 = (widthPixels * widthPixels) / 4;
+                        // Simplification: skip vertices within width/2 of last kept
+                        int distThresh = (int)(widthF / 2.0f);
+                        int distThreshSq2 = distThresh * distThresh;
                         if (distThreshSq2 < 1) distThreshSq2 = 1;
 
                         for (size_t j = 0; j < numCoords; j++) {
@@ -1455,11 +1459,11 @@ namespace MapEngine {
                             maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
 
                         for (size_t j = 1; j < validPoints; j++) {
-                            if (widthPixels <= 2) {
+                            if (widthF <= 1.0f) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                             } else {
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j],
-                                                 widthPixels, colorRgb565);
+                                                 widthF, colorRgb565);
                                 map.setClipRect(xOffset, yOffset, MAP_TILE_SIZE, MAP_TILE_SIZE);
                             }
                         }
