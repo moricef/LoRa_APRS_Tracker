@@ -63,6 +63,17 @@ namespace MapEngine {
     static size_t maxCachedTiles = TILE_CACHE_SIZE;
     static uint32_t cacheAccessCounter = 0;
 
+    // NAV raw data cache — avoids re-reading .nav tiles from SD after pan
+    struct NavCacheEntry {
+        uint8_t* data;        // Raw NAV data (ps_malloc'd)
+        size_t   size;        // Size in bytes
+        uint32_t tileHash;    // (zoom << 28) | (tileX << 14) | tileY
+        uint32_t lastAccess;  // LRU counter
+    };
+    #define NAV_CACHE_SIZE 30  // 30 tiles × ~4KB avg = ~120KB PSRAM
+    static std::vector<NavCacheEntry> navCache;
+    static uint32_t navCacheAccessCounter = 0;
+
     // LVGL async call to invalidate the map canvas from another thread
     static void invalidate_map_canvas_cb(void* user_data) {
         lv_obj_t* canvas = (lv_obj_t*)user_data;
@@ -238,6 +249,9 @@ namespace MapEngine {
         );
     }
 
+    // Forward declaration (defined after shrinkProjectionBuffers)
+    static void clearNavCache();
+
     // Initialize tile cache and pre-reserve render buffers
     void initTileCache() {
         for (auto& cachedTile : tileCache) {
@@ -259,11 +273,14 @@ namespace MapEngine {
         proj32X.reserve(1024);
         proj32Y.reserve(1024);
         for (int i = 0; i < 16; i++) globalLayers[i].reserve(256);
+        navCache.reserve(NAV_CACHE_SIZE);
 
-        Serial.printf("[MAP] Cache %d tiles, render buffers pre-reserved (PSRAM)\n", maxCachedTiles);
+        Serial.printf("[MAP] Cache %d raster + %d NAV tiles, render buffers pre-reserved (PSRAM)\n",
+                      maxCachedTiles, NAV_CACHE_SIZE);
     }
 
     void clearTileCache() {
+        clearNavCache();
         initTileCache();
     }
 
@@ -290,6 +307,49 @@ namespace MapEngine {
             proj32Y.shrink_to_fit();
             proj32Y.reserve(BASELINE_CAPACITY);
         }
+    }
+
+    // --- NAV raw data cache functions ---
+
+    static int findNavCache(uint8_t zoom, int tileX, int tileY) {
+        uint32_t hash = (uint32_t(zoom) << 28) | (uint32_t(tileX & 0x3FFF) << 14) | uint32_t(tileY & 0x3FFF);
+        for (int i = 0; i < (int)navCache.size(); i++) {
+            if (navCache[i].tileHash == hash) return i;
+        }
+        return -1;
+    }
+
+    // Add a tile to the NAV cache — takes ownership of the data pointer
+    static void addNavCache(uint8_t zoom, int tileX, int tileY, uint8_t* data, size_t size) {
+        uint32_t hash = (uint32_t(zoom) << 28) | (uint32_t(tileX & 0x3FFF) << 14) | uint32_t(tileY & 0x3FFF);
+        NavCacheEntry entry;
+        entry.data = data;
+        entry.size = size;
+        entry.tileHash = hash;
+        entry.lastAccess = ++navCacheAccessCounter;
+
+        if ((int)navCache.size() < NAV_CACHE_SIZE) {
+            navCache.push_back(entry);
+            return;
+        }
+        // Evict LRU entry
+        int lruIdx = 0;
+        uint32_t lruMin = navCache[0].lastAccess;
+        for (int i = 1; i < (int)navCache.size(); i++) {
+            if (navCache[i].lastAccess < lruMin) {
+                lruMin = navCache[i].lastAccess;
+                lruIdx = i;
+            }
+        }
+        free(navCache[lruIdx].data);
+        navCache[lruIdx] = entry;
+    }
+
+    static void clearNavCache() {
+        for (auto& e : navCache) free(e.data);
+        navCache.clear();
+        navCacheAccessCounter = 0;
+        Serial.println("[NAV-CACHE] Cleared");
     }
 
     // Load VLW Unicode font for map labels from SD card
@@ -688,7 +748,8 @@ namespace MapEngine {
         int maxDy = (viewportH - centerTileOriginY + MAP_TILE_SIZE - 1) / MAP_TILE_SIZE;
 
         // --- Load all tiles and dispatch features (IceNav-v3 pattern: maps.cpp:1498-1543) ---
-        std::vector<uint8_t*> tileBuffers;
+        std::vector<uint8_t*> tileBuffers;  // Pointers into navCache — do NOT free
+        int navCacheHits = 0, navCacheMisses = 0;
         for (int i = 0; i < 16; i++) globalLayers[i].clear();
         // One-time PSRAM reserve: reduces reallocations on first render
         static bool layersReserved = false;
@@ -734,73 +795,76 @@ namespace MapEngine {
                 // Skip tiles entirely outside viewport
                 bool skipX = (tileOffsetX + MAP_TILE_SIZE <= 0 || tileOffsetX >= viewportW);
                 bool skipY = (tileOffsetY + MAP_TILE_SIZE <= 0 || tileOffsetY >= viewportH);
-                if (skipX || skipY) {
-                    Serial.printf("[NAV-SKIP] Tile %d/%d: offset=(%d,%d) skipX=%d skipY=%d\n",
-                                  tileX, tileY, tileOffsetX, tileOffsetY, skipX, skipY);
-                    continue;
-                }
+                if (skipX || skipY) continue;
 
-                char tilePath[128];
-                snprintf(tilePath, sizeof(tilePath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
-                         region, zoom, tileX, tileY);
-
-                // Read tile file under SPI mutex
+                // Check NAV cache first
                 uint8_t* data = nullptr;
                 size_t fileSize = 0;
-                bool mutexOk = false, fileOk = false, sizeOk = false, allocOk = false;
+                int cacheIdx = findNavCache(zoom, tileX, tileY);
 
-                if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                    mutexOk = true;
-                    File file = SD.open(tilePath, FILE_READ);
-                    if (file) {
-                        fileOk = true;
-                        fileSize = file.size();
-                        if (fileSize >= 22) {
-                            sizeOk = true;
-                            data = (uint8_t*)ps_malloc(fileSize);
-                            if (data) {
-                                allocOk = true;
-                                file.read(data, fileSize);
+                if (cacheIdx >= 0) {
+                    // Cache hit — use cached data directly
+                    data = navCache[cacheIdx].data;
+                    fileSize = navCache[cacheIdx].size;
+                    navCache[cacheIdx].lastAccess = ++navCacheAccessCounter;
+                    navCacheHits++;
+                } else {
+                    // Cache miss — read from SD
+                    char tilePath[128];
+                    snprintf(tilePath, sizeof(tilePath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
+                             region, zoom, tileX, tileY);
+
+                    bool mutexOk = false, fileOk = false, sizeOk = false, allocOk = false;
+
+                    if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                        mutexOk = true;
+                        File file = SD.open(tilePath, FILE_READ);
+                        if (file) {
+                            fileOk = true;
+                            fileSize = file.size();
+                            if (fileSize >= 22) {
+                                sizeOk = true;
+                                data = (uint8_t*)ps_malloc(fileSize);
+                                if (data) {
+                                    allocOk = true;
+                                    file.read(data, fileSize);
+                                }
                             }
+                            file.close();
                         }
-                        file.close();
+                        xSemaphoreGiveRecursive(spiMutex);
                     }
-                    xSemaphoreGiveRecursive(spiMutex);
-                }
 
-                if (!data) {
-                    Serial.printf("[NAV-FAIL] Tile %d/%d: mutex=%d file=%d size=%d(%u) alloc=%d\n",
-                                  tileX, tileY, mutexOk, fileOk, sizeOk, (unsigned)fileSize, allocOk);
-                    // If file exists but ps_malloc failed → PSRAM exhausted, stop loading
-                    if (sizeOk && !allocOk) {
-                        Serial.printf("[NAV] PSRAM exhausted (needed %u KB, largest block: %u KB) — stopping tile load\n",
-                                      (unsigned)(fileSize / 1024),
-                                      (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
-                        psramExhausted = true;
+                    if (!data) {
+                        if (sizeOk && !allocOk) {
+                            Serial.printf("[NAV] PSRAM exhausted (needed %u KB, largest block: %u KB) — stopping tile load\n",
+                                          (unsigned)(fileSize / 1024),
+                                          (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
+                            psramExhausted = true;
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                if (memcmp(data, "NAV1", 4) != 0) {
-                    Serial.printf("[NAV-FAIL] Tile %d/%d: invalid header (not NAV1)\n", tileX, tileY);
-                    free(data);
-                    continue;
+                    if (memcmp(data, "NAV1", 4) != 0) {
+                        Serial.printf("[NAV-FAIL] Tile %d/%d: invalid header (not NAV1)\n", tileX, tileY);
+                        free(data);
+                        continue;
+                    }
+
+                    // Transfer ownership to cache
+                    addNavCache(zoom, tileX, tileY, data, fileSize);
+                    navCacheMisses++;
                 }
 
                 // Extract background color from first feature (background polygon) on first tile
                 if (!bgColorExtracted && fileSize >= 24) {
-                    // First feature at offset 22: type(1) + color(2) + ...
                     memcpy(&bgColor, data + 23, 2);  // RGB565 at offset 23 (after type byte)
                     bgColorExtracted = true;
-                    Serial.printf("[NAV-BG] Background color extracted: 0x%04X\n", bgColor);
                 }
 
                 tileBuffers.push_back(data);
 
                 uint16_t feature_count;
                 memcpy(&feature_count, data + 4, 2);
-
-                Serial.printf("[NAV-DBG] Tile %d/%d: %u features, %u bytes\n",
-                              tileX, tileY, feature_count, (unsigned)fileSize);
 
                 // Parse features and dispatch to priority layers (IceNav-v3 zero-copy pattern)
                 uint8_t* p = data + 22;
@@ -911,9 +975,6 @@ namespace MapEngine {
                     p += 12 + feature_data_size;
                 }
 
-                Serial.printf("[NAV-DBG]   Kept: pt=%d ln=%d poly=%d txt=%d | skipped: zoom=%d overflow=%d\n",
-                              typeCounts[1], typeCounts[2], typeCounts[3], typeCounts[4],
-                              skippedZoom, skippedOverflow);
         }
 
         // Log load stats (IceNav-v3 pattern: maps.cpp:1582-1587)
@@ -942,9 +1003,8 @@ namespace MapEngine {
                 // WDT reset every 32 features during rendering (prevents WDT timeout)
                 if ((++featureCount & 31) == 0) esp_task_wdt_reset();
 
-                // Yield to LVGL every 512 features to keep touch responsive
-                // (~100ms chunks instead of 2.5s blocking)
-                if ((featureCount & 511) == 0) {
+                // Yield to LVGL every 2048 features to keep touch responsive
+                if ((featureCount & 2047) == 0) {
                     map.endWrite();
                     lv_timer_handler();
                     map.startWrite();
@@ -952,16 +1012,16 @@ namespace MapEngine {
 
                 uint8_t* fp = ref.ptr;
 
-                // Per-feature setClipRect to tile boundaries (IceNav-v3: maps.cpp:1561)
-                map.setClipRect(ref.tileOffsetX, ref.tileOffsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
-
-                // BBox culling against viewport (IceNav-v3: maps.cpp:1554-1559)
+                // BBox culling against viewport BEFORE setClipRect (avoid unnecessary calls)
                 uint8_t bx1 = fp[5], by1 = fp[6], bx2 = fp[7], by2 = fp[8];
                 int16_t minX = ref.tileOffsetX + bx1;
                 int16_t minY = ref.tileOffsetY + by1;
                 int16_t maxX = ref.tileOffsetX + bx2;
                 int16_t maxY = ref.tileOffsetY + by2;
                 if (maxX < 0 || minX > viewportW || maxY < 0 || minY > viewportH) continue;
+
+                // Per-feature setClipRect to tile boundaries (IceNav-v3: maps.cpp:1561)
+                map.setClipRect(ref.tileOffsetX, ref.tileOffsetY, MAP_TILE_SIZE, MAP_TILE_SIZE);
 
                 // Read colorRgb565 directly (LE, no byte swap — IceNav-v3 pattern)
                 uint16_t colorRgb565;
@@ -1075,7 +1135,7 @@ namespace MapEngine {
                             maxPy < 0 || minPy >= viewportH) break;
 
                         for (size_t j = 1; j < validPoints; j++) {
-                            if (widthF <= 1.0f) {
+                            if (widthF <= 4.0f) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                             } else {
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j],
@@ -1218,13 +1278,12 @@ namespace MapEngine {
 
         map.endWrite();
 
-        // Free all tile buffers (IceNav-v3: maps.cpp:1574-1577)
-        for (auto* buf : tileBuffers) free(buf);
+        // Tile buffers are now owned by navCache — do NOT free here
 
         uint64_t endTime = esp_timer_get_time();
-        Serial.printf("[NAV] Viewport: %llu ms (load %llu ms), %d features, PSRAM free: %u\n",
+        Serial.printf("[NAV] Viewport: %llu ms (load %llu ms), %d features, cache: %d hit / %d miss, PSRAM free: %u\n",
                       (endTime - startTime) / 1000, (loadEnd - startTime) / 1000,
-                      totalFeatures, ESP.getFreePsram());
+                      totalFeatures, navCacheHits, navCacheMisses, ESP.getFreePsram());
 
         return !tileBuffers.empty();
     }
