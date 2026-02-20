@@ -1135,7 +1135,7 @@ namespace MapEngine {
                             maxPy < 0 || minPy >= viewportH) break;
 
                         for (size_t j = 1; j < validPoints; j++) {
-                            if (widthF <= 4.0f) {
+                            if (widthF <= 1.0f) {
                                 map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
                             } else {
                                 map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j],
