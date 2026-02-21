@@ -43,9 +43,12 @@ struct NavTileHeader {
     int32_t maxLat;
 } __attribute__((packed));
 
-// Feature Header (12 bytes packed)
-// Followed by: coordCount × (int16 x, int16 y) coordinate pairs
-// For polygons: followed by uint8 ringCount + ringCount × uint16 ringEnd
+// Feature Header (13 bytes packed)
+// Followed by: payload of payloadSize bytes
+// Lines/Polygons: coords encoded as Delta+ZigZag+VarInt
+// Polygons: ring data (uint16 ringCount + ringCount × uint16 ringEnds) at end of payload
+// Points: 1 coord encoded as ZigZag+VarInt (delta from 0)
+// Text (type 4): int16 px, int16 py, uint8 textLen, text bytes (NOT VarInt)
 struct NavFeatureHeader {
     uint8_t geomType;       // 1=Point, 2=Line, 3=Polygon, 4=Text
     uint16_t colorRgb565;
@@ -53,7 +56,7 @@ struct NavFeatureHeader {
     uint8_t widthPixels;
     uint8_t bbox[4];        // x1, y1, x2, y2 (tile-relative, /16)
     uint16_t coordCount;
-    uint8_t padding;        // Alignment byte (0x00)
+    uint16_t payloadSize;   // Total payload size in bytes (replaces padding)
 } __attribute__((packed));
 
 // Edge structure for Active Edge List (AEL) algorithm

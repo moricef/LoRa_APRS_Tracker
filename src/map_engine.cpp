@@ -45,11 +45,96 @@ namespace MapEngine {
     static std::vector<int, PSRAMAllocator<int>> proj32X;
     static std::vector<int, PSRAMAllocator<int>> proj32Y;
 
+    // Decoded coords buffer for Delta+ZigZag+VarInt features (PSRAM, reused per feature)
+    static std::vector<int16_t, PSRAMAllocator<int16_t>> decodedCoords;
+
+    // --- VarInt decoding (protobuf-style LEB128) ---
+    static uint32_t readVarInt(const uint8_t* buf, uint32_t& offset, uint32_t limit) {
+        uint32_t result = 0;
+        uint32_t shift = 0;
+        while (offset < limit) {
+            uint8_t b = buf[offset++];
+            result |= (uint32_t)(b & 0x7F) << shift;
+            if ((b & 0x80) == 0) return result;
+            shift += 7;
+            if (shift >= 35) break;  // overflow protection
+        }
+        return result;
+    }
+
+    static inline int16_t zigzagDecode(uint32_t n) {
+        return (int16_t)((n >> 1) ^ -(int32_t)(n & 1));
+    }
+
+    // Result of decoding a feature's VarInt payload
+    struct DecodedFeature {
+        uint32_t coordsIdx;      // Start index in decodedCoords[]
+        uint16_t ringCount;
+        uint16_t* ringEnds;      // Pointer into tile buffer (navCache), NOT decodedCoords
+    };
+
+    // Decode Delta+ZigZag+VarInt coords into decodedCoords[].
+    // For polygons: reads ringCount + ringEnds from end of payload.
+    // Returns false if data is truncated.
+    static bool decodeFeatureCoords(const uint8_t* payload, uint16_t coordCount,
+                                     uint16_t payloadSize, uint8_t geomType,
+                                     DecodedFeature& out) {
+        out.coordsIdx = decodedCoords.size();
+        out.ringCount = 0;
+        out.ringEnds = nullptr;
+
+        // Ring data (polygons) is handled after decoding coords below
+
+        // Decode delta+zigzag+varint coords
+        uint32_t offset = 0;
+        int16_t prevX = 0, prevY = 0;
+
+        // Reserve space
+        size_t needed = out.coordsIdx + coordCount * 2;
+        if (decodedCoords.capacity() < needed) {
+            decodedCoords.reserve(needed + 256);
+        }
+        decodedCoords.resize(needed);
+
+        for (uint16_t i = 0; i < coordCount; i++) {
+            if (offset >= payloadSize) return false;
+            uint32_t rawX = readVarInt(payload, offset, payloadSize);
+            if (offset >= payloadSize && i < coordCount - 1) return false;
+            uint32_t rawY = readVarInt(payload, offset, payloadSize);
+
+            int16_t dx = zigzagDecode(rawX);
+            int16_t dy = zigzagDecode(rawY);
+            int16_t x = prevX + dx;
+            int16_t y = prevY + dy;
+
+            decodedCoords[out.coordsIdx + i * 2]     = x;
+            decodedCoords[out.coordsIdx + i * 2 + 1] = y;
+
+            prevX = x;
+            prevY = y;
+        }
+
+        // For polygons: read ring data from remaining bytes after varint coords
+        if (geomType == 3) {
+            uint32_t remaining = payloadSize - offset;
+            if (remaining >= 2) {
+                uint16_t ringCount;
+                memcpy(&ringCount, payload + offset, 2);
+                if (remaining >= 2 + ringCount * 2) {
+                    out.ringCount = ringCount;
+                    out.ringEnds = (uint16_t*)(const_cast<uint8_t*>(payload) + offset + 2);
+                }
+            }
+        }
+
+        return true;
+    }
+
     // Feature reference for zero-copy rendering (IceNav-v3 pattern: pointer into tile buffer)
     struct FeatureRef {
         uint8_t* ptr;           // Pointer to feature header in data buffer
-        uint8_t geomType;       // 1=Point, 2=Line, 3=Polygon
-        uint16_t ringCount;     // For polygons (uint8_t on disk, stored as uint16_t)
+        uint8_t geomType;       // 1=Point, 2=Line, 3=Polygon, 4=Text
+        uint16_t payloadSize;   // Total payload size in bytes
         uint16_t coordCount;    // Number of coordinates
         int16_t tileOffsetX;    // Pixel offset of tile top-left in viewport (IceNav: tilePixelOffsetX)
         int16_t tileOffsetY;    // Pixel offset of tile top-left in viewport (IceNav: tilePixelOffsetY)
@@ -272,6 +357,7 @@ namespace MapEngine {
         proj16Y.reserve(1024);
         proj32X.reserve(1024);
         proj32Y.reserve(1024);
+        decodedCoords.reserve(4096);
         for (int i = 0; i < 16; i++) globalLayers[i].reserve(256);
         navCache.reserve(NAV_CACHE_SIZE);
 
@@ -306,6 +392,12 @@ namespace MapEngine {
             proj32Y.clear();
             proj32Y.shrink_to_fit();
             proj32Y.reserve(BASELINE_CAPACITY);
+        }
+        const size_t DECODED_BASELINE = 4096;
+        if (decodedCoords.capacity() > DECODED_BASELINE * 2) {
+            decodedCoords.clear();
+            decodedCoords.shrink_to_fit();
+            decodedCoords.reserve(DECODED_BASELINE);
         }
     }
 
@@ -814,13 +906,11 @@ namespace MapEngine {
                     snprintf(tilePath, sizeof(tilePath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
                              region, zoom, tileX, tileY);
 
-                    bool mutexOk = false, fileOk = false, sizeOk = false, allocOk = false;
+                    bool sizeOk = false, allocOk = false;
 
                     if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                        mutexOk = true;
                         File file = SD.open(tilePath, FILE_READ);
                         if (file) {
-                            fileOk = true;
                             fileSize = file.size();
                             if (fileSize >= 22) {
                                 sizeOk = true;
@@ -855,9 +945,14 @@ namespace MapEngine {
                     navCacheMisses++;
                 }
 
-                // Extract background color from first feature (background polygon) on first tile
-                if (!bgColorExtracted && fileSize >= 24) {
-                    memcpy(&bgColor, data + 23, 2);  // RGB565 at offset 23 (after type byte)
+                // Extract background color from first feature if it's a background polygon
+                // (geomType 3, priority 0). Python generator writes one; Jordi's C++ generator does not.
+                if (!bgColorExtracted && fileSize >= 22 + 13) {
+                    uint8_t ft0Type = data[22];
+                    uint8_t ft0Prio = data[25] & 0x0F;
+                    if (ft0Type == 3 && ft0Prio == 0) {
+                        memcpy(&bgColor, data + 23, 2);
+                    }
                     bgColorExtracted = true;
                 }
 
@@ -874,7 +969,7 @@ namespace MapEngine {
 
                 for (uint16_t i = 0; i < feature_count; i++) {
                     if ((i & 63) == 0) esp_task_wdt_reset();
-                    if (p + 12 > data + fileSize) {
+                    if (p + 13 > data + fileSize) {
                         Serial.printf("[NAV-DBG]   BREAK at feature %d: header overflow (p=%u, end=%u)\n",
                                       i, (unsigned)(p - data), (unsigned)fileSize);
                         skippedOverflow = feature_count - i;
@@ -885,42 +980,12 @@ namespace MapEngine {
                     uint8_t zoomPriority = p[3];
                     uint16_t coordCount;
                     memcpy(&coordCount, p + 9, 2);
+                    uint16_t payloadSize;
+                    memcpy(&payloadSize, p + 11, 2);
 
-                    // Skip first feature (background polygon) - already used for fillSprite
-                    if (i == 0) {
-                        uint32_t bg_data_size = coordCount * 4;
-                        if (geomType == 3) {  // Polygon
-                            uint8_t* ring_ptr = p + 12 + bg_data_size;
-                            if (ring_ptr + 2 <= data + fileSize) {
-                                uint16_t bgRingCount;
-                                memcpy(&bgRingCount, ring_ptr, 2);
-                                if (ring_ptr + 2 + (bgRingCount * 2) <= data + fileSize)
-                                    bg_data_size += 2 + (bgRingCount * 2);
-                            }
-                        }
-                        p += 12 + bg_data_size;
-                        continue;
-                    }
-
-                    uint32_t feature_data_size = coordCount * 4;
-                    uint16_t ringCount = 0;
-
-                    // Polygon ring data: uint16 ringCount (2 bytes) + ringCount × uint16 ringEnds
-                    // (matching Python tile_generator.py: struct.pack('<H', ring_count))
-                    if (geomType == 3) {
-                        uint8_t* ring_ptr = p + 12 + feature_data_size;
-                        if (ring_ptr + 2 <= data + fileSize) {
-                            memcpy(&ringCount, ring_ptr, 2);
-                            if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize)
-                                feature_data_size += 2 + (ringCount * 2);
-                            else
-                                ringCount = 0;
-                        }
-                    }
-
-                    if (p + 12 + feature_data_size > data + fileSize) {
-                        Serial.printf("[NAV-DBG]   BREAK at feature %d: data overflow (type=%d, coords=%d, size=%u, p=%u, end=%u)\n",
-                                      i, geomType, coordCount, feature_data_size, (unsigned)(p - data), (unsigned)fileSize);
+                    if (p + 13 + payloadSize > data + fileSize) {
+                        Serial.printf("[NAV-DBG]   BREAK at feature %d: data overflow (type=%d, coords=%d, payload=%u, p=%u, end=%u)\n",
+                                      i, geomType, coordCount, payloadSize, (unsigned)(p - data), (unsigned)fileSize);
                         skippedOverflow = feature_count - i;
                         break;
                     }
@@ -929,7 +994,7 @@ namespace MapEngine {
                     uint8_t minZoom = zoomPriority >> 4;
                     if (minZoom > zoom) {
                         skippedZoom++;
-                        p += 12 + feature_data_size;
+                        p += 13 + payloadSize;
                         continue;
                     }
 
@@ -941,7 +1006,7 @@ namespace MapEngine {
                     FeatureRef ref;
                     ref.ptr = p;
                     ref.geomType = geomType;
-                    ref.ringCount = ringCount;
+                    ref.payloadSize = payloadSize;
                     ref.coordCount = coordCount;
                     ref.tileOffsetX = tileOffsetX;
                     ref.tileOffsetY = tileOffsetY;
@@ -954,7 +1019,7 @@ namespace MapEngine {
                             size_t needed = (textRefs.capacity() < 1 ? 1 : textRefs.capacity() * 2) * sizeof(FeatureRef);
                             if (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < needed) {
                                 skippedOverflow++;
-                                p += 12 + feature_data_size;
+                                p += 13 + payloadSize;
                                 continue;
                             }
                         }
@@ -965,14 +1030,14 @@ namespace MapEngine {
                             size_t needed = (layer.capacity() < 1 ? 1 : layer.capacity() * 2) * sizeof(FeatureRef);
                             if (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < needed) {
                                 skippedOverflow++;
-                                p += 12 + feature_data_size;
+                                p += 13 + payloadSize;
                                 continue;
                             }
                         }
                         layer.push_back(ref);
                     }
 
-                    p += 12 + feature_data_size;
+                    p += 13 + payloadSize;
                 }
 
         }
@@ -1029,12 +1094,12 @@ namespace MapEngine {
 
                 // Render feature by geometry type (mixed per layer)
                 switch (ref.geomType) {
-                    case 3: { // Polygon (IceNav-v3: renderNavPolygon)
+                    case 3: { // Polygon — decode VarInt coords
                         if (ref.coordCount < 3) break;
-                        int16_t* coords = (int16_t*)(fp + 12);
-                        // ringEnds starts after 1-byte ringCount (not 2)
-                        uint16_t* ringEnds = (ref.ringCount > 0)
-                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 2) : nullptr;
+                        decodedCoords.clear();
+                        DecodedFeature df;
+                        if (!decodeFeatureCoords(fp + 13, ref.coordCount, ref.payloadSize, ref.geomType, df)) break;
+                        int16_t* coords = decodedCoords.data() + df.coordsIdx;
 
                         if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount * 3 / 2);
                         if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount * 3 / 2);
@@ -1046,8 +1111,6 @@ namespace MapEngine {
                         if (!px_hp || !py_hp) break;
 
                         for (uint16_t j = 0; j < ref.coordCount; j++) {
-                            // Pass HP coords as-is — negative or >4096 values are normal
-                            // for features clipped with margin. setClipRect handles visibility.
                             px_hp[j] = (int)coords[j * 2];
                             py_hp[j] = (int)coords[j * 2 + 1];
                         }
@@ -1055,16 +1118,16 @@ namespace MapEngine {
                         if (fillPolygons) {
                             fillPolygonGeneral(map, px_hp, py_hp, ref.coordCount,
                                 colorRgb565, ref.tileOffsetX, ref.tileOffsetY,
-                                ref.ringCount, ringEnds);
+                                df.ringCount, df.ringEnds);
                         }
 
                         // Building outline (bit 7 of fp[4]), z16+ only
                         if ((fp[4] & 0x80) != 0 && zoom >= 16) {
                             uint16_t outlineColor = darkenRGB565(colorRgb565, 0.35f);
                             uint16_t ringStart = 0;
-                            uint16_t numRings = (ref.ringCount > 0) ? ref.ringCount : 1;
+                            uint16_t numRings = (df.ringCount > 0) ? df.ringCount : 1;
                             for (uint16_t r = 0; r < numRings; r++) {
-                                uint16_t ringEnd = (ringEnds && r < ref.ringCount) ? ringEnds[r] : ref.coordCount;
+                                uint16_t ringEnd = (df.ringEnds && r < df.ringCount) ? df.ringEnds[r] : ref.coordCount;
                                 if (ringEnd > ref.coordCount) ringEnd = ref.coordCount;
                                 for (uint16_t j = ringStart; j < ringEnd; j++) {
                                     uint16_t next = (j + 1 < ringEnd) ? j + 1 : ringStart;
@@ -1080,13 +1143,16 @@ namespace MapEngine {
 
                         break;
                     }
-                    case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
+                    case 2: { // LineString — decode VarInt coords
                         if (ref.coordCount < 2) break;
-                        bool hasCasing = (fp[4] & 0x80) != 0;  // bit 7 = casing flag
                         uint8_t widthRaw = fp[4] & 0x7F;        // bits 6-0 = half-pixels
                         if (widthRaw == 0) widthRaw = 2;         // minimum 1.0px
                         float widthF = widthRaw / 2.0f;          // convert to pixels
-                        int16_t* coords = (int16_t*)(fp + 12);
+
+                        decodedCoords.clear();
+                        DecodedFeature df;
+                        if (!decodeFeatureCoords(fp + 13, ref.coordCount, ref.payloadSize, ref.geomType, df)) break;
+                        int16_t* coords = decodedCoords.data() + df.coordsIdx;
 
                         // Pre-project all coords with dedup (IceNav-v3: renderNavLineString L1287-1324)
                         size_t numCoords = ref.coordCount;
@@ -1145,9 +1211,12 @@ namespace MapEngine {
                         }
                         break;
                     }
-                    case 1: { // Point (IceNav-v3: renderNavPoint with bounds check)
+                    case 1: { // Point — decode VarInt coords (delta from 0 = zigzag value)
                         if (ref.coordCount < 1) break;
-                        int16_t* coords = (int16_t*)(fp + 12);
+                        decodedCoords.clear();
+                        DecodedFeature df;
+                        if (!decodeFeatureCoords(fp + 13, ref.coordCount, ref.payloadSize, ref.geomType, df)) break;
+                        int16_t* coords = decodedCoords.data() + df.coordsIdx;
                         int px = (coords[0] >> 4) + ref.tileOffsetX;
                         int py = (coords[1] >> 4) + ref.tileOffsetY;
                         // Bounds check (IceNav-v3: renderNavPoint L1418)
@@ -1155,15 +1224,15 @@ namespace MapEngine {
                             map.fillCircle(px, py, 3, colorRgb565);
                         break;
                     }
-                    case 4: { // Text label (GEOM_TEXT)
+                    case 4: { // Text label (GEOM_TEXT) — payload NOT VarInt, raw int16
                         uint8_t fontSize = fp[4];
-                        int16_t* coords = (int16_t*)(fp + 12);
+                        int16_t* coords = (int16_t*)(fp + 13);
                         int px = (coords[0] >> 4) + ref.tileOffsetX;
                         int py = (coords[1] >> 4) + ref.tileOffsetY;
-                        uint8_t textLen = *(fp + 12 + 4);
+                        uint8_t textLen = *(fp + 13 + 4);
                         if (textLen > 0 && textLen < 128) {
                             char textBuf[128];
-                            memcpy(textBuf, fp + 12 + 5, textLen);
+                            memcpy(textBuf, fp + 13 + 5, textLen);
                             textBuf[textLen] = '\0';
 
                             // Use VLW Unicode font if loaded, fallback to GFX font
@@ -1238,14 +1307,14 @@ namespace MapEngine {
             uint8_t* fp = ref.ptr;
             uint16_t colorRgb565;
             memcpy(&colorRgb565, fp + 1, 2);
-            int16_t* coords = (int16_t*)(fp + 12);
+            int16_t* coords = (int16_t*)(fp + 13);  // Text payload is raw int16, NOT VarInt
             int px = (coords[0] >> 4) + ref.tileOffsetX;
             int py = (coords[1] >> 4) + ref.tileOffsetY;
             uint8_t fontSize = fp[4];
-            uint8_t textLen = *(fp + 12 + 4);
+            uint8_t textLen = *(fp + 13 + 4);
             if (textLen == 0 || textLen >= 128) continue;
             char textBuf[128];
-            memcpy(textBuf, fp + 12 + 5, textLen);
+            memcpy(textBuf, fp + 13 + 5, textLen);
             textBuf[textLen] = '\0';
 
             // Scale VLW font based on fontSize (0=small, 1=medium, 2=large)
@@ -1341,37 +1410,22 @@ namespace MapEngine {
         uint8_t* p = data + 22;
         for (uint16_t i = 0; i < feature_count; i++) {
             if ((i & 63) == 0) esp_task_wdt_reset();
-            if (p + 12 > data + fileSize) break;
+            if (p + 13 > data + fileSize) break;
 
             uint8_t geomType = p[0];
             uint8_t zoomPriority = p[3];
             uint16_t coordCount;
             memcpy(&coordCount, p + 9, 2);
+            uint16_t payloadSize;
+            memcpy(&payloadSize, p + 11, 2);
 
-            uint32_t feature_data_size = coordCount * 4;
-            uint16_t ringCount = 0;
-
-            // Polygon ring data: uint16 ringCount (2 bytes) + ringCount × uint16 ringEnds
-            // (matching Python tile_generator.py: struct.pack('<H', ring_count))
-            if (geomType == 3) {
-                uint8_t* ring_ptr = p + 12 + feature_data_size;
-                if (ring_ptr + 2 <= data + fileSize) {
-                    memcpy(&ringCount, ring_ptr, 2);
-                    if (ring_ptr + 2 + (ringCount * 2) <= data + fileSize) {
-                        feature_data_size += 2 + (ringCount * 2);
-                    } else {
-                        ringCount = 0;
-                    }
-                }
-            }
-
-            if (p + 12 + feature_data_size > data + fileSize) break;
+            if (p + 13 + payloadSize > data + fileSize) break;
 
             // Zoom filtering (IceNav-v3 NavReader pattern):
             // High nibble = minZoom required. Skip features too detailed for current zoom.
             uint8_t minZoom = zoomPriority >> 4;
             if (minZoom > currentZoom) {
-                p += 12 + feature_data_size;
+                p += 13 + payloadSize;
                 continue;
             }
 
@@ -1382,14 +1436,14 @@ namespace MapEngine {
             FeatureRef ref;
             ref.ptr = p;
             ref.geomType = geomType;
-            ref.ringCount = ringCount;
+            ref.payloadSize = payloadSize;
             ref.coordCount = coordCount;
             if (geomType == 4)
                 textRefs.push_back(ref);
             else
                 globalLayers[priority].push_back(ref);
 
-            p += 12 + feature_data_size;
+            p += 13 + payloadSize;
         }
 
         // --- Render all layers (IceNav-v3 pattern) ---
@@ -1419,13 +1473,12 @@ namespace MapEngine {
 
                 // Render feature by geometry type (mixed per layer, IceNav-v3 pattern)
                 switch (ref.geomType) {
-                    case 3: { // Polygon
+                    case 3: { // Polygon — decode VarInt coords
                         if (ref.coordCount < 3) break;
-                        int16_t* coords = (int16_t*)(fp + 12);
-                        // ringEnds starts after 1-byte ringCount (not 2)
-                        uint16_t* ringEnds = (ref.ringCount > 0)
-                            ? (uint16_t*)(fp + 12 + ref.coordCount * 4 + 2)
-                            : nullptr;
+                        decodedCoords.clear();
+                        DecodedFeature df;
+                        if (!decodeFeatureCoords(fp + 13, ref.coordCount, ref.payloadSize, ref.geomType, df)) break;
+                        int16_t* coords = decodedCoords.data() + df.coordsIdx;
 
                         if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount * 3 / 2);
                         if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount * 3 / 2);
@@ -1442,16 +1495,16 @@ namespace MapEngine {
 
                         if (fillPolygons) {
                             fillPolygonGeneral(map, px_hp, py_hp, ref.coordCount,
-                                colorRgb565, xOffset, yOffset, ref.ringCount, ringEnds);
+                                colorRgb565, xOffset, yOffset, df.ringCount, df.ringEnds);
                         }
 
                         // Building outline (bit 7 of fp[4]), z16+ only
                         if ((fp[4] & 0x80) != 0 && currentZoom >= 16) {
                             uint16_t outlineColor = darkenRGB565(colorRgb565, 0.35f);
                             uint16_t ringStart = 0;
-                            uint16_t numRings = (ref.ringCount > 0) ? ref.ringCount : 1;
+                            uint16_t numRings = (df.ringCount > 0) ? df.ringCount : 1;
                             for (uint16_t r = 0; r < numRings; r++) {
-                                uint16_t ringEnd = (ringEnds && r < ref.ringCount) ? ringEnds[r] : ref.coordCount;
+                                uint16_t ringEnd = (df.ringEnds && r < df.ringCount) ? df.ringEnds[r] : ref.coordCount;
                                 if (ringEnd > ref.coordCount) ringEnd = ref.coordCount;
                                 for (uint16_t j = ringStart; j < ringEnd; j++) {
                                     uint16_t next = (j + 1 < ringEnd) ? j + 1 : ringStart;
@@ -1467,13 +1520,16 @@ namespace MapEngine {
 
                         break;
                     }
-                    case 2: { // LineString (IceNav-v3: renderNavLineString with dedup + bbox)
+                    case 2: { // LineString — decode VarInt coords
                         if (ref.coordCount < 2) break;
-                        bool hasCasing = (fp[4] & 0x80) != 0;  // bit 7 = casing flag
                         uint8_t widthRaw = fp[4] & 0x7F;        // bits 6-0 = half-pixels
                         if (widthRaw == 0) widthRaw = 2;         // minimum 1.0px
                         float widthF = widthRaw / 2.0f;          // convert to pixels
-                        int16_t* coords = (int16_t*)(fp + 12);
+
+                        decodedCoords.clear();
+                        DecodedFeature df;
+                        if (!decodeFeatureCoords(fp + 13, ref.coordCount, ref.payloadSize, ref.geomType, df)) break;
+                        int16_t* coords = decodedCoords.data() + df.coordsIdx;
 
                         // Pre-project with dedup (IceNav-v3 pattern)
                         size_t numCoords = ref.coordCount;
@@ -1528,24 +1584,27 @@ namespace MapEngine {
                         }
                         break;
                     }
-                    case 1: { // Point (IceNav-v3: renderNavPoint with bounds check)
+                    case 1: { // Point — decode VarInt coords
                         if (ref.coordCount < 1) break;
-                        int16_t* coords = (int16_t*)(fp + 12);
+                        decodedCoords.clear();
+                        DecodedFeature df;
+                        if (!decodeFeatureCoords(fp + 13, ref.coordCount, ref.payloadSize, ref.geomType, df)) break;
+                        int16_t* coords = decodedCoords.data() + df.coordsIdx;
                         int px = (coords[0] >> 4) + xOffset;
                         int py = (coords[1] >> 4) + yOffset;
                         if (px >= 0 && px < MAP_TILE_SIZE && py >= 0 && py < MAP_TILE_SIZE)
                             map.fillCircle(px, py, 3, colorRgb565);
                         break;
                     }
-                    case 4: { // Text label (GEOM_TEXT)
+                    case 4: { // Text label (GEOM_TEXT) — payload NOT VarInt, raw int16
                         uint8_t fontSize = fp[4];
-                        int16_t* coords = (int16_t*)(fp + 12);
+                        int16_t* coords = (int16_t*)(fp + 13);
                         int px = (coords[0] >> 4) + xOffset;
                         int py = (coords[1] >> 4) + yOffset;
-                        uint8_t textLen = *(fp + 12 + 4);
+                        uint8_t textLen = *(fp + 13 + 4);
                         if (textLen > 0 && textLen < 128) {
                             char textBuf[128];
-                            memcpy(textBuf, fp + 12 + 5, textLen);
+                            memcpy(textBuf, fp + 13 + 5, textLen);
                             textBuf[textLen] = '\0';
 
                             // Use VLW Unicode font if loaded, fallback to GFX font
@@ -1582,14 +1641,14 @@ namespace MapEngine {
             uint8_t* fp = ref.ptr;
             uint16_t colorRgb565;
             memcpy(&colorRgb565, fp + 1, 2);
-            int16_t* coords = (int16_t*)(fp + 12);
+            int16_t* coords = (int16_t*)(fp + 13);  // Text payload is raw int16, NOT VarInt
             int px = (coords[0] >> 4) + xOffset;
             int py = (coords[1] >> 4) + yOffset;
             uint8_t fontSize = fp[4];
-            uint8_t textLen = *(fp + 12 + 4);
+            uint8_t textLen = *(fp + 13 + 4);
             if (textLen == 0 || textLen >= 128) continue;
             char textBuf[128];
-            memcpy(textBuf, fp + 12 + 5, textLen);
+            memcpy(textBuf, fp + 13 + 5, textLen);
             textBuf[textLen] = '\0';
             if (vlwFontLoaded) {
                 float scale = (fontSize == 0) ? 0.8f : (fontSize == 1) ? 1.0f : 1.2f;
