@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.4.2%2B-blue)
+![Version](https://img.shields.io/badge/version-2.6.0%2Bdev-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus**
@@ -18,8 +18,13 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 
 ---
 
-## What's New in v2.4.2+
+## What's New in v2.6.0+dev
 
+- **Delta+ZigZag+VarInt NAV format** - 30-50% smaller tiles, compatible with Python and C++ generators (IceNav-v3)
+- **GPX trace recorder** - Start/Stop button on map, saves tracks to SD card
+- **HDOP adaptive jitter filter** - GPS trace smoothing based on signal quality
+- **NAV raw data cache** - PSRAM cache avoids SD re-reads after pan (30 tiles LRU)
+- **Station traces with TTL** - 60-minute time-to-live for received station positions
 - **Vector map rendering** - NAV format tiles with roads, paths, water bodies, buildings
 - **Dual map modes** - Raster (JPEG/PNG) and Vector (NAV) with adaptive zoom
 - **Statistics persistence** - LinkStats and per-station data saved to SD card
