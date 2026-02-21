@@ -28,6 +28,7 @@
 struct TracePoint {
     float lat;
     float lon;
+    uint32_t time;  // millis() timestamp for TTL filtering
 };
 
 struct MapStation {

@@ -815,20 +815,36 @@ namespace UIMapManager {
     }
 
     // Add a point to own GPS trace (called from sendBeacon when position changes)
-    void addOwnTracePoint(float lat, float lon) {
-        // Filter GPS jitter: skip if distance to last point < ~33m
+    void addOwnTracePoint(float lat, float lon, float hdop) {
+        static float lastHdop = 99.0f;
+
+        // Reject bad GPS fix entirely
+        if (hdop > 5.0f) return;
+
+        // Adaptive jitter filter based on HDOP of both current and previous point
+        // Worse HDOP = larger uncertainty = need more distance to confirm real movement
         if (ownTraceCount > 0) {
+            float worstHdop = fmax(lastHdop, hdop);
+            // Threshold in meters: at least 5m, scales with HDOP (3m per HDOP unit)
+            float thresholdM = fmax(5.0f, worstHdop * 3.0f);
+            // Convert to degrees (approximate at mid-latitudes ~43°)
+            float thresholdLat = thresholdM / 111320.0f;
+            float thresholdLon = thresholdM / (111320.0f * cosf(lat * M_PI / 180.0f));
+
             int lastIdx = (ownTraceHead - 1 + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
             float dlat = fabs(ownTrace[lastIdx].lat - lat);
             float dlon = fabs(ownTrace[lastIdx].lon - lon);
-            if (dlat < 0.0003f && dlon < 0.0003f) {
+            if (dlat < thresholdLat && dlon < thresholdLon) {
                 return;
             }
         }
 
+        lastHdop = hdop;
+
         // Add point to circular buffer
         ownTrace[ownTraceHead].lat = lat;
         ownTrace[ownTraceHead].lon = lon;
+        ownTrace[ownTraceHead].time = millis();
         ownTraceHead = (ownTraceHead + 1) % TRACE_MAX_POINTS;
         if (ownTraceCount < TRACE_MAX_POINTS) {
             ownTraceCount++;
@@ -838,41 +854,47 @@ namespace UIMapManager {
     }
 
     // Draw GPS traces for mobile stations on the canvas
+    #define TRACE_TTL_MS (60 * 60 * 1000)  // 60 minutes TTL for station traces
+
     void draw_station_traces() {
         if (!map_canvas) return;
 
+        uint32_t now = millis();
         lv_draw_line_dsc_t line_dsc;
         lv_draw_line_dsc_init(&line_dsc);
 
-        // Draw own GPS trace first (purple/violet)
+        // Draw own GPS trace first (purple/violet) — no TTL for own trace
         if (ownTraceCount > 0 && gps.location.isValid()) {
             line_dsc.color = lv_color_hex(0x9933FF);  // Purple/violet
             line_dsc.width = 2;
             line_dsc.opa   = LV_OPA_COVER;
 
-            int totalPts = ownTraceCount + 1;
             lv_point_t pts[TRACE_MAX_POINTS + 1];
+            int validPts = 0;
 
             for (int i = 0; i < ownTraceCount; i++) {
                 int idx = (ownTraceHead - ownTraceCount + i + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
                 int px, py;
                 latLonToPixel(ownTrace[idx].lat, ownTrace[idx].lon,
                               map_center_lat, map_center_lon, map_current_zoom, &px, &py);
-                pts[i].x = px;
-                pts[i].y = py;
+                pts[validPts].x = px;
+                pts[validPts].y = py;
+                validPts++;
             }
 
             // Current GPS position as last point
             int cx, cy;
             latLonToPixel(gps.location.lat(), gps.location.lng(),
                           map_center_lat, map_center_lon, map_current_zoom, &cx, &cy);
-            pts[ownTraceCount].x = cx;
-            pts[ownTraceCount].y = cy;
+            pts[validPts].x = cx;
+            pts[validPts].y = cy;
+            validPts++;
 
-            lv_canvas_draw_line(map_canvas, pts, totalPts, &line_dsc);
+            if (validPts >= 2)
+                lv_canvas_draw_line(map_canvas, pts, validPts, &line_dsc);
         }
 
-        // Draw received stations traces (blue)
+        // Draw received stations traces (blue) — TTL filtered
         line_dsc.color = lv_color_hex(0x0055FF);
         line_dsc.width = 2;
         line_dsc.opa   = LV_OPA_COVER;
@@ -881,27 +903,31 @@ namespace UIMapManager {
             MapStation* station = STATION_Utils::getMapStation(s);
             if (!station || !station->valid || station->traceCount < 1) continue;
 
-            // Build points array: trace history + current position
-            int totalPts = station->traceCount + 1;
             lv_point_t pts[TRACE_MAX_POINTS + 1];
+            int validPts = 0;
 
             for (int i = 0; i < station->traceCount; i++) {
                 int idx = (station->traceHead - station->traceCount + i + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
+                // Skip points older than TTL
+                if ((now - station->trace[idx].time) > TRACE_TTL_MS) continue;
                 int px, py;
                 latLonToPixel(station->trace[idx].lat, station->trace[idx].lon,
                               map_center_lat, map_center_lon, map_current_zoom, &px, &py);
-                pts[i].x = px;
-                pts[i].y = py;
+                pts[validPts].x = px;
+                pts[validPts].y = py;
+                validPts++;
             }
 
             // Current position as last point
             int cx, cy;
             latLonToPixel(station->latitude, station->longitude,
                           map_center_lat, map_center_lon, map_current_zoom, &cx, &cy);
-            pts[station->traceCount].x = cx;
-            pts[station->traceCount].y = cy;
+            pts[validPts].x = cx;
+            pts[validPts].y = cy;
+            validPts++;
 
-            lv_canvas_draw_line(map_canvas, pts, totalPts, &line_dsc);
+            if (validPts >= 2)
+                lv_canvas_draw_line(map_canvas, pts, validPts, &line_dsc);
         }
     }
 

@@ -234,6 +234,7 @@ namespace STATION_Utils {
                     // Add old position to trace
                     mapStations[i].trace[mapStations[i].traceHead].lat = mapStations[i].latitude;
                     mapStations[i].trace[mapStations[i].traceHead].lon = mapStations[i].longitude;
+                    mapStations[i].trace[mapStations[i].traceHead].time = millis();
                     mapStations[i].traceHead = (mapStations[i].traceHead + 1) % TRACE_MAX_POINTS;
                     if (mapStations[i].traceCount < TRACE_MAX_POINTS) {
                         mapStations[i].traceCount++;
@@ -510,7 +511,7 @@ namespace STATION_Utils {
 
             // Add own position to GPS trace on map
             #ifdef USE_LVGL_UI
-                UIMapManager::addOwnTracePoint(lastTxLat, lastTxLng);
+                UIMapManager::addOwnTracePoint(lastTxLat, lastTxLng, gps.hdop.hdop());
             #endif
         }
         lastTxTime  = millis();
