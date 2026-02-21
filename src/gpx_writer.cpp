@@ -1,0 +1,119 @@
+#ifdef USE_LVGL_UI
+
+#include "gpx_writer.h"
+#include <SD.h>
+#include <TinyGPS++.h>
+#include <freertos/semphr.h>
+
+extern TinyGPSPlus gps;
+extern SemaphoreHandle_t spiMutex;
+
+namespace GPXWriter {
+
+    static bool recording = false;
+    static char currentFilePath[64] = "";
+
+    bool isRecording() {
+        return recording;
+    }
+
+    bool startRecording() {
+        if (recording) return true;
+
+        // Build filename from GPS date/time (UTC)
+        char filename[64];
+        if (gps.date.isValid() && gps.time.isValid()) {
+            snprintf(filename, sizeof(filename),
+                     "/LoRa_Tracker/gpx/track_%04d-%02d-%02d_%02d%02d.gpx",
+                     gps.date.year(), gps.date.month(), gps.date.day(),
+                     gps.time.hour(), gps.time.minute());
+        } else {
+            snprintf(filename, sizeof(filename),
+                     "/LoRa_Tracker/gpx/track_%lu.gpx", millis() / 1000);
+        }
+
+        if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+            Serial.println("[GPX] Failed to acquire SPI mutex");
+            return false;
+        }
+
+        // Ensure directory exists
+        if (!SD.exists("/LoRa_Tracker/gpx")) {
+            SD.mkdir("/LoRa_Tracker/gpx");
+        }
+
+        File file = SD.open(filename, FILE_WRITE);
+        if (!file) {
+            xSemaphoreGiveRecursive(spiMutex);
+            Serial.printf("[GPX] Failed to create file: %s\n", filename);
+            return false;
+        }
+
+        // Write GPX header
+        file.println("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+        file.println("<gpx version=\"1.1\" creator=\"LoRa_APRS_Tracker\"");
+        file.println("  xmlns=\"http://www.topografix.com/GPX/1/1\">");
+        file.println("  <trk>");
+        file.println("    <name>LoRa APRS Track</name>");
+        file.println("    <trkseg>");
+        file.close();
+        xSemaphoreGiveRecursive(spiMutex);
+
+        strncpy(currentFilePath, filename, sizeof(currentFilePath));
+        recording = true;
+        Serial.printf("[GPX] Recording started: %s\n", filename);
+        return true;
+    }
+
+    void stopRecording() {
+        if (!recording) return;
+
+        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            File file = SD.open(currentFilePath, FILE_APPEND);
+            if (file) {
+                file.println("    </trkseg>");
+                file.println("  </trk>");
+                file.println("</gpx>");
+                file.close();
+            }
+            xSemaphoreGiveRecursive(spiMutex);
+        }
+
+        Serial.printf("[GPX] Recording stopped: %s\n", currentFilePath);
+        recording = false;
+        currentFilePath[0] = '\0';
+    }
+
+    void addPoint(float lat, float lon, float alt, float hdop, float speed) {
+        if (!recording) return;
+
+        // Build timestamp from GPS
+        char timestamp[32] = "";
+        if (gps.date.isValid() && gps.time.isValid()) {
+            snprintf(timestamp, sizeof(timestamp),
+                     "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                     gps.date.year(), gps.date.month(), gps.date.day(),
+                     gps.time.hour(), gps.time.minute(), gps.time.second());
+        }
+
+        if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(500)) != pdTRUE) {
+            return;
+        }
+
+        File file = SD.open(currentFilePath, FILE_APPEND);
+        if (file) {
+            file.printf("      <trkpt lat=\"%.6f\" lon=\"%.6f\">\n", lat, lon);
+            file.printf("        <ele>%.1f</ele>\n", alt);
+            if (timestamp[0])
+                file.printf("        <time>%s</time>\n", timestamp);
+            file.printf("        <hdop>%.1f</hdop>\n", hdop);
+            file.printf("        <speed>%.1f</speed>\n", speed);
+            file.println("      </trkpt>");
+            file.close();
+        }
+        xSemaphoreGiveRecursive(spiMutex);
+    }
+
+} // namespace GPXWriter
+
+#endif // USE_LVGL_UI

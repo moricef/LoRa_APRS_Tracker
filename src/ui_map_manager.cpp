@@ -33,7 +33,8 @@
 #include "storage_utils.h"
 #include "custom_characters.h" // For symbolsAPRS, SYMBOL_WIDTH, SYMBOL_HEIGHT
 #include "lvgl_ui.h" // To call LVGL_UI::open_compose_with_callsign
-#include <esp_task_wdt.h> // 
+#include "gpx_writer.h"
+#include <esp_task_wdt.h> //
 
 namespace UIMapManager {
 
@@ -797,6 +798,26 @@ namespace UIMapManager {
         LVGL_UI::return_to_dashboard();
     }
 
+    // GPX recording button and handler
+    static lv_obj_t* btn_gpx_rec = nullptr;
+    static lv_obj_t* lbl_gpx_rec = nullptr;
+
+    static void updateGpxRecButton() {
+        if (!btn_gpx_rec) return;
+        bool rec = GPXWriter::isRecording();
+        lv_obj_set_style_bg_color(btn_gpx_rec, rec ? lv_color_hex(0xCC0000) : lv_color_hex(0x16213e), 0);
+        lv_label_set_text(lbl_gpx_rec, rec ? LV_SYMBOL_STOP : LV_SYMBOL_PLAY);
+    }
+
+    static void btn_gpx_rec_clicked(lv_event_t* e) {
+        if (GPXWriter::isRecording()) {
+            GPXWriter::stopRecording();
+        } else {
+            GPXWriter::startRecording();
+        }
+        updateGpxRecButton();
+    }
+
     // Map recenter button handler - return to GPS position
     void btn_map_recenter_clicked(lv_event_t* e) {
         Serial.println("[MAP] Recentering on GPS");
@@ -1520,7 +1541,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         lv_obj_t* btn_zoomin = lv_btn_create(title_bar);
         lv_obj_set_size(btn_zoomin, 30, 25);
         lv_obj_set_style_bg_color(btn_zoomin, lv_color_hex(0x16213e), 0);
-        lv_obj_align(btn_zoomin, LV_ALIGN_RIGHT_MID, -70, 0);
+        lv_obj_align(btn_zoomin, LV_ALIGN_RIGHT_MID, -105, 0);
         lv_obj_add_event_cb(btn_zoomin, btn_map_zoomin_clicked, LV_EVENT_RELEASED, NULL);
         lv_obj_t* lbl_zoomin = lv_label_create(btn_zoomin);
         lv_label_set_text(lbl_zoomin, "+");
@@ -1529,7 +1550,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         lv_obj_t* btn_zoomout = lv_btn_create(title_bar);
         lv_obj_set_size(btn_zoomout, 30, 25);
         lv_obj_set_style_bg_color(btn_zoomout, lv_color_hex(0x16213e), 0);
-        lv_obj_align(btn_zoomout, LV_ALIGN_RIGHT_MID, -35, 0);
+        lv_obj_align(btn_zoomout, LV_ALIGN_RIGHT_MID, -70, 0);
         lv_obj_add_event_cb(btn_zoomout, btn_map_zoomout_clicked, LV_EVENT_RELEASED, NULL);
         lv_obj_t* lbl_zoomout = lv_label_create(btn_zoomout);
         lv_label_set_text(lbl_zoomout, "-");
@@ -1539,11 +1560,20 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         lv_obj_t* btn_recenter = lv_btn_create(title_bar);
         lv_obj_set_size(btn_recenter, 30, 25);
         lv_obj_set_style_bg_color(btn_recenter, map_follow_gps ? lv_color_hex(0x16213e) : lv_color_hex(0xff6600), 0);
-        lv_obj_align(btn_recenter, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_align(btn_recenter, LV_ALIGN_RIGHT_MID, -35, 0);
         lv_obj_add_event_cb(btn_recenter, btn_map_recenter_clicked, LV_EVENT_CLICKED, NULL);
         lv_obj_t* lbl_recenter = lv_label_create(btn_recenter);
         lv_label_set_text(lbl_recenter, LV_SYMBOL_GPS);
         lv_obj_center(lbl_recenter);
+
+        // GPX record toggle button
+        btn_gpx_rec = lv_btn_create(title_bar);
+        lv_obj_set_size(btn_gpx_rec, 30, 25);
+        lv_obj_align(btn_gpx_rec, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_add_event_cb(btn_gpx_rec, btn_gpx_rec_clicked, LV_EVENT_CLICKED, NULL);
+        lbl_gpx_rec = lv_label_create(btn_gpx_rec);
+        lv_obj_center(lbl_gpx_rec);
+        updateGpxRecButton();
 
         // Map canvas area (container clips the larger canvas to visible area)
         map_container = lv_obj_create(screen_map);
