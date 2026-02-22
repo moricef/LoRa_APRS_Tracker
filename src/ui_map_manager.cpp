@@ -1163,6 +1163,7 @@ namespace UIMapManager {
             map_zoom_index++;
             map_current_zoom = map_available_zooms[map_zoom_index];
             Serial.printf("[MAP] Zoom in: %d\n", map_current_zoom);
+            if (navModeActive) MapEngine::clearTileCache();
             redraw_map_canvas();
         }
     }
@@ -1173,6 +1174,7 @@ namespace UIMapManager {
             map_zoom_index--;
             map_current_zoom = map_available_zooms[map_zoom_index];
             Serial.printf("[MAP] Zoom out: %d\n", map_current_zoom);
+            if (navModeActive) MapEngine::clearTileCache();
             redraw_map_canvas();
         }
     }
