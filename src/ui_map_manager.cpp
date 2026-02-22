@@ -140,21 +140,14 @@ namespace UIMapManager {
         map_current_zoom = newTable[bestIdx];
     }
 
-    // Timer callback for periodic station refresh (NOT full map redraw)
+    // Timer callback for periodic station refresh
+    // Full redraw required to clear old station icons/traces before drawing new ones.
+    // NAV cache in PSRAM avoids SD re-reads, so this is fast (~100-200ms vs 600ms cold).
     static void map_refresh_timer_cb(lv_timer_t* timer) {
         if (screen_map && lv_scr_act() == screen_map
             && !touch_dragging && !redraw_in_progress) {
-            Serial.println("[MAP] Periodic refresh (stations only)");
-            // Only update station objects and traces — no NAV re-render
-            draw_station_traces();
-            update_station_objects();
-            if (map_info_label) {
-                char info_text[64];
-                snprintf(info_text, sizeof(info_text), "Lat: %.4f  Lon: %.4f  Stations: %d",
-                         map_center_lat, map_center_lon, mapStationsCount);
-                lv_label_set_text(map_info_label, info_text);
-            }
-            lv_obj_invalidate(map_container);
+            Serial.println("[MAP] Periodic refresh (full redraw)");
+            redraw_map_canvas();
         }
     }
 
@@ -390,16 +383,46 @@ namespace UIMapManager {
         }
     }
 
+    // Filtered own position — only updates when movement exceeds HDOP-based threshold
+    static float filteredOwnLat = 0.0f;
+    static float filteredOwnLon = 0.0f;
+    static bool  filteredOwnValid = false;
+
+    static void updateFilteredOwnPosition() {
+        if (!gps.location.isValid()) return;
+        float lat = gps.location.lat();
+        float lon = gps.location.lng();
+
+        if (!filteredOwnValid) {
+            filteredOwnLat = lat;
+            filteredOwnLon = lon;
+            filteredOwnValid = true;
+            return;
+        }
+
+        // Same adaptive threshold as addOwnTracePoint: 10m min, +5m per HDOP unit
+        float hdop = gps.hdop.isValid() ? gps.hdop.hdop() : 2.0f;
+        float thresholdM = fmax(10.0f, hdop * 5.0f);
+        float thresholdLat = thresholdM / 111320.0f;
+        float thresholdLon = thresholdM / (111320.0f * cosf(lat * M_PI / 180.0f));
+
+        if (fabs(lat - filteredOwnLat) > thresholdLat || fabs(lon - filteredOwnLon) > thresholdLon) {
+            filteredOwnLat = lat;
+            filteredOwnLon = lon;
+        }
+    }
+
     // Draw all stations directly on the canvas (zero LVGL objects, all PSRAM)
     void update_station_objects() {
         if (!map_canvas || !map_canvas_buf) return;
 
         stationHitZoneCount = 0;
 
-        // Own position
-        if (gps.location.isValid()) {
+        // Own position — use filtered position to eliminate GPS jitter
+        updateFilteredOwnPosition();
+        if (filteredOwnValid) {
             int myX, myY;
-            latLonToPixel(gps.location.lat(), gps.location.lng(),
+            latLonToPixel(filteredOwnLat, filteredOwnLon,
                           map_center_lat, map_center_lon, map_current_zoom, &myX, &myY);
             if (myX >= 0 && myX < MAP_CANVAS_WIDTH && myY >= 0 && myY < MAP_CANVAS_HEIGHT) {
                 Beacon* currentBeacon = &Config.beacons[myBeaconsIndex];
@@ -846,8 +869,8 @@ namespace UIMapManager {
         // Worse HDOP = larger uncertainty = need more distance to confirm real movement
         if (ownTraceCount > 0) {
             float worstHdop = fmax(lastHdop, hdop);
-            // Threshold in meters: at least 5m, scales with HDOP (3m per HDOP unit)
-            float thresholdM = fmax(5.0f, worstHdop * 3.0f);
+            // Threshold in meters: at least 10m, scales with HDOP (5m per HDOP unit)
+            float thresholdM = fmax(10.0f, worstHdop * 5.0f);
             // Convert to degrees (approximate at mid-latitudes ~43°)
             float thresholdLat = thresholdM / 111320.0f;
             float thresholdLon = thresholdM / (111320.0f * cosf(lat * M_PI / 180.0f));
@@ -885,7 +908,7 @@ namespace UIMapManager {
         lv_draw_line_dsc_init(&line_dsc);
 
         // Draw own GPS trace first (purple/violet) — no TTL for own trace
-        if (ownTraceCount > 0 && gps.location.isValid()) {
+        if (ownTraceCount > 0 && filteredOwnValid) {
             line_dsc.color = lv_color_hex(0x9933FF);  // Purple/violet
             line_dsc.width = 2;
             line_dsc.opa   = LV_OPA_COVER;
@@ -903,9 +926,9 @@ namespace UIMapManager {
                 validPts++;
             }
 
-            // Current GPS position as last point
+            // Filtered own position as last point (consistent with icon)
             int cx, cy;
-            latLonToPixel(gps.location.lat(), gps.location.lng(),
+            latLonToPixel(filteredOwnLat, filteredOwnLon,
                           map_center_lat, map_center_lon, map_current_zoom, &cx, &cy);
             pts[validPts].x = cx;
             pts[validPts].y = cy;
@@ -1537,11 +1560,21 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         lv_obj_set_style_text_font(map_title_label, &lv_font_montserrat_18, 0);
         lv_obj_align(map_title_label, LV_ALIGN_CENTER, -30, 0);
 
-        // Zoom buttons on right
+        // Recenter button (GPS icon) - leftmost, shows different color when GPS not followed
+        lv_obj_t* btn_recenter = lv_btn_create(title_bar);
+        lv_obj_set_size(btn_recenter, 30, 25);
+        lv_obj_set_style_bg_color(btn_recenter, map_follow_gps ? lv_color_hex(0x16213e) : lv_color_hex(0xff6600), 0);
+        lv_obj_align(btn_recenter, LV_ALIGN_RIGHT_MID, -105, 0);
+        lv_obj_add_event_cb(btn_recenter, btn_map_recenter_clicked, LV_EVENT_CLICKED, NULL);
+        lv_obj_t* lbl_recenter = lv_label_create(btn_recenter);
+        lv_label_set_text(lbl_recenter, LV_SYMBOL_GPS);
+        lv_obj_center(lbl_recenter);
+
+        // Zoom buttons
         lv_obj_t* btn_zoomin = lv_btn_create(title_bar);
         lv_obj_set_size(btn_zoomin, 30, 25);
         lv_obj_set_style_bg_color(btn_zoomin, lv_color_hex(0x16213e), 0);
-        lv_obj_align(btn_zoomin, LV_ALIGN_RIGHT_MID, -105, 0);
+        lv_obj_align(btn_zoomin, LV_ALIGN_RIGHT_MID, -70, 0);
         lv_obj_add_event_cb(btn_zoomin, btn_map_zoomin_clicked, LV_EVENT_RELEASED, NULL);
         lv_obj_t* lbl_zoomin = lv_label_create(btn_zoomin);
         lv_label_set_text(lbl_zoomin, "+");
@@ -1550,21 +1583,11 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         lv_obj_t* btn_zoomout = lv_btn_create(title_bar);
         lv_obj_set_size(btn_zoomout, 30, 25);
         lv_obj_set_style_bg_color(btn_zoomout, lv_color_hex(0x16213e), 0);
-        lv_obj_align(btn_zoomout, LV_ALIGN_RIGHT_MID, -70, 0);
+        lv_obj_align(btn_zoomout, LV_ALIGN_RIGHT_MID, -35, 0);
         lv_obj_add_event_cb(btn_zoomout, btn_map_zoomout_clicked, LV_EVENT_RELEASED, NULL);
         lv_obj_t* lbl_zoomout = lv_label_create(btn_zoomout);
         lv_label_set_text(lbl_zoomout, "-");
         lv_obj_center(lbl_zoomout);
-
-        // Recenter button (GPS icon) - shows different color when GPS not followed
-        lv_obj_t* btn_recenter = lv_btn_create(title_bar);
-        lv_obj_set_size(btn_recenter, 30, 25);
-        lv_obj_set_style_bg_color(btn_recenter, map_follow_gps ? lv_color_hex(0x16213e) : lv_color_hex(0xff6600), 0);
-        lv_obj_align(btn_recenter, LV_ALIGN_RIGHT_MID, -35, 0);
-        lv_obj_add_event_cb(btn_recenter, btn_map_recenter_clicked, LV_EVENT_CLICKED, NULL);
-        lv_obj_t* lbl_recenter = lv_label_create(btn_recenter);
-        lv_label_set_text(lbl_recenter, LV_SYMBOL_GPS);
-        lv_obj_center(lbl_recenter);
 
         // GPX record toggle button
         btn_gpx_rec = lv_btn_create(title_bar);
