@@ -47,8 +47,8 @@ namespace UIMapManager {
     lv_obj_t* map_container = nullptr;
 
     // Map state variables
-    // Vector (NAV) zooms: step 1 (8..18)
-    static const int nav_zooms[] = {8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+    // Vector (NAV) zooms: step 1 (6..18)
+    static const int nav_zooms[] = {6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
     static const int nav_zoom_count = sizeof(nav_zooms) / sizeof(nav_zooms[0]);
     // Raster (PNG/JPG) zooms: step 2 (8,10,12,14,16,18)
     static const int raster_zooms[] = {8, 10, 12, 14, 16, 18};
