@@ -148,12 +148,11 @@ namespace MapEngine {
     static size_t maxCachedTiles = TILE_CACHE_SIZE;
     static uint32_t cacheAccessCounter = 0;
 
-    // --- NPK1 pack file support ---
-    static File npkFile;                       // Currently open pack file
-    using UIMapManager::NpkIndexEntry;
-    static NpkIndexEntry* npkIndex = nullptr;  // Index loaded in PSRAM
-    static uint32_t npkTileCount = 0;
-    static uint8_t npkLoadedZoom = 255;        // 255 = not loaded
+    // --- NPK2 pack file support (Y-table for on-demand index reads) ---
+    static File npkFile;                                  // Currently open pack file
+    static UIMapManager::Npk2Header npkHeader;            // Header (25 bytes)
+    static UIMapManager::Npk2YEntry* npkYTable = nullptr; // Y-table in PSRAM (max ~16 KB at Z17)
+    static uint8_t npkLoadedZoom = 255;                   // 255 = not loaded
     static bool npkAvailable = false;
 
     // NAV raw data cache — avoids re-reading .nav tiles from SD after pan
@@ -454,17 +453,17 @@ namespace MapEngine {
         Serial.println("[NAV-CACHE] Cleared");
     }
 
-    // --- NPK1 pack file functions ---
+    // --- NPK2 pack file functions ---
 
     static void closeNpkFile() {
-        if (npkIndex) {
-            heap_caps_free(npkIndex);
-            npkIndex = nullptr;
+        if (npkYTable) {
+            heap_caps_free(npkYTable);
+            npkYTable = nullptr;
         }
         if (npkFile) {
             npkFile.close();
         }
-        npkTileCount = 0;
+        memset(&npkHeader, 0, sizeof(npkHeader));
         npkLoadedZoom = 255;
         npkAvailable = false;
     }
@@ -484,73 +483,99 @@ namespace MapEngine {
 
         if (!npkFile) return;
 
-        // Read and validate header
-        char magic[4];
-        if (npkFile.read((uint8_t*)magic, 4) != 4 || memcmp(magic, "NPK1", 4) != 0) {
-            Serial.printf("[NPK] Invalid magic in %s\n", packPath);
+        // Read NPK2 header (25 bytes)
+        if (npkFile.read((uint8_t*)&npkHeader, sizeof(npkHeader)) != sizeof(npkHeader) ||
+            memcmp(npkHeader.magic, "NPK2", 4) != 0) {
+            Serial.printf("[NPK] Invalid magic in %s (expected NPK2)\n", packPath);
             npkFile.close();
             return;
         }
 
-        uint32_t tileCount = 0;
-        if (npkFile.read((uint8_t*)&tileCount, 4) != 4 || tileCount == 0) {
-            Serial.printf("[NPK] Invalid tile count in %s\n", packPath);
+        if (npkHeader.tile_count == 0 || npkHeader.y_max < npkHeader.y_min) {
+            Serial.printf("[NPK] Invalid header in %s (tiles=%u, y_min=%u, y_max=%u)\n",
+                          packPath, npkHeader.tile_count, npkHeader.y_min, npkHeader.y_max);
             npkFile.close();
             return;
         }
 
-        // Load entire index into PSRAM
-        size_t indexSize = tileCount * sizeof(NpkIndexEntry);
-        npkIndex = (NpkIndexEntry*)heap_caps_malloc(indexSize, MALLOC_CAP_SPIRAM);
-        if (!npkIndex) {
-            Serial.printf("[NPK] Failed to alloc index (%u KB)\n", (unsigned)(indexSize / 1024));
+        // Load Y-table into PSRAM
+        uint32_t ySpan = npkHeader.y_max - npkHeader.y_min + 1;
+        size_t ytableSize = ySpan * sizeof(UIMapManager::Npk2YEntry);
+        npkYTable = (UIMapManager::Npk2YEntry*)heap_caps_malloc(ytableSize, MALLOC_CAP_SPIRAM);
+        if (!npkYTable) {
+            Serial.printf("[NPK] Failed to alloc Y-table (%u bytes)\n", (unsigned)ytableSize);
             npkFile.close();
             return;
         }
 
-        if (npkFile.read((uint8_t*)npkIndex, indexSize) != indexSize) {
-            Serial.printf("[NPK] Failed to read index from %s\n", packPath);
-            heap_caps_free(npkIndex);
-            npkIndex = nullptr;
+        npkFile.seek(npkHeader.ytable_offset);
+        if (npkFile.read((uint8_t*)npkYTable, ytableSize) != ytableSize) {
+            Serial.printf("[NPK] Failed to read Y-table from %s\n", packPath);
+            heap_caps_free(npkYTable);
+            npkYTable = nullptr;
             npkFile.close();
             return;
         }
 
-        npkTileCount = tileCount;
         npkLoadedZoom = zoom;
         npkAvailable = true;
-        Serial.printf("[NPK] Loaded index: %s (%u tiles, %u KB)\n",
-                      packPath, tileCount, (unsigned)(indexSize / 1024));
-        // Debug: dump first and last index entries
-        Serial.printf("[NPK] Index[0]: x=%u y=%u off=%u sz=%u\n",
-                      npkIndex[0].x, npkIndex[0].y, npkIndex[0].offset, npkIndex[0].size);
-        if (tileCount > 1) {
-            Serial.printf("[NPK] Index[%u]: x=%u y=%u off=%u sz=%u\n",
-                          tileCount - 1, npkIndex[tileCount-1].x, npkIndex[tileCount-1].y,
-                          npkIndex[tileCount-1].offset, npkIndex[tileCount-1].size);
-        }
+        Serial.printf("[NPK] Opened pack: %s (%u tiles, Y-table %u bytes)\n",
+                      packPath, npkHeader.tile_count, (unsigned)ytableSize);
     }
 
-    static const NpkIndexEntry* findNpkTile(uint32_t x, uint32_t y) {
-        if (!npkIndex || npkTileCount == 0) return nullptr;
+    // Row buffer for bulk index reads — 2048 entries = 32 KB (static, no fragmentation)
+    static UIMapManager::Npk2IndexEntry npkRowBuf[2048];
 
-        // Binary search — index sorted by x then y
-        int lo = 0, hi = (int)npkTileCount - 1;
-        while (lo <= hi) {
-            int mid = (lo + hi) / 2;
-            const NpkIndexEntry& e = npkIndex[mid];
-            if (e.x < x || (e.x == x && e.y < y)) {
-                lo = mid + 1;
-            } else if (e.x > x || (e.x == x && e.y > y)) {
-                hi = mid - 1;
-            } else {
-                return &npkIndex[mid];
+    static bool findNpkTile(uint32_t x, uint32_t y, UIMapManager::Npk2IndexEntry* result) {
+        if (!npkYTable || !npkFile) return false;
+
+        // Check Y range
+        if (y < npkHeader.y_min || y > npkHeader.y_max) return false;
+
+        const UIMapManager::Npk2YEntry& row = npkYTable[y - npkHeader.y_min];
+        if (row.idx_count == 0) return false;
+
+        uint32_t baseOff = npkHeader.index_offset + row.idx_start * sizeof(UIMapManager::Npk2IndexEntry);
+        bool found = false;
+
+        if (row.idx_count <= 2048) {
+            // Fast path: read entire row in one SD read, binary search in RAM
+            size_t readSize = row.idx_count * sizeof(UIMapManager::Npk2IndexEntry);
+            bool readOk = false;
+            if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                npkFile.seek(baseOff);
+                readOk = (npkFile.read((uint8_t*)npkRowBuf, readSize) == readSize);
+                xSemaphoreGiveRecursive(spiMutex);
+            }
+            if (!readOk) return false;
+
+            int lo = 0, hi = (int)row.idx_count - 1;
+            while (lo <= hi) {
+                int mid = (lo + hi) / 2;
+                if (npkRowBuf[mid].x < x) lo = mid + 1;
+                else if (npkRowBuf[mid].x > x) hi = mid - 1;
+                else { *result = npkRowBuf[mid]; return true; }
+            }
+        } else {
+            // Fallback: binary search on disk for very large rows
+            if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                int lo = 0, hi = (int)row.idx_count - 1;
+                UIMapManager::Npk2IndexEntry e;
+                while (lo <= hi) {
+                    int mid = (lo + hi) / 2;
+                    npkFile.seek(baseOff + mid * sizeof(UIMapManager::Npk2IndexEntry));
+                    if (npkFile.read((uint8_t*)&e, sizeof(e)) != sizeof(e)) break;
+                    if (e.x < x) lo = mid + 1;
+                    else if (e.x > x) hi = mid - 1;
+                    else { *result = e; found = true; break; }
+                }
+                xSemaphoreGiveRecursive(spiMutex);
             }
         }
-        return nullptr;
+        return found;
     }
 
-    static bool readNpkTileData(const NpkIndexEntry* entry, uint8_t** outData, size_t* outSize) {
+    static bool readNpkTileData(const UIMapManager::Npk2IndexEntry* entry, uint8_t** outData, size_t* outSize) {
         if (!npkFile || !entry) return false;
 
         *outData = (uint8_t*)ps_malloc(entry->size);
@@ -1037,10 +1062,10 @@ namespace MapEngine {
                     bool sizeOk = false, allocOk = false;
 
                     if (npkAvailable) {
-                        const NpkIndexEntry* entry = findNpkTile((uint32_t)tileX, (uint32_t)tileY);
-                        if (entry) {
+                        UIMapManager::Npk2IndexEntry entry;
+                        if (findNpkTile((uint32_t)tileX, (uint32_t)tileY, &entry)) {
                             sizeOk = true;
-                            if (readNpkTileData(entry, &data, &fileSize)) {
+                            if (readNpkTileData(&entry, &data, &fileSize)) {
                                 allocOk = true;
                             }
                         }

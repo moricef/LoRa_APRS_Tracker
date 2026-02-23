@@ -68,14 +68,30 @@ struct Edge {
     int nextActive;
 };
 
-// NPK1 pack file index entry (12 bytes)
-// Pack format: "NPK1" magic + uint32 tile_count + tile_count × NpkIndexEntry + NAV1 blobs
-// Index sorted by x then y for binary search
-struct NpkIndexEntry {
+// NPK2 pack file header (25 bytes)
+// Pack format: header + Y-table + index (sorted y then x) + NAV1 blobs
+struct Npk2Header {
+    char     magic[4];        // "NPK2"
+    uint8_t  zoom;
+    uint32_t tile_count;
+    uint32_t y_min;
+    uint32_t y_max;
+    uint32_t ytable_offset;   // = 25
+    uint32_t index_offset;    // = 25 + y_span × 8
+} __attribute__((packed));
+
+// NPK2 Y-table entry (8 bytes per row Y)
+struct Npk2YEntry {
+    uint32_t idx_start;       // first index entry for this row
+    uint32_t idx_count;       // number of index entries for this row
+} __attribute__((packed));
+
+// NPK2 index entry (16 bytes)
+struct Npk2IndexEntry {
     uint32_t x;
     uint32_t y;
-    uint32_t offset;   // from start of file
-    uint32_t size;     // NAV1 blob size
+    uint32_t offset;          // from start of file
+    uint32_t size;            // NAV1 blob size
 } __attribute__((packed));
 
 } // namespace UIMapManager

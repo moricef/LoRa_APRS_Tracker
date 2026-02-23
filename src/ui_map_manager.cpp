@@ -1069,7 +1069,7 @@ namespace UIMapManager {
             bool isNavMode = false;
             if (!nav_current_region.isEmpty()) {
                 if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-                    // Try NPK1 pack file first
+                    // Try NPK2 pack file first
                     snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
                              nav_current_region.c_str(), map_current_zoom);
                     isNavMode = SD.exists(navCheckPath);
@@ -1426,39 +1426,25 @@ namespace UIMapManager {
         }
     }
 
-    // Check if a region's pack file at given zoom contains tile (tileX, tileY)
-    // Reads only header (8 bytes) + first entry (16 bytes) + last entry (16 bytes)
+    // Check if a region's NPK2 pack file at given zoom contains tile (tileX, tileY)
+    // Reads only the 25-byte header and checks Y range against y_min/y_max
     static bool regionContainsTile(const char* region, int zoom, int tileX, int tileY) {
         char path[128];
         snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
         File f = SD.open(path, FILE_READ);
         if (!f) return false;
 
-        char magic[4];
-        uint32_t count;
-        if (f.read((uint8_t*)magic, 4) != 4 || memcmp(magic, "NPK1", 4) != 0 ||
-            f.read((uint8_t*)&count, 4) != 4 || count == 0) {
-            f.close();
-            return false;
-        }
-
-        // Read first entry (min x/y) — index sorted by x then y
-        UIMapManager::NpkIndexEntry first, last;
-        if (f.read((uint8_t*)&first, sizeof(first)) != sizeof(first)) {
-            f.close();
-            return false;
-        }
-        // Seek to last entry
-        f.seek(8 + (count - 1) * sizeof(UIMapManager::NpkIndexEntry));
-        if (f.read((uint8_t*)&last, sizeof(last)) != sizeof(last)) {
+        // Read NPK2 header (25 bytes)
+        UIMapManager::Npk2Header hdr;
+        if (f.read((uint8_t*)&hdr, sizeof(hdr)) != sizeof(hdr) ||
+            memcmp(hdr.magic, "NPK2", 4) != 0) {
             f.close();
             return false;
         }
         f.close();
 
-        uint32_t tx = (uint32_t)tileX;
         uint32_t ty = (uint32_t)tileY;
-        return (tx >= first.x && tx <= last.x && ty >= first.y && ty <= last.y);
+        return (ty >= hdr.y_min && ty <= hdr.y_max);
     }
 
     // Discover the NAV region matching current GPS position from SD card (VectMaps)
@@ -1612,6 +1598,15 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         // Boost CPU to 240 MHz for smooth map rendering
         setCpuFrequencyMhz(240);
         Serial.printf("[MAP] CPU boosted to %d MHz\n", getCpuFrequencyMhz());
+
+        // Set initial position before region discovery (needed for GPS-based region matching)
+        if (map_follow_gps && gps.location.isValid()) {
+            map_center_lat = gps.location.lat();
+            map_center_lon = gps.location.lng();
+        } else if (map_center_lat == 0.0f && map_center_lon == 0.0f) {
+            map_center_lat = 42.9667f;
+            map_center_lon = 1.6053f;
+        }
 
         // Discover and set the map region if it's not already defined
         discoverAndSetMapRegion();
@@ -1794,7 +1789,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                 bool isNavMode = false;
                 if (!nav_current_region.isEmpty()) {
                     if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-                        // Try NPK1 pack file first
+                        // Try NPK2 pack file first
                         snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
                                  nav_current_region.c_str(), map_current_zoom);
                         isNavMode = SD.exists(navCheckPath);
