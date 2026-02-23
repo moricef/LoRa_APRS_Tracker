@@ -140,12 +140,22 @@ namespace UIMapManager {
         map_current_zoom = newTable[bestIdx];
     }
 
+    // Filtered own position — only updates when movement exceeds HDOP-based threshold
+    static float filteredOwnLat = 0.0f;
+    static float filteredOwnLon = 0.0f;
+    static bool  filteredOwnValid = false;
+
     // Timer callback for periodic station refresh
     // Full redraw required to clear old station icons/traces before drawing new ones.
     // NAV cache in PSRAM avoids SD re-reads, so this is fast (~100-200ms vs 600ms cold).
     static void map_refresh_timer_cb(lv_timer_t* timer) {
         if (screen_map && lv_scr_act() == screen_map
             && !touch_dragging && !redraw_in_progress) {
+            // Follow GPS: update map center with filtered position before redraw
+            if (map_follow_gps && filteredOwnValid) {
+                map_center_lat = filteredOwnLat;
+                map_center_lon = filteredOwnLon;
+            }
             Serial.println("[MAP] Periodic refresh (full redraw)");
             redraw_map_canvas();
         }
@@ -383,12 +393,13 @@ namespace UIMapManager {
         }
     }
 
-    // Filtered own position — only updates when movement exceeds HDOP-based threshold
-    static float filteredOwnLat = 0.0f;
-    static float filteredOwnLon = 0.0f;
-    static bool  filteredOwnValid = false;
+    // (filteredOwn* declared above, before map_refresh_timer_cb)
 
     static void updateFilteredOwnPosition() {
+        static float iconCentroidLat = 0.0f;
+        static float iconCentroidLon = 0.0f;
+        static uint32_t iconCentroidCount = 0;
+
         if (!gps.location.isValid()) return;
         float lat = gps.location.lat();
         float lon = gps.location.lng();
@@ -397,18 +408,31 @@ namespace UIMapManager {
             filteredOwnLat = lat;
             filteredOwnLon = lon;
             filteredOwnValid = true;
+            iconCentroidLat = lat;
+            iconCentroidLon = lon;
+            iconCentroidCount = 1;
             return;
         }
 
-        // Same adaptive threshold as addOwnTracePoint: 10m min, +5m per HDOP unit
+        // Update running centroid with every GPS reading
+        float alpha = (iconCentroidCount < 10) ? 1.0f / (iconCentroidCount + 1) : 0.1f;
+        iconCentroidLat += alpha * (lat - iconCentroidLat);
+        iconCentroidLon += alpha * (lon - iconCentroidLon);
+        iconCentroidCount++;
+
+        // Threshold: 15m min, +5m per HDOP unit
         float hdop = gps.hdop.isValid() ? gps.hdop.hdop() : 2.0f;
-        float thresholdM = fmax(10.0f, hdop * 5.0f);
+        float thresholdM = fmax(15.0f, hdop * 5.0f);
         float thresholdLat = thresholdM / 111320.0f;
         float thresholdLon = thresholdM / (111320.0f * cosf(lat * M_PI / 180.0f));
 
-        if (fabs(lat - filteredOwnLat) > thresholdLat || fabs(lon - filteredOwnLon) > thresholdLon) {
+        // Compare to centroid — only update if real movement
+        if (fabs(lat - iconCentroidLat) > thresholdLat || fabs(lon - iconCentroidLon) > thresholdLon) {
             filteredOwnLat = lat;
             filteredOwnLon = lon;
+            iconCentroidLat = lat;
+            iconCentroidLon = lon;
+            iconCentroidCount = 1;
         }
     }
 
@@ -860,27 +884,45 @@ namespace UIMapManager {
 
     // Add a point to own GPS trace (called from sendBeacon when position changes)
     void addOwnTracePoint(float lat, float lon, float hdop) {
+        static float centroidLat = 0.0f;  // Running centroid of GPS readings
+        static float centroidLon = 0.0f;
+        static uint32_t centroidCount = 0; // Number of readings in centroid
         static float lastHdop = 99.0f;
 
         // Reject bad GPS fix entirely
         if (hdop > 5.0f) return;
 
-        // Adaptive jitter filter based on HDOP of both current and previous point
-        // Worse HDOP = larger uncertainty = need more distance to confirm real movement
+        // Centroid-based jitter filter: compare to average of all recent GPS readings,
+        // not just the last accepted point. This prevents drift from accumulated jitter.
         if (ownTraceCount > 0) {
+            // Update running centroid with this reading (accepted or not)
+            if (centroidCount == 0) {
+                centroidLat = lat;
+                centroidLon = lon;
+                centroidCount = 1;
+            } else {
+                // Exponential moving average (alpha ~0.1 for smooth convergence)
+                float alpha = (centroidCount < 10) ? 1.0f / (centroidCount + 1) : 0.1f;
+                centroidLat += alpha * (lat - centroidLat);
+                centroidLon += alpha * (lon - centroidLon);
+                centroidCount++;
+            }
+
+            // Threshold based on HDOP: 15m min, +5m per HDOP unit
             float worstHdop = fmax(lastHdop, hdop);
-            // Threshold in meters: at least 10m, scales with HDOP (5m per HDOP unit)
-            float thresholdM = fmax(10.0f, worstHdop * 5.0f);
-            // Convert to degrees (approximate at mid-latitudes ~43°)
+            float thresholdM = fmax(15.0f, worstHdop * 5.0f);
             float thresholdLat = thresholdM / 111320.0f;
             float thresholdLon = thresholdM / (111320.0f * cosf(lat * M_PI / 180.0f));
 
-            int lastIdx = (ownTraceHead - 1 + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
-            float dlat = fabs(ownTrace[lastIdx].lat - lat);
-            float dlon = fabs(ownTrace[lastIdx].lon - lon);
-            if (dlat < thresholdLat && dlon < thresholdLon) {
+            // Compare to centroid, not to last accepted point
+            if (fabs(lat - centroidLat) < thresholdLat && fabs(lon - centroidLon) < thresholdLon) {
                 return;
             }
+
+            // Real movement — reset centroid to new position
+            centroidLat = lat;
+            centroidLon = lon;
+            centroidCount = 1;
         }
 
         lastHdop = hdop;
