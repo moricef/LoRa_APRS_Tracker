@@ -68,5 +68,15 @@ struct Edge {
     int nextActive;
 };
 
+// NPK1 pack file index entry (12 bytes)
+// Pack format: "NPK1" magic + uint32 tile_count + tile_count × NpkIndexEntry + NAV1 blobs
+// Index sorted by x then y for binary search
+struct NpkIndexEntry {
+    uint32_t x;
+    uint32_t y;
+    uint32_t offset;   // from start of file
+    uint32_t size;     // NAV1 blob size
+} __attribute__((packed));
+
 } // namespace UIMapManager
 #endif

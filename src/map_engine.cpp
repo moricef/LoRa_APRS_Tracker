@@ -148,6 +148,14 @@ namespace MapEngine {
     static size_t maxCachedTiles = TILE_CACHE_SIZE;
     static uint32_t cacheAccessCounter = 0;
 
+    // --- NPK1 pack file support ---
+    static File npkFile;                       // Currently open pack file
+    using UIMapManager::NpkIndexEntry;
+    static NpkIndexEntry* npkIndex = nullptr;  // Index loaded in PSRAM
+    static uint32_t npkTileCount = 0;
+    static uint8_t npkLoadedZoom = 255;        // 255 = not loaded
+    static bool npkAvailable = false;
+
     // NAV raw data cache — avoids re-reading .nav tiles from SD after pan
     struct NavCacheEntry {
         uint8_t* data;        // Raw NAV data (ps_malloc'd)
@@ -334,8 +342,9 @@ namespace MapEngine {
         );
     }
 
-    // Forward declaration (defined after shrinkProjectionBuffers)
+    // Forward declarations (defined after shrinkProjectionBuffers / clearNavCache)
     static void clearNavCache();
+    static void closeNpkFile();
 
     // Initialize tile cache and pre-reserve render buffers
     void initTileCache() {
@@ -438,10 +447,130 @@ namespace MapEngine {
     }
 
     static void clearNavCache() {
+        closeNpkFile();
         for (auto& e : navCache) free(e.data);
         navCache.clear();
         navCacheAccessCounter = 0;
         Serial.println("[NAV-CACHE] Cleared");
+    }
+
+    // --- NPK1 pack file functions ---
+
+    static void closeNpkFile() {
+        if (npkIndex) {
+            heap_caps_free(npkIndex);
+            npkIndex = nullptr;
+        }
+        if (npkFile) {
+            npkFile.close();
+        }
+        npkTileCount = 0;
+        npkLoadedZoom = 255;
+        npkAvailable = false;
+    }
+
+    static void loadNpkIndex(const char* region, uint8_t zoom) {
+        if (zoom == npkLoadedZoom) return;  // Already loaded for this zoom
+
+        closeNpkFile();
+
+        char packPath[128];
+        snprintf(packPath, sizeof(packPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
+
+        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            npkFile = SD.open(packPath, FILE_READ);
+            xSemaphoreGiveRecursive(spiMutex);
+        }
+
+        if (!npkFile) return;
+
+        // Read and validate header
+        char magic[4];
+        if (npkFile.read((uint8_t*)magic, 4) != 4 || memcmp(magic, "NPK1", 4) != 0) {
+            Serial.printf("[NPK] Invalid magic in %s\n", packPath);
+            npkFile.close();
+            return;
+        }
+
+        uint32_t tileCount = 0;
+        if (npkFile.read((uint8_t*)&tileCount, 4) != 4 || tileCount == 0) {
+            Serial.printf("[NPK] Invalid tile count in %s\n", packPath);
+            npkFile.close();
+            return;
+        }
+
+        // Load entire index into PSRAM
+        size_t indexSize = tileCount * sizeof(NpkIndexEntry);
+        npkIndex = (NpkIndexEntry*)heap_caps_malloc(indexSize, MALLOC_CAP_SPIRAM);
+        if (!npkIndex) {
+            Serial.printf("[NPK] Failed to alloc index (%u KB)\n", (unsigned)(indexSize / 1024));
+            npkFile.close();
+            return;
+        }
+
+        if (npkFile.read((uint8_t*)npkIndex, indexSize) != indexSize) {
+            Serial.printf("[NPK] Failed to read index from %s\n", packPath);
+            heap_caps_free(npkIndex);
+            npkIndex = nullptr;
+            npkFile.close();
+            return;
+        }
+
+        npkTileCount = tileCount;
+        npkLoadedZoom = zoom;
+        npkAvailable = true;
+        Serial.printf("[NPK] Loaded index: %s (%u tiles, %u KB)\n",
+                      packPath, tileCount, (unsigned)(indexSize / 1024));
+        // Debug: dump first and last index entries
+        Serial.printf("[NPK] Index[0]: x=%u y=%u off=%u sz=%u\n",
+                      npkIndex[0].x, npkIndex[0].y, npkIndex[0].offset, npkIndex[0].size);
+        if (tileCount > 1) {
+            Serial.printf("[NPK] Index[%u]: x=%u y=%u off=%u sz=%u\n",
+                          tileCount - 1, npkIndex[tileCount-1].x, npkIndex[tileCount-1].y,
+                          npkIndex[tileCount-1].offset, npkIndex[tileCount-1].size);
+        }
+    }
+
+    static const NpkIndexEntry* findNpkTile(uint32_t x, uint32_t y) {
+        if (!npkIndex || npkTileCount == 0) return nullptr;
+
+        // Binary search — index sorted by x then y
+        int lo = 0, hi = (int)npkTileCount - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            const NpkIndexEntry& e = npkIndex[mid];
+            if (e.x < x || (e.x == x && e.y < y)) {
+                lo = mid + 1;
+            } else if (e.x > x || (e.x == x && e.y > y)) {
+                hi = mid - 1;
+            } else {
+                return &npkIndex[mid];
+            }
+        }
+        return nullptr;
+    }
+
+    static bool readNpkTileData(const NpkIndexEntry* entry, uint8_t** outData, size_t* outSize) {
+        if (!npkFile || !entry) return false;
+
+        *outData = (uint8_t*)ps_malloc(entry->size);
+        if (!*outData) return false;
+
+        bool ok = false;
+        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            npkFile.seek(entry->offset);
+            ok = (npkFile.read(*outData, entry->size) == entry->size);
+            xSemaphoreGiveRecursive(spiMutex);
+        }
+
+        if (!ok) {
+            free(*outData);
+            *outData = nullptr;
+            return false;
+        }
+
+        *outSize = entry->size;
+        return true;
     }
 
     // Load VLW Unicode font for map labels from SD card
@@ -872,6 +1001,9 @@ namespace MapEngine {
         std::sort(tileOrder, tileOrder + tileCount,
                   [](const TileSlot& a, const TileSlot& b) { return a.distSq < b.distSq; });
 
+        // Try to load NPK pack index for this zoom (idempotent if same zoom)
+        loadNpkIndex(region, zoom);
+
         for (int ti = 0; ti < tileCount && !psramExhausted; ti++) {
                 int dx = tileOrder[ti].dx;
                 int dy = tileOrder[ti].dy;
@@ -901,28 +1033,41 @@ namespace MapEngine {
                     navCache[cacheIdx].lastAccess = ++navCacheAccessCounter;
                     navCacheHits++;
                 } else {
-                    // Cache miss — read from SD
-                    char tilePath[128];
-                    snprintf(tilePath, sizeof(tilePath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
-                             region, zoom, tileX, tileY);
-
+                    // Cache miss — try NPK pack first, then legacy individual file
                     bool sizeOk = false, allocOk = false;
 
-                    if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                        File file = SD.open(tilePath, FILE_READ);
-                        if (file) {
-                            fileSize = file.size();
-                            if (fileSize >= 22) {
-                                sizeOk = true;
-                                data = (uint8_t*)ps_malloc(fileSize);
-                                if (data) {
-                                    allocOk = true;
-                                    file.read(data, fileSize);
-                                }
+                    if (npkAvailable) {
+                        const NpkIndexEntry* entry = findNpkTile((uint32_t)tileX, (uint32_t)tileY);
+                        if (entry) {
+                            sizeOk = true;
+                            if (readNpkTileData(entry, &data, &fileSize)) {
+                                allocOk = true;
                             }
-                            file.close();
                         }
-                        xSemaphoreGiveRecursive(spiMutex);
+                    }
+
+                    if (!data && !npkAvailable) {
+                        // Legacy: individual tile file
+                        char tilePath[128];
+                        snprintf(tilePath, sizeof(tilePath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
+                                 region, zoom, tileX, tileY);
+
+                        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                            File file = SD.open(tilePath, FILE_READ);
+                            if (file) {
+                                fileSize = file.size();
+                                if (fileSize >= 22) {
+                                    sizeOk = true;
+                                    data = (uint8_t*)ps_malloc(fileSize);
+                                    if (data) {
+                                        allocOk = true;
+                                        file.read(data, fileSize);
+                                    }
+                                }
+                                file.close();
+                            }
+                            xSemaphoreGiveRecursive(spiMutex);
+                        }
                     }
 
                     if (!data) {
