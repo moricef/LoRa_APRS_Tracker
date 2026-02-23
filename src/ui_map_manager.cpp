@@ -401,6 +401,8 @@ namespace UIMapManager {
         static uint32_t iconCentroidCount = 0;
 
         if (!gps.location.isValid()) return;
+        // Reject unreliable fixes: need ≥6 sats for decent 3D geometry
+        if (gps.satellites.value() < 6) return;
         float lat = gps.location.lat();
         float lon = gps.location.lng();
 
@@ -891,6 +893,7 @@ namespace UIMapManager {
 
         // Reject bad GPS fix entirely
         if (hdop > 5.0f) return;
+        if (gps.satellites.value() < 6) return;
 
         // Centroid-based jitter filter: compare to average of all recent GPS readings,
         // not just the last accepted point. This prevents drift from accumulated jitter.
