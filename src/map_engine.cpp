@@ -421,10 +421,10 @@ namespace MapEngine {
 
     // --- NAV raw data cache functions ---
 
-    // Hash includes region index — 64-bit to support Z13+ (tileX/Y > 8191)
+    // Hash includes region index — 64-bit to support Z13+ coords and Z16+ zoom
     static inline uint64_t navCacheHash(uint8_t regionIdx, uint8_t zoom, int tileX, int tileY) {
-        return (uint64_t(regionIdx & 0x3) << 36) |
-               (uint64_t(zoom & 0xF) << 32) |
+        return (uint64_t(regionIdx & 0x3) << 37) |
+               (uint64_t(zoom & 0x1F) << 32) |
                (uint64_t(tileX & 0xFFFF) << 16) |
                uint64_t(tileY & 0xFFFF);
     }
@@ -1147,7 +1147,7 @@ namespace MapEngine {
             int preEvicted = 0;
             for (int i = (int)navCache.size() - 1; i >= 0; i--) {
                 uint64_t h = navCache[i].tileHash;
-                uint8_t cachedZoom = (h >> 32) & 0xF;
+                uint8_t cachedZoom = (h >> 32) & 0x1F;
                 int cachedX = (h >> 16) & 0xFFFF;
                 int cachedY = h & 0xFFFF;
                 if (cachedZoom != zoom ||
