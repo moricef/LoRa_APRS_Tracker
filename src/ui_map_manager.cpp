@@ -48,10 +48,10 @@ namespace UIMapManager {
 
     // Map state variables
     // Vector (NAV) zooms: step 1 (6..18)
-    static const int nav_zooms[] = {6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
+    static const int nav_zooms[] = {9, 10, 11, 12, 13, 14, 15, 16, 17};
     static const int nav_zoom_count = sizeof(nav_zooms) / sizeof(nav_zooms[0]);
-    // Raster (PNG/JPG) zooms: step 2 (8,10,12,14,16,18)
-    static const int raster_zooms[] = {8, 10, 12, 14, 16, 18};
+    // Raster (PNG/JPG) zooms: step 2 (6,7,8,10,12,14)
+    static const int raster_zooms[] = {6, 7, 8, 10, 12, 14};
     static const int raster_zoom_count = sizeof(raster_zooms) / sizeof(raster_zooms[0]);
     // Active zoom table (points to nav_zooms or raster_zooms)
     const int* map_available_zooms = raster_zooms;
@@ -1071,9 +1071,10 @@ namespace UIMapManager {
         bool hasTiles = false;
         if (STORAGE_Utils::isSDAvailable()) {
             // Check if NAV data available: try each region for pack file or legacy tile
+            // Z6-Z8: force raster — NAV feature density too high for ESP32
             char navCheckPath[128];
             bool isNavMode = false;
-            if (navRegionCount > 0) {
+            if (navRegionCount > 0 && map_current_zoom >= 9) {
                 if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
                     for (int r = 0; r < navRegionCount && !isNavMode; r++) {
                         // Try NPK2 pack file first
@@ -1220,7 +1221,17 @@ namespace UIMapManager {
 
     // Map zoom in handler
     void btn_map_zoomin_clicked(lv_event_t* e) {
-        if (map_zoom_index < map_zoom_count - 1) {
+        if (!navModeActive && navRegionCount > 0 &&
+            map_current_zoom < nav_zooms[0] &&
+            (map_zoom_index >= map_zoom_count - 1 ||
+             map_available_zooms[map_zoom_index + 1] > nav_zooms[0])) {
+            // Next raster zoom would skip over NAV start — switch to NAV
+            switchZoomTable(nav_zooms, nav_zoom_count);
+            map_zoom_index = 0;
+            map_current_zoom = nav_zooms[0];
+            Serial.printf("[MAP] Zoom in: %d (raster→NAV)\n", map_current_zoom);
+            redraw_map_canvas();
+        } else if (map_zoom_index < map_zoom_count - 1) {
             map_zoom_index++;
             map_current_zoom = map_available_zooms[map_zoom_index];
             Serial.printf("[MAP] Zoom in: %d\n", map_current_zoom);
@@ -1236,6 +1247,13 @@ namespace UIMapManager {
             map_current_zoom = map_available_zooms[map_zoom_index];
             Serial.printf("[MAP] Zoom out: %d\n", map_current_zoom);
             if (navModeActive) MapEngine::clearTileCache();
+            redraw_map_canvas();
+        } else if (navModeActive) {
+            // At min NAV zoom — switch to raster
+            navModeActive = false;
+            MapEngine::clearTileCache();
+            switchZoomTable(raster_zooms, raster_zoom_count);
+            Serial.printf("[MAP] Zoom out: %d (NAV→raster)\n", map_current_zoom);
             redraw_map_canvas();
         }
     }
@@ -1800,9 +1818,10 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
             bool hasTiles = false;
             if (STORAGE_Utils::isSDAvailable()) {
                 // Check if NAV data available: try each region for pack file or legacy tile
+                // Z6-Z8: force raster — NAV feature density too high for ESP32
                 char navCheckPath[128];
                 bool isNavMode = false;
-                if (navRegionCount > 0) {
+                if (navRegionCount > 0 && map_current_zoom >= 9) {
                     if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
                         for (int r = 0; r < navRegionCount && !isNavMode; r++) {
                             // Try NPK2 pack file first

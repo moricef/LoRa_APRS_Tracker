@@ -155,7 +155,7 @@ namespace MapEngine {
         File file;
         UIMapManager::Npk2Header header;
         UIMapManager::Npk2YEntry* yTable = nullptr;
-        char region[32] = {};
+        char region[64] = {};
         uint8_t zoom = 255;
         bool active = false;
         uint32_t lastAccess = 0;
@@ -168,8 +168,11 @@ namespace MapEngine {
     struct NavCacheEntry {
         uint8_t* data;        // Raw NAV data (ps_malloc'd)
         size_t   size;        // Size in bytes
-        uint64_t tileHash;    // 64-bit: region(2) | zoom(4) | tileX(16) | tileY(16)
+        int      tileX;
+        int      tileY;
         uint32_t lastAccess;  // LRU counter
+        uint8_t  regionIdx;
+        uint8_t  zoom;
     };
     #define NAV_CACHE_SIZE 60  // Must cover full viewport: 6×5 grid × 2 regions = ~60 tiles
     static std::vector<NavCacheEntry> navCache;
@@ -354,6 +357,8 @@ namespace MapEngine {
     static void clearNavCache();
     static void closeNpkSlot(int idx);
     static void closeAllNpkSlots();
+    static void invalidateIdxRowCacheForSlot(int slotIdx);
+    static void invalidateAllIdxRowCache();
 
     // Initialize tile cache and pre-reserve render buffers
     void initTileCache() {
@@ -421,29 +426,23 @@ namespace MapEngine {
 
     // --- NAV raw data cache functions ---
 
-    // Hash includes region index — 64-bit to support Z13+ coords and Z16+ zoom
-    static inline uint64_t navCacheHash(uint8_t regionIdx, uint8_t zoom, int tileX, int tileY) {
-        return (uint64_t(regionIdx & 0x3) << 37) |
-               (uint64_t(zoom & 0x1F) << 32) |
-               (uint64_t(tileX & 0xFFFF) << 16) |
-               uint64_t(tileY & 0xFFFF);
-    }
-
     static int findNavCache(uint8_t regionIdx, uint8_t zoom, int tileX, int tileY) {
-        uint64_t hash = navCacheHash(regionIdx, zoom, tileX, tileY);
         for (int i = 0; i < (int)navCache.size(); i++) {
-            if (navCache[i].tileHash == hash) return i;
+            if (navCache[i].regionIdx == regionIdx && navCache[i].zoom == zoom &&
+                navCache[i].tileX == tileX && navCache[i].tileY == tileY) return i;
         }
         return -1;
     }
 
     // Add a tile to the NAV cache — takes ownership of the data pointer
     static void addNavCache(uint8_t regionIdx, uint8_t zoom, int tileX, int tileY, uint8_t* data, size_t size) {
-        uint64_t hash = navCacheHash(regionIdx, zoom, tileX, tileY);
         NavCacheEntry entry;
         entry.data = data;
         entry.size = size;
-        entry.tileHash = hash;
+        entry.tileX = tileX;
+        entry.tileY = tileY;
+        entry.regionIdx = regionIdx;
+        entry.zoom = zoom;
         entry.lastAccess = ++navCacheAccessCounter;
 
         if ((int)navCache.size() < NAV_CACHE_SIZE) {
@@ -495,6 +494,7 @@ namespace MapEngine {
     }
 
     static void clearNavCache() {
+        invalidateAllIdxRowCache();
         closeAllNpkSlots();
         for (auto& e : navCache) free(e.data);
         navCache.clear();
@@ -505,6 +505,7 @@ namespace MapEngine {
     // --- NPK2 pack file functions (multi-region slot system) ---
 
     static void closeNpkSlot(int idx) {
+        invalidateIdxRowCacheForSlot(idx);
         NpkSlot& s = npkSlots[idx];
         if (s.yTable) {
             heap_caps_free(s.yTable);
@@ -634,7 +635,41 @@ namespace MapEngine {
     // Row buffer for bulk index reads — 2048 entries = 32 KB (static, no fragmentation)
     static UIMapManager::Npk2IndexEntry npkRowBuf[2048];
 
+    // --- Index row cache in PSRAM (avoids re-reading the same Y-row from SD) ---
+    struct IndexRowCache {
+        UIMapManager::Npk2IndexEntry* entries;  // ps_malloc'd
+        uint32_t count;
+        uint8_t  slotIdx;     // which NpkSlot (0..NPK_MAX_REGIONS-1)
+        uint32_t rowY;
+        bool     valid;
+    };
+    #define IDX_ROW_CACHE_SIZE 12  // 6 Y values × 2 regions max
+    static IndexRowCache idxRowCache[IDX_ROW_CACHE_SIZE];
+    static int idxRowCacheNext = 0;  // round-robin insertion
+
+    static void invalidateIdxRowCacheForSlot(int slotIdx) {
+        for (int i = 0; i < IDX_ROW_CACHE_SIZE; i++) {
+            if (idxRowCache[i].valid && idxRowCache[i].slotIdx == (uint8_t)slotIdx) {
+                heap_caps_free(idxRowCache[i].entries);
+                idxRowCache[i].entries = nullptr;
+                idxRowCache[i].valid = false;
+            }
+        }
+    }
+
+    static void invalidateAllIdxRowCache() {
+        for (int i = 0; i < IDX_ROW_CACHE_SIZE; i++) {
+            if (idxRowCache[i].valid) {
+                heap_caps_free(idxRowCache[i].entries);
+                idxRowCache[i].entries = nullptr;
+                idxRowCache[i].valid = false;
+            }
+        }
+        idxRowCacheNext = 0;
+    }
+
     // Find a tile in a single NPK slot (binary search in Y-table + index)
+    // Uses index row cache to avoid redundant SD reads for the same Y-row.
     static bool findNpkTileInSlot(NpkSlot* slot, uint32_t x, uint32_t y,
                                    UIMapManager::Npk2IndexEntry* result) {
         if (!slot || !slot->yTable || !slot->file) return false;
@@ -645,6 +680,27 @@ namespace MapEngine {
         const UIMapManager::Npk2YEntry& row = slot->yTable[y - slot->header.y_min];
         if (row.idx_count == 0) return false;
 
+        // Determine slot index for cache key
+        int slotIdx = (int)(slot - npkSlots);
+
+        // --- Check index row cache ---
+        for (int i = 0; i < IDX_ROW_CACHE_SIZE; i++) {
+            if (idxRowCache[i].valid && idxRowCache[i].slotIdx == (uint8_t)slotIdx &&
+                idxRowCache[i].rowY == y) {
+                // Cache hit — binary search in cached entries
+                UIMapManager::Npk2IndexEntry* entries = idxRowCache[i].entries;
+                int lo = 0, hi = (int)idxRowCache[i].count - 1;
+                while (lo <= hi) {
+                    int mid = (lo + hi) / 2;
+                    if (entries[mid].x < x) lo = mid + 1;
+                    else if (entries[mid].x > x) hi = mid - 1;
+                    else { *result = entries[mid]; return true; }
+                }
+                return false;
+            }
+        }
+
+        // --- Cache miss — read from SD ---
         uint32_t baseOff = slot->header.index_offset + row.idx_start * sizeof(UIMapManager::Npk2IndexEntry);
         bool found = false;
 
@@ -659,6 +715,26 @@ namespace MapEngine {
             }
             if (!readOk) return false;
 
+            // Try to cache this row in PSRAM for reuse
+            size_t allocSize = row.idx_count * sizeof(UIMapManager::Npk2IndexEntry);
+            UIMapManager::Npk2IndexEntry* cached =
+                (UIMapManager::Npk2IndexEntry*)heap_caps_malloc(allocSize, MALLOC_CAP_SPIRAM);
+            if (cached) {
+                memcpy(cached, npkRowBuf, allocSize);
+                // Evict existing entry at round-robin position
+                IndexRowCache& slot_c = idxRowCache[idxRowCacheNext];
+                if (slot_c.valid) {
+                    heap_caps_free(slot_c.entries);
+                }
+                slot_c.entries = cached;
+                slot_c.count = row.idx_count;
+                slot_c.slotIdx = (uint8_t)slotIdx;
+                slot_c.rowY = y;
+                slot_c.valid = true;
+                idxRowCacheNext = (idxRowCacheNext + 1) % IDX_ROW_CACHE_SIZE;
+            }
+
+            // Binary search in npkRowBuf
             int lo = 0, hi = (int)row.idx_count - 1;
             while (lo <= hi) {
                 int mid = (lo + hi) / 2;
@@ -1120,7 +1196,6 @@ namespace MapEngine {
 
         uint16_t bgColor = 0xF7BE;  // Default OSM beige (0xF2EFE9) if no tiles loaded
         bool bgColorExtracted = false;
-        bool psramExhausted = false;
 
         // Build tile list sorted center-outward so PSRAM exhaustion
         // degrades edges first instead of cutting a whole quadrant
@@ -1146,13 +1221,9 @@ namespace MapEngine {
             int gridMaxY = centerTileIdxY + maxDy;
             int preEvicted = 0;
             for (int i = (int)navCache.size() - 1; i >= 0; i--) {
-                uint64_t h = navCache[i].tileHash;
-                uint8_t cachedZoom = (h >> 32) & 0x1F;
-                int cachedX = (h >> 16) & 0xFFFF;
-                int cachedY = h & 0xFFFF;
-                if (cachedZoom != zoom ||
-                    cachedX < gridMinX || cachedX > gridMaxX ||
-                    cachedY < gridMinY || cachedY > gridMaxY) {
+                if (navCache[i].zoom != zoom ||
+                    navCache[i].tileX < gridMinX || navCache[i].tileX > gridMaxX ||
+                    navCache[i].tileY < gridMinY || navCache[i].tileY > gridMaxY) {
                     free(navCache[i].data);
                     navCache.erase(navCache.begin() + i);
                     preEvicted++;
@@ -1165,147 +1236,211 @@ namespace MapEngine {
             }
         }
 
-        for (int ti = 0; ti < tileCount && !psramExhausted; ti++) {
+        // Skip regions that don't contain the center tile.
+        // Preserves original region index for stable navCache keys.
+        struct ActiveRegion {
+            const char* name;
+            uint8_t     origIdx;  // index in regions[] — used as navCache key
+        };
+        ActiveRegion activeRegions[NPK_MAX_REGIONS];
+        int activeRegionCount = 0;
+
+        if (regionCount > 1) {
+            // Check if the center tile actually exists in each region
+            for (int r = 0; r < regionCount && r < NPK_MAX_REGIONS; r++) {
+                NpkSlot* slot = openNpkRegion(regions[r], zoom);
+                if (!slot || !slot->yTable) continue;
+                UIMapManager::Npk2IndexEntry dummy;
+                if (findNpkTileInSlot(slot, (uint32_t)centerTileIdxX, (uint32_t)centerTileIdxY, &dummy)) {
+                    activeRegions[activeRegionCount++] = { regions[r], (uint8_t)r };
+                }
+            }
+            if (activeRegionCount == 0) {
+                for (int r = 0; r < regionCount && r < NPK_MAX_REGIONS; r++)
+                    activeRegions[activeRegionCount++] = { regions[r], (uint8_t)r };
+            }
+        } else {
+            for (int r = 0; r < regionCount && r < NPK_MAX_REGIONS; r++)
+                activeRegions[activeRegionCount++] = { regions[r], (uint8_t)r };
+        }
+
+        // --- Phase 1: Resolve navCache hits + collect pending SD reads ---
+        // Pending reads are sorted by file offset before reading to minimize
+        // SD seek latency (critical for non-A1 cards).
+        struct PendingTileRead {
+            NpkSlot* slot;
+            UIMapManager::Npk2IndexEntry entry;
+            int16_t  tileOffsetX, tileOffsetY;
+            int      tileX, tileY;
+            uint8_t  regionIdx;
+        };
+        PendingTileRead pendingReads[72];  // 6×6 grid × 2 regions max
+        int pendingCount = 0;
+
+        // Helper lambda to dispatch features from a loaded tile into globalLayers/textRefs
+        auto dispatchFeatures = [&](uint8_t* data, size_t fileSize,
+                                     int16_t tileOffsetX, int16_t tileOffsetY) {
+            // Extract background color from first feature if it's a background polygon
+            if (!bgColorExtracted && fileSize >= 22 + 13) {
+                uint8_t ft0Type = data[22];
+                uint8_t ft0Prio = data[25] & 0x0F;
+                if (ft0Type == 3 && ft0Prio == 0) {
+                    memcpy(&bgColor, data + 23, 2);
+                }
+                bgColorExtracted = true;
+            }
+
+            tileBuffers.push_back(data);
+
+            uint16_t feature_count;
+            memcpy(&feature_count, data + 4, 2);
+
+            // Parse features and dispatch to priority layers (IceNav-v3 zero-copy pattern)
+            uint8_t* p = data + 22;
+
+            for (uint16_t i = 0; i < feature_count; i++) {
+                if ((i & 63) == 0) esp_task_wdt_reset();
+                if (p + 13 > data + fileSize) break;
+
+                uint8_t geomType = p[0];
+                uint8_t zoomPriority = p[3];
+                uint16_t coordCount;
+                memcpy(&coordCount, p + 9, 2);
+                uint16_t payloadSize;
+                memcpy(&payloadSize, p + 11, 2);
+
+                if (p + 13 + payloadSize > data + fileSize) break;
+
+                // Zoom filtering (IceNav-v3 NavReader pattern)
+                uint8_t minZoom = zoomPriority >> 4;
+                if (minZoom > zoom) {
+                    p += 13 + payloadSize;
+                    continue;
+                }
+
+                uint8_t priority = zoomPriority & 0x0F;
+                if (priority >= 16) priority = 15;
+
+                FeatureRef ref;
+                ref.ptr = p;
+                ref.geomType = geomType;
+                ref.payloadSize = payloadSize;
+                ref.coordCount = coordCount;
+                ref.tileOffsetX = tileOffsetX;
+                ref.tileOffsetY = tileOffsetY;
+
+                if (geomType == 4) {
+                    if (textRefs.size() == textRefs.capacity()) {
+                        size_t needed = (textRefs.capacity() < 1 ? 1 : textRefs.capacity() * 2) * sizeof(FeatureRef);
+                        if (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < needed) {
+                            p += 13 + payloadSize;
+                            continue;
+                        }
+                    }
+                    textRefs.push_back(ref);
+                } else {
+                    auto& layer = globalLayers[priority];
+                    if (layer.size() == layer.capacity()) {
+                        size_t needed = (layer.capacity() < 1 ? 1 : layer.capacity() * 2) * sizeof(FeatureRef);
+                        if (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < needed) {
+                            p += 13 + payloadSize;
+                            continue;
+                        }
+                    }
+                    layer.push_back(ref);
+                }
+
+                p += 13 + payloadSize;
+            }
+        };
+
+        for (int ti = 0; ti < tileCount; ti++) {
                 int dx = tileOrder[ti].dx;
                 int dy = tileOrder[ti].dy;
-                esp_task_wdt_reset();
 
                 int tileX = centerTileIdxX + dx;
                 int tileY = centerTileIdxY + dy;
 
-                // Pixel offset of this tile's top-left in the viewport
                 int16_t tileOffsetX = (int16_t)(centerTileOriginX + dx * MAP_TILE_SIZE);
                 int16_t tileOffsetY = (int16_t)(centerTileOriginY + dy * MAP_TILE_SIZE);
 
-                // Skip tiles entirely outside viewport
                 bool skipX = (tileOffsetX + MAP_TILE_SIZE <= 0 || tileOffsetX >= viewportW);
                 bool skipY = (tileOffsetY + MAP_TILE_SIZE <= 0 || tileOffsetY >= viewportH);
                 if (skipX || skipY) continue;
 
-                // Iterate ALL regions for this tile position so border tiles
-                // accumulate features from every region into globalLayers
-                for (int r = 0; r < regionCount && !psramExhausted; r++) {
-                    uint8_t regionIdx = (uint8_t)r;
+                for (int r = 0; r < activeRegionCount; r++) {
+                    uint8_t regionIdx = activeRegions[r].origIdx;
 
-                    uint8_t* data = nullptr;
-                    size_t fileSize = 0;
                     int cacheIdx = findNavCache(regionIdx, zoom, tileX, tileY);
-
                     if (cacheIdx >= 0) {
-                        // Cache hit — use cached data directly
-                        data = navCache[cacheIdx].data;
-                        fileSize = navCache[cacheIdx].size;
                         navCache[cacheIdx].lastAccess = ++navCacheAccessCounter;
                         navCacheHits++;
+                        dispatchFeatures(navCache[cacheIdx].data, navCache[cacheIdx].size,
+                                         tileOffsetX, tileOffsetY);
                     } else {
-                        // Cache miss — try this region's NPK pack
-                        NpkSlot* slot = openNpkRegion(regions[r], zoom);
+                        NpkSlot* slot = openNpkRegion(activeRegions[r].name, zoom);
                         UIMapManager::Npk2IndexEntry entry;
-                        if (slot && findNpkTileInSlot(slot, (uint32_t)tileX, (uint32_t)tileY, &entry)) {
-                            if (!readNpkTileData(slot, &entry, &data, &fileSize)) {
-                                // Try evicting unused navCache entries and retry
-                                if (evictUnusedNavCache(tileBuffers, entry.size)) {
-                                    readNpkTileData(slot, &entry, &data, &fileSize);
-                                }
-                                if (!data) {
-                                    Serial.printf("[NAV] PSRAM exhausted (needed %u KB, largest block: %u KB) — stopping tile load\n",
-                                                  (unsigned)(entry.size / 1024),
-                                                  (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
-                                    psramExhausted = true;
-                                    continue;
-                                }
-                            }
+                        if (slot && findNpkTileInSlot(slot, (uint32_t)tileX, (uint32_t)tileY, &entry)
+                            && pendingCount < 72) {
+                            pendingReads[pendingCount++] = {
+                                slot, entry, tileOffsetX, tileOffsetY,
+                                tileX, tileY, regionIdx
+                            };
                         }
-
-                        if (!data) continue;  // This region doesn't have this tile
-
-                        if (memcmp(data, "NAV1", 4) != 0) {
-                            Serial.printf("[NAV-FAIL] Tile %d/%d (region %s): invalid header\n",
-                                          tileX, tileY, regions[r]);
-                            free(data);
-                            continue;
-                        }
-
-                        // Transfer ownership to cache
-                        addNavCache(regionIdx, zoom, tileX, tileY, data, fileSize);
-                        navCacheMisses++;
                     }
+                }
+        }
 
-                    // Extract background color from first feature if it's a background polygon
-                    // (geomType 3, priority 0). Python generator writes one; Jordi's C++ generator does not.
-                    if (!bgColorExtracted && fileSize >= 22 + 13) {
-                        uint8_t ft0Type = data[22];
-                        uint8_t ft0Prio = data[25] & 0x0F;
-                        if (ft0Type == 3 && ft0Prio == 0) {
-                            memcpy(&bgColor, data + 23, 2);
-                        }
-                        bgColorExtracted = true;
-                    }
+        // --- Phase 2: Sort pending reads ---
+        // If all tiles fit in PSRAM, sort by file offset for sequential SD reads.
+        // Otherwise sort center-outward so PSRAM exhaustion drops edge tiles first.
+        size_t totalPendingSize = 0;
+        for (int i = 0; i < pendingCount; i++)
+            totalPendingSize += pendingReads[i].entry.size;
 
-                    tileBuffers.push_back(data);
+        if (totalPendingSize <= heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)) {
+            // All fit — sequential reads for speed
+            std::sort(pendingReads, pendingReads + pendingCount,
+                      [](const PendingTileRead& a, const PendingTileRead& b) {
+                          if (a.slot != b.slot) return a.slot < b.slot;
+                          return a.entry.offset < b.entry.offset;
+                      });
+        } else {
+            // Won't fit — center-outward for graceful degradation
+            std::sort(pendingReads, pendingReads + pendingCount,
+                      [centerTileIdxX, centerTileIdxY](const PendingTileRead& a, const PendingTileRead& b) {
+                          int adx = a.tileX - centerTileIdxX, ady = a.tileY - centerTileIdxY;
+                          int bdx = b.tileX - centerTileIdxX, bdy = b.tileY - centerTileIdxY;
+                          return (adx*adx + ady*ady) < (bdx*bdx + bdy*bdy);
+                      });
+        }
 
-                    uint16_t feature_count;
-                    memcpy(&feature_count, data + 4, 2);
+        // --- Phase 3: Read tile data and dispatch features ---
+        for (int i = 0; i < pendingCount; i++) {
+            esp_task_wdt_reset();
+            auto& pr = pendingReads[i];
+            uint8_t* data = nullptr;
+            size_t fileSize = 0;
 
-                    // Parse features and dispatch to priority layers (IceNav-v3 zero-copy pattern)
-                    uint8_t* p = data + 22;
+            if (!readNpkTileData(pr.slot, &pr.entry, &data, &fileSize)) {
+                if (evictUnusedNavCache(tileBuffers, pr.entry.size)) {
+                    readNpkTileData(pr.slot, &pr.entry, &data, &fileSize);
+                }
+                if (!data) break;  // PSRAM exhausted — stop loading
+            }
 
-                    for (uint16_t i = 0; i < feature_count; i++) {
-                        if ((i & 63) == 0) esp_task_wdt_reset();
-                        if (p + 13 > data + fileSize) break;
+            if (!data) continue;
 
-                        uint8_t geomType = p[0];
-                        uint8_t zoomPriority = p[3];
-                        uint16_t coordCount;
-                        memcpy(&coordCount, p + 9, 2);
-                        uint16_t payloadSize;
-                        memcpy(&payloadSize, p + 11, 2);
+            if (memcmp(data, "NAV1", 4) != 0) {
+                Serial.printf("[NAV-FAIL] Tile %d/%d: invalid header\n", pr.tileX, pr.tileY);
+                free(data);
+                continue;
+            }
 
-                        if (p + 13 + payloadSize > data + fileSize) break;
+            addNavCache(pr.regionIdx, zoom, pr.tileX, pr.tileY, data, fileSize);
+            navCacheMisses++;
 
-                        // Zoom filtering (IceNav-v3 NavReader pattern)
-                        uint8_t minZoom = zoomPriority >> 4;
-                        if (minZoom > zoom) {
-                            p += 13 + payloadSize;
-                            continue;
-                        }
-
-                        uint8_t priority = zoomPriority & 0x0F;
-                        if (priority >= 16) priority = 15;
-
-                        FeatureRef ref;
-                        ref.ptr = p;
-                        ref.geomType = geomType;
-                        ref.payloadSize = payloadSize;
-                        ref.coordCount = coordCount;
-                        ref.tileOffsetX = tileOffsetX;
-                        ref.tileOffsetY = tileOffsetY;
-
-                        if (geomType == 4) {
-                            if (textRefs.size() == textRefs.capacity()) {
-                                size_t needed = (textRefs.capacity() < 1 ? 1 : textRefs.capacity() * 2) * sizeof(FeatureRef);
-                                if (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < needed) {
-                                    p += 13 + payloadSize;
-                                    continue;
-                                }
-                            }
-                            textRefs.push_back(ref);
-                        } else {
-                            auto& layer = globalLayers[priority];
-                            if (layer.size() == layer.capacity()) {
-                                size_t needed = (layer.capacity() < 1 ? 1 : layer.capacity() * 2) * sizeof(FeatureRef);
-                                if (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < needed) {
-                                    p += 13 + payloadSize;
-                                    continue;
-                                }
-                            }
-                            layer.push_back(ref);
-                        }
-
-                        p += 13 + payloadSize;
-                    }
-                } // end for each region
-
+            dispatchFeatures(data, fileSize, pr.tileOffsetX, pr.tileOffsetY);
         }
 
         // Log load stats (IceNav-v3 pattern: maps.cpp:1582-1587)
@@ -1624,323 +1759,14 @@ namespace MapEngine {
     }
 
     // Render a NAV1 vector tile using IceNav-v3 patterns:
-    // - 16 priority layers (dispatch by low nibble of zoomPriority)
-    // - Mixed geometry types per layer (not separated by type)
-    // - Per-feature setClipRect to tile boundaries
-    // - startWrite()/endWrite() for SPI batching
-    // - taskYIELD() between priority layers
-    // - ringCount read as uint8_t (1 byte, matching Python tile_generator.py)
-    static bool renderNavTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map, uint8_t currentZoom) {
-        esp_task_wdt_reset();
-        uint8_t* data = nullptr;
-        size_t fileSize = 0;
-
-        // Read tile file under SPI mutex
-        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            File file = SD.open(path, FILE_READ);
-            if (file) {
-                fileSize = file.size();
-                if (fileSize >= 22) {
-                    data = (uint8_t*)ps_malloc(fileSize);
-                    if (data) {
-                        file.read(data, fileSize);
-                    } else {
-                        Serial.println("[MAP] Failed to allocate memory for tile");
-                    }
-                }
-                file.close();
-            } else {
-                Serial.printf("[MAP] Failed to open tile: %s\n", path);
-            }
-            xSemaphoreGiveRecursive(spiMutex);
-        }
-
-        if (!data) return false;
-
-        if (memcmp(data, "NAV1", 4) != 0) {
-            free(data);
-            Serial.printf("[MAP] Invalid NAV1 magic for tile: %s\n", path);
-            return false;
-        }
-
-        uint16_t feature_count;
-        memcpy(&feature_count, data + 4, 2);
-
-        map.fillSprite(map.color565(0xF2, 0xEF, 0xE9));  // OSM-style beige background
-
-        // --- Dispatch features to 16 priority layers (IceNav-v3 pattern) ---
-        for (int i = 0; i < 16; i++) globalLayers[i].clear();
-        std::vector<FeatureRef, PSRAMAllocator<FeatureRef>> textRefs;
-        textRefs.reserve(32);
-
-        uint8_t* p = data + 22;
-        for (uint16_t i = 0; i < feature_count; i++) {
-            if ((i & 63) == 0) esp_task_wdt_reset();
-            if (p + 13 > data + fileSize) break;
-
-            uint8_t geomType = p[0];
-            uint8_t zoomPriority = p[3];
-            uint16_t coordCount;
-            memcpy(&coordCount, p + 9, 2);
-            uint16_t payloadSize;
-            memcpy(&payloadSize, p + 11, 2);
-
-            if (p + 13 + payloadSize > data + fileSize) break;
-
-            // Zoom filtering (IceNav-v3 NavReader pattern):
-            // High nibble = minZoom required. Skip features too detailed for current zoom.
-            uint8_t minZoom = zoomPriority >> 4;
-            if (minZoom > currentZoom) {
-                p += 13 + payloadSize;
-                continue;
-            }
-
-            // Dispatch to priority layer (low nibble, IceNav-v3 getPriority() pattern)
-            uint8_t priority = zoomPriority & 0x0F;
-            if (priority >= 16) priority = 15;
-
-            FeatureRef ref;
-            ref.ptr = p;
-            ref.geomType = geomType;
-            ref.payloadSize = payloadSize;
-            ref.coordCount = coordCount;
-            if (geomType == 4)
-                textRefs.push_back(ref);
-            else
-                globalLayers[priority].push_back(ref);
-
-            p += 13 + payloadSize;
-        }
-
-        // --- Render all layers (IceNav-v3 pattern) ---
-        map.startWrite();
-
-        int featureCount = 0;
-        for (int pri = 0; pri < 16; pri++) {
-            if (globalLayers[pri].empty()) continue;
-
-            for (const auto& ref : globalLayers[pri]) {
-                // WDT reset every 32 features during rendering (prevents WDT timeout)
-                if ((++featureCount & 31) == 0) esp_task_wdt_reset();
-
-                uint8_t* fp = ref.ptr;
-
-                // Per-feature setClipRect to tile boundaries (IceNav-v3 pattern)
-                map.setClipRect(0, 0, MAP_TILE_SIZE, MAP_TILE_SIZE);
-
-                // BBox culling against tile
-                uint8_t bx1 = fp[5], by1 = fp[6], bx2 = fp[7], by2 = fp[8];
-                if ((int)bx2 + xOffset < 0 || (int)bx1 + xOffset > MAP_TILE_SIZE - 1 ||
-                    (int)by2 + yOffset < 0 || (int)by1 + yOffset > MAP_TILE_SIZE - 1) continue;
-
-                // Read colorRgb565 directly (LE, no byte swap — IceNav-v3 pattern)
-                uint16_t colorRgb565;
-                memcpy(&colorRgb565, fp + 1, 2);
-
-                // Render feature by geometry type (mixed per layer, IceNav-v3 pattern)
-                switch (ref.geomType) {
-                    case 3: { // Polygon — decode VarInt coords
-                        if (ref.coordCount < 3) break;
-                        decodedCoords.clear();
-                        DecodedFeature df;
-                        if (!decodeFeatureCoords(fp + 13, ref.coordCount, ref.payloadSize, ref.geomType, df)) break;
-                        int16_t* coords = decodedCoords.data() + df.coordsIdx;
-
-                        if (proj32X.capacity() < ref.coordCount) proj32X.reserve(ref.coordCount * 3 / 2);
-                        if (proj32Y.capacity() < ref.coordCount) proj32Y.reserve(ref.coordCount * 3 / 2);
-                        proj32X.resize(ref.coordCount);
-                        proj32Y.resize(ref.coordCount);
-
-                        int* px_hp = proj32X.data();
-                        int* py_hp = proj32Y.data();
-
-                        for (uint16_t j = 0; j < ref.coordCount; j++) {
-                            px_hp[j] = (int)coords[j * 2];
-                            py_hp[j] = (int)coords[j * 2 + 1];
-                        }
-
-                        if (fillPolygons) {
-                            fillPolygonGeneral(map, px_hp, py_hp, ref.coordCount,
-                                colorRgb565, xOffset, yOffset, df.ringCount, df.ringEnds);
-                        }
-
-                        // Building outline (bit 7 of fp[4]), z16+ only
-                        if ((fp[4] & 0x80) != 0 && currentZoom >= 16) {
-                            uint16_t outlineColor = darkenRGB565(colorRgb565, 0.35f);
-                            uint16_t ringStart = 0;
-                            uint16_t numRings = (df.ringCount > 0) ? df.ringCount : 1;
-                            for (uint16_t r = 0; r < numRings; r++) {
-                                uint16_t ringEnd = (df.ringEnds && r < df.ringCount) ? df.ringEnds[r] : ref.coordCount;
-                                if (ringEnd > ref.coordCount) ringEnd = ref.coordCount;
-                                for (uint16_t j = ringStart; j < ringEnd; j++) {
-                                    uint16_t next = (j + 1 < ringEnd) ? j + 1 : ringStart;
-                                    int x0 = (px_hp[j] >> 4) + xOffset;
-                                    int y0 = (py_hp[j] >> 4) + yOffset;
-                                    int x1 = (px_hp[next] >> 4) + xOffset;
-                                    int y1 = (py_hp[next] >> 4) + yOffset;
-                                    map.drawLine(x0, y0, x1, y1, outlineColor);
-                                }
-                                ringStart = ringEnd;
-                            }
-                        }
-
-                        break;
-                    }
-                    case 2: { // LineString — decode VarInt coords
-                        if (ref.coordCount < 2) break;
-                        uint8_t widthRaw = fp[4] & 0x7F;        // bits 6-0 = half-pixels
-                        if (widthRaw == 0) widthRaw = 2;         // minimum 1.0px
-                        float widthF = widthRaw / 2.0f;          // convert to pixels
-
-                        decodedCoords.clear();
-                        DecodedFeature df;
-                        if (!decodeFeatureCoords(fp + 13, ref.coordCount, ref.payloadSize, ref.geomType, df)) break;
-                        int16_t* coords = decodedCoords.data() + df.coordsIdx;
-
-                        // Pre-project with dedup (IceNav-v3 pattern)
-                        size_t numCoords = ref.coordCount;
-                        if (proj16X.capacity() < numCoords) proj16X.reserve(numCoords * 3 / 2);
-                        if (proj16Y.capacity() < numCoords) proj16Y.reserve(numCoords * 3 / 2);
-                        proj16X.resize(numCoords);
-                        proj16Y.resize(numCoords);
-
-                        int16_t* pxArr = proj16X.data();
-                        int16_t* pyArr = proj16Y.data();
-
-                        int16_t minPx = INT16_MAX, maxPx = INT16_MIN;
-                        int16_t minPy = INT16_MAX, maxPy = INT16_MIN;
-                        size_t validPoints = 0;
-                        int16_t lastPx = -32768, lastPy = -32768;
-
-                        // Simplification: skip vertices within width/2 of last kept
-                        int distThresh = (int)(widthF / 2.0f);
-                        int distThreshSq2 = distThresh * distThresh;
-                        if (distThreshSq2 < 1) distThreshSq2 = 1;
-
-                        for (size_t j = 0; j < numCoords; j++) {
-                            int16_t px = (coords[j * 2] >> 4) + xOffset;
-                            int16_t py = (coords[j * 2 + 1] >> 4) + yOffset;
-                            if (validPoints > 0) {
-                                int dx = px - lastPx;
-                                int dy = py - lastPy;
-                                if ((dx*dx + dy*dy) < distThreshSq2 && j < numCoords - 1) continue;
-                            }
-                            pxArr[validPoints] = px;
-                            pyArr[validPoints] = py;
-                            if (px < minPx) minPx = px;
-                            if (px > maxPx) maxPx = px;
-                            if (py < minPy) minPy = py;
-                            if (py > maxPy) maxPy = py;
-                            lastPx = px;
-                            lastPy = py;
-                            validPoints++;
-                        }
-
-                        if (validPoints < 2 || maxPx < 0 || minPx >= MAP_TILE_SIZE ||
-                            maxPy < 0 || minPy >= MAP_TILE_SIZE) break;
-
-                        for (size_t j = 1; j < validPoints; j++) {
-                            if (widthF <= 1.0f) {
-                                map.drawLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j], colorRgb565);
-                            } else {
-                                map.drawWideLine(pxArr[j-1], pyArr[j-1], pxArr[j], pyArr[j],
-                                                 widthF, colorRgb565);
-                                map.setClipRect(xOffset, yOffset, MAP_TILE_SIZE, MAP_TILE_SIZE);
-                            }
-                        }
-                        break;
-                    }
-                    case 1: { // Point — decode VarInt coords
-                        if (ref.coordCount < 1) break;
-                        decodedCoords.clear();
-                        DecodedFeature df;
-                        if (!decodeFeatureCoords(fp + 13, ref.coordCount, ref.payloadSize, ref.geomType, df)) break;
-                        int16_t* coords = decodedCoords.data() + df.coordsIdx;
-                        int px = (coords[0] >> 4) + xOffset;
-                        int py = (coords[1] >> 4) + yOffset;
-                        if (px >= 0 && px < MAP_TILE_SIZE && py >= 0 && py < MAP_TILE_SIZE)
-                            map.fillCircle(px, py, 3, colorRgb565);
-                        break;
-                    }
-                    case 4: { // Text label (GEOM_TEXT) — payload NOT VarInt, raw int16
-                        uint8_t fontSize = fp[4];
-                        int16_t* coords = (int16_t*)(fp + 13);
-                        int px = (coords[0] >> 4) + xOffset;
-                        int py = (coords[1] >> 4) + yOffset;
-                        uint8_t textLen = *(fp + 13 + 4);
-                        if (textLen > 0 && textLen < 128) {
-                            char textBuf[128];
-                            memcpy(textBuf, fp + 13 + 5, textLen);
-                            textBuf[textLen] = '\0';
-
-                            // Use VLW Unicode font if loaded, fallback to GFX font
-                            if (vlwFontLoaded) {
-                                map.setFont(&vlwFont);
-                                // Scale VLW font based on fontSize (0=small, 1=medium, 2=large)
-                                float scale = (fontSize == 0) ? 0.8f : (fontSize == 1) ? 1.0f : 1.2f;
-                                map.setTextSize(scale);
-                            } else {
-                                map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
-                                map.setTextSize(1);
-                            }
-                            map.setTextColor(colorRgb565);
-                            map.drawString(textBuf, px, py);
-                        }
-                        break;
-                    }
-                }
-            }
-            globalLayers[pri].clear();
-            taskYIELD();
-        }
-
-        // Label pass — on top of all geometry
-        map.clearClipRect();
-        if (vlwFontLoaded) {
-            map.setFont(&vlwFont);
-            map.setTextSize(1.0f);
-        } else {
-            map.setFont((lgfx::GFXfont*)&OpenSans_Bold6pt7b);
-            map.setTextSize(1);
-        }
-        for (const auto& ref : textRefs) {
-            uint8_t* fp = ref.ptr;
-            uint16_t colorRgb565;
-            memcpy(&colorRgb565, fp + 1, 2);
-            int16_t* coords = (int16_t*)(fp + 13);  // Text payload is raw int16, NOT VarInt
-            int px = (coords[0] >> 4) + xOffset;
-            int py = (coords[1] >> 4) + yOffset;
-            uint8_t fontSize = fp[4];
-            uint8_t textLen = *(fp + 13 + 4);
-            if (textLen == 0 || textLen >= 128) continue;
-            char textBuf[128];
-            memcpy(textBuf, fp + 13 + 5, textLen);
-            textBuf[textLen] = '\0';
-            if (vlwFontLoaded) {
-                float scale = (fontSize == 0) ? 0.8f : (fontSize == 1) ? 1.0f : 1.2f;
-                map.setTextSize(scale);
-            }
-            map.setTextColor(colorRgb565);
-            map.drawString(textBuf, px, py);
-        }
-
-        map.endWrite();
-
-        free(data);
-        return true;
-    }
-
-    // Public render dispatcher
+    // Public render dispatcher (raster only — NAV uses renderNavViewport)
     bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map, uint8_t zoom) {
         String pathStr(path);
-        if (pathStr.endsWith(".nav")) {
-            return renderNavTile(path, xOffset, yOffset, map, zoom);
-        } else if (pathStr.endsWith(".png")) {
+        if (pathStr.endsWith(".png")) {
             return renderPNGRaster(path, map);
         } else if (pathStr.endsWith(".jpg")) {
             return renderJPGRaster(path, map);
         }
-        Serial.printf("[MAP] Unknown tile type for path: %s\n", path);
         return false;
     }
 
