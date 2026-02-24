@@ -61,7 +61,10 @@ namespace UIMapManager {
     float map_center_lat = 0.0f;
     float map_center_lon = 0.0f;
     String map_current_region = "";
-    String nav_current_region = "";  // Separate region for VectMaps (.nav)
+    // Multi-region NAV support — all regions found on SD, GPS match first
+    #define NAV_MAX_REGIONS 4
+    static String navRegions[NAV_MAX_REGIONS];
+    static int navRegionCount = 0;
     bool map_follow_gps = true;  // Follow GPS or free panning mode
 
     // Negative cache for tiles not found on SD to prevent repeated lookups
@@ -1067,20 +1070,22 @@ namespace UIMapManager {
         // 2) Raster per-tile (PNG/JPG): loads tiles individually via cache
         bool hasTiles = false;
         if (STORAGE_Utils::isSDAvailable()) {
-            // Check if NAV data available: pack file first, then legacy individual tile
+            // Check if NAV data available: try each region for pack file or legacy tile
             char navCheckPath[128];
             bool isNavMode = false;
-            if (!nav_current_region.isEmpty()) {
+            if (navRegionCount > 0) {
                 if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-                    // Try NPK2 pack file first
-                    snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
-                             nav_current_region.c_str(), map_current_zoom);
-                    isNavMode = SD.exists(navCheckPath);
-                    if (!isNavMode) {
-                        // Fallback: legacy individual tile
-                        snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
-                                 nav_current_region.c_str(), map_current_zoom, centerTileX, centerTileY);
+                    for (int r = 0; r < navRegionCount && !isNavMode; r++) {
+                        // Try NPK2 pack file first
+                        snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
+                                 navRegions[r].c_str(), map_current_zoom);
                         isNavMode = SD.exists(navCheckPath);
+                        if (!isNavMode) {
+                            // Fallback: legacy individual tile
+                            snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
+                                     navRegions[r].c_str(), map_current_zoom, centerTileX, centerTileY);
+                            isNavMode = SD.exists(navCheckPath);
+                        }
                     }
                     xSemaphoreGive(spiMutex);
                 }
@@ -1102,13 +1107,17 @@ namespace UIMapManager {
                 // can take 10-30s with thousands of features (IceNav doesn't subscribe either)
                 esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
 
+                // Build region pointer array for renderNavViewport
+                const char* regionPtrs[NAV_MAX_REGIONS];
+                for (int r = 0; r < navRegionCount; r++) regionPtrs[r] = navRegions[r].c_str();
+
                 if (persistentViewportSprite) {
                     Serial.printf("[MEM] Before renderNavViewport - PSRAM free: %u KB, largest block: %u KB\n",
                                   ESP.getFreePsram() / 1024,
                                   heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
                     hasTiles = MapEngine::renderNavViewport(
                         map_center_lat, map_center_lon, (uint8_t)map_current_zoom,
-                        *persistentViewportSprite, nav_current_region.c_str());
+                        *persistentViewportSprite, regionPtrs, navRegionCount);
 
                     if (hasTiles) {
                         uint16_t* src = (uint16_t*)persistentViewportSprite->getBuffer();
@@ -1450,43 +1459,42 @@ namespace UIMapManager {
         return (ty >= hdr.y_min && ty <= hdr.y_max);
     }
 
-    // Discover the NAV region matching current GPS position from SD card (VectMaps)
-    static void discoverAndSetNavRegion() {
-        if (!nav_current_region.isEmpty()) {
-            return; // Region is already set
+    // Discover ALL NAV regions on SD card, GPS-matching region first
+    static void discoverNavRegions() {
+        if (navRegionCount > 0) {
+            return; // Already discovered
         }
 
-        Serial.println("[MAP] NAV region not set, attempting to discover...");
+        Serial.println("[MAP] Discovering NAV regions...");
 
         // Compute center tile at a mid-range zoom for bounding box check
         const int checkZoom = 10;
         int centerTX, centerTY;
         latLonToTile(map_center_lat, map_center_lon, checkZoom, &centerTX, &centerTY);
 
-        String fallback = "";  // First region found (fallback if no GPS match)
+        int gpsMatchIdx = -1;  // Index of GPS-matching region (to move to front)
 
         if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 File vectDir = SD.open("/LoRa_Tracker/VectMaps");
                 if (vectDir && vectDir.isDirectory()) {
                     File entry = vectDir.openNextFile();
-                    while(entry) {
+                    while(entry && navRegionCount < NAV_MAX_REGIONS) {
                         if (entry.isDirectory()) {
                             String dirName = String(entry.name());
                             String regionName = dirName.substring(dirName.lastIndexOf('/') + 1);
 
-                            if (fallback.isEmpty()) fallback = regionName;
+                            navRegions[navRegionCount] = regionName;
 
-                            // Check if this region covers our position
-                            if (regionContainsTile(regionName.c_str(), checkZoom, centerTX, centerTY)) {
-                                nav_current_region = regionName;
-                                Serial.printf("[MAP] Discovered NAV region by GPS: %s (tile %d/%d at Z%d)\n",
+                            // Check if this region covers our GPS position
+                            if (gpsMatchIdx < 0 && regionContainsTile(regionName.c_str(), checkZoom, centerTX, centerTY)) {
+                                gpsMatchIdx = navRegionCount;
+                                Serial.printf("[MAP] NAV region GPS match: %s (tile %d/%d at Z%d)\n",
                                               regionName.c_str(), centerTX, centerTY, checkZoom);
-                                entry.close();
-                                break;
+                            } else {
+                                Serial.printf("[MAP] NAV region found: %s\n", regionName.c_str());
                             }
-                            Serial.printf("[MAP] Region %s does not cover tile %d/%d at Z%d\n",
-                                          regionName.c_str(), centerTX, centerTY, checkZoom);
+                            navRegionCount++;
                         }
                         entry.close();
                         entry = vectDir.openNextFile();
@@ -1497,14 +1505,18 @@ namespace UIMapManager {
             xSemaphoreGive(spiMutex);
         }
 
-        // Fallback: use first region if no GPS match
-        if (nav_current_region.isEmpty() && !fallback.isEmpty()) {
-            nav_current_region = fallback;
-            Serial.printf("[MAP] No GPS match, using first NAV region: %s\n", nav_current_region.c_str());
+        // Move GPS-matching region to front of array
+        if (gpsMatchIdx > 0) {
+            String tmp = navRegions[0];
+            navRegions[0] = navRegions[gpsMatchIdx];
+            navRegions[gpsMatchIdx] = tmp;
         }
 
-        if (nav_current_region.isEmpty()) {
+        if (navRegionCount == 0) {
             Serial.println("[MAP] No NAV region found on SD card.");
+        } else {
+            Serial.printf("[MAP] Discovered %d NAV region(s), primary: %s\n",
+                          navRegionCount, navRegions[0].c_str());
         }
     }
 
@@ -1613,10 +1625,10 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
 
         // Discover and set the map region if it's not already defined
         discoverAndSetMapRegion();
-        discoverAndSetNavRegion();
+        discoverNavRegions();
 
-        Serial.printf("[MAP] Regions discovered - Maps: '%s', VectMaps: '%s'\n",
-                      map_current_region.c_str(), nav_current_region.c_str());
+        Serial.printf("[MAP] Regions discovered - Maps: '%s', VectMaps: %d region(s)\n",
+                      map_current_region.c_str(), navRegionCount);
 
         // Load Unicode font for map labels (VLW from SD)
         MapEngine::loadMapFont();
@@ -1787,20 +1799,22 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
             // Try to load tiles from SD card
             bool hasTiles = false;
             if (STORAGE_Utils::isSDAvailable()) {
-                // Check if NAV data available: pack file first, then legacy individual tile
+                // Check if NAV data available: try each region for pack file or legacy tile
                 char navCheckPath[128];
                 bool isNavMode = false;
-                if (!nav_current_region.isEmpty()) {
+                if (navRegionCount > 0) {
                     if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-                        // Try NPK2 pack file first
-                        snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
-                                 nav_current_region.c_str(), map_current_zoom);
-                        isNavMode = SD.exists(navCheckPath);
-                        if (!isNavMode) {
-                            // Fallback: legacy individual tile
-                            snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
-                                     nav_current_region.c_str(), map_current_zoom, centerTileX, centerTileY);
+                        for (int r = 0; r < navRegionCount && !isNavMode; r++) {
+                            // Try NPK2 pack file first
+                            snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
+                                     navRegions[r].c_str(), map_current_zoom);
                             isNavMode = SD.exists(navCheckPath);
+                            if (!isNavMode) {
+                                // Fallback: legacy individual tile
+                                snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
+                                         navRegions[r].c_str(), map_current_zoom, centerTileX, centerTileY);
+                                isNavMode = SD.exists(navCheckPath);
+                            }
                         }
                         xSemaphoreGive(spiMutex);
                     }
@@ -1819,13 +1833,17 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                     // Temporarily unsubscribe loopTask from WDT — rendering can take 10-30s
                     esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
 
+                    // Build region pointer array for renderNavViewport
+                    const char* regionPtrs[NAV_MAX_REGIONS];
+                    for (int r = 0; r < navRegionCount; r++) regionPtrs[r] = navRegions[r].c_str();
+
                     if (persistentViewportSprite) {
                         Serial.printf("[MEM] Before renderNavViewport - PSRAM free: %u KB, largest block: %u KB\n",
                                       ESP.getFreePsram() / 1024,
                                       heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
                         hasTiles = MapEngine::renderNavViewport(
                             map_center_lat, map_center_lon, (uint8_t)map_current_zoom,
-                            *persistentViewportSprite, nav_current_region.c_str());
+                            *persistentViewportSprite, regionPtrs, navRegionCount);
                         if (hasTiles && map_canvas_buf) {
                             uint16_t* src = (uint16_t*)persistentViewportSprite->getBuffer();
                             if (src) {

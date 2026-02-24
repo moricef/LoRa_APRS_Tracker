@@ -33,6 +33,8 @@ WiFiClient              aprsIsClient;
 bool                    aprsIsConnected     = false;
 bool                    passcodeValid       = false;
 uint32_t                lastConnectionTry   = 0;
+static IPAddress        cachedServerIP;
+static bool             dnsResolved         = false;
 
 
 namespace APRS_IS_Utils {
@@ -46,12 +48,28 @@ namespace APRS_IS_Utils {
             return;
         }
 
+        // Resolve DNS once, then reuse cached IP to avoid blocking
+        if (!dnsResolved) {
+            logger.log(logging::LoggerLevel::LOGGER_LEVEL_INFO, "APRS-IS", "Resolving %s ...",
+                       Config.aprs_is.server.c_str());
+            if (WiFi.hostByName(Config.aprs_is.server.c_str(), cachedServerIP)) {
+                dnsResolved = true;
+                logger.log(logging::LoggerLevel::LOGGER_LEVEL_INFO, "APRS-IS", "Resolved to %s",
+                           cachedServerIP.toString().c_str());
+            } else {
+                logger.log(logging::LoggerLevel::LOGGER_LEVEL_WARN, "APRS-IS", "DNS failed for %s",
+                           Config.aprs_is.server.c_str());
+                lastConnectionTry = millis();
+                return;
+            }
+        }
+
         logger.log(logging::LoggerLevel::LOGGER_LEVEL_INFO, "APRS-IS", "Connecting to %s:%d",
-                   Config.aprs_is.server.c_str(), Config.aprs_is.port);
+                   cachedServerIP.toString().c_str(), Config.aprs_is.port);
 
-        aprsIsClient.setTimeout(2);  // 2 second timeout (DNS + TCP)
+        aprsIsClient.setTimeout(2);  // 2 second TCP timeout
 
-        if (!aprsIsClient.connect(Config.aprs_is.server.c_str(), Config.aprs_is.port)) {
+        if (!aprsIsClient.connect(cachedServerIP, Config.aprs_is.port)) {
             logger.log(logging::LoggerLevel::LOGGER_LEVEL_WARN, "APRS-IS", "Connection failed");
             aprsIsClient.stop();
             aprsIsConnected = false;
@@ -126,6 +144,7 @@ namespace APRS_IS_Utils {
                 aprsIsClient.stop();
                 aprsIsConnected = false;
                 passcodeValid = false;
+                dnsResolved = false;  // Re-resolve DNS on next WiFi connection
                 logger.log(logging::LoggerLevel::LOGGER_LEVEL_INFO, "APRS-IS", "Disconnected (WiFi lost)");
             }
             return;

@@ -48,7 +48,7 @@ namespace MapEngine {
     void shrinkProjectionBuffers();
     bool loadMapFont();
     bool renderNavViewport(float centerLat, float centerLon, uint8_t zoom,
-                           LGFX_Sprite &map, const char* region);
+                           LGFX_Sprite &map, const char** regions, int regionCount);
     bool renderTile(const char* path, int16_t xOffset, int16_t yOffset, LGFX_Sprite &map, uint8_t zoom = 0);
     int findCachedTile(int zoom, int tileX, int tileY);
     void addToCache(const char* filePath, int zoom, int tileX, int tileY, LGFX_Sprite* sourceSprite);
