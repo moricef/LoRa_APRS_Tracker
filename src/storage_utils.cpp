@@ -115,6 +115,7 @@ namespace STORAGE_Utils {
                     Serial.printf("[Storage] SD card mounted (%s, %lluMB)\n",
                         typeStr, SD.cardSize() / (1024 * 1024));
 
+
                     // Create directory structure
                     createDirectoryStructure();
 

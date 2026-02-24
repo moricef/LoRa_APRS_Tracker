@@ -1082,6 +1082,12 @@ namespace UIMapManager {
                                  navRegions[r].c_str(), map_current_zoom);
                         isNavMode = SD.exists(navCheckPath);
                         if (!isNavMode) {
+                            // Try split pack (Z{z}_0.nav)
+                            snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d_0.nav",
+                                     navRegions[r].c_str(), map_current_zoom);
+                            isNavMode = SD.exists(navCheckPath);
+                        }
+                        if (!isNavMode) {
                             // Fallback: legacy individual tile
                             snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
                                      navRegions[r].c_str(), map_current_zoom, centerTileX, centerTileY);
@@ -1828,6 +1834,12 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                             snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
                                      navRegions[r].c_str(), map_current_zoom);
                             isNavMode = SD.exists(navCheckPath);
+                            if (!isNavMode) {
+                                // Try split pack (Z{z}_0.nav)
+                                snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d_0.nav",
+                                         navRegions[r].c_str(), map_current_zoom);
+                                isNavMode = SD.exists(navCheckPath);
+                            }
                             if (!isNavMode) {
                                 // Fallback: legacy individual tile
                                 snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",

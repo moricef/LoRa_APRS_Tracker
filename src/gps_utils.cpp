@@ -18,6 +18,7 @@
 
 #include <TinyGPS++.h>
 #include "TimeLib.h"
+#include <sys/time.h>
 #include <APRSPacketLib.h>
 #include "smartbeacon_utils.h"
 #include "configuration.h"
@@ -96,7 +97,19 @@ namespace GPS_Utils {
     }
 
     void setDateFromData() {
-        if (gps.time.isValid()) setTime(gps.time.hour(), gps.time.minute(), gps.time.second(), gps.date.day(), gps.date.month(), gps.date.year());
+        if (gps.time.isValid()) {
+            setTime(gps.time.hour(), gps.time.minute(), gps.time.second(), gps.date.day(), gps.date.month(), gps.date.year());
+            // Sync system clock so FAT32 timestamps use GPS time
+            struct tm t = {};
+            t.tm_year = gps.date.year() - 1900;
+            t.tm_mon  = gps.date.month() - 1;
+            t.tm_mday = gps.date.day();
+            t.tm_hour = gps.time.hour();
+            t.tm_min  = gps.time.minute();
+            t.tm_sec  = gps.time.second();
+            struct timeval tv = { .tv_sec = mktime(&t), .tv_usec = 0 };
+            settimeofday(&tv, nullptr);
+        }
     }
 
     void calculateDistanceTraveled() {

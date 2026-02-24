@@ -148,8 +148,9 @@ namespace MapEngine {
     static size_t maxCachedTiles = TILE_CACHE_SIZE;
     static uint32_t cacheAccessCounter = 0;
 
-    // --- NPK2 pack file support — multi-region slot system (max 4 open packs) ---
-    #define NPK_MAX_REGIONS 4
+    // --- NPK2 pack file support — multi-region slot system (max 8 open packs) ---
+    // 8 slots: supports 2 splits × 3 regions + margin
+    #define NPK_MAX_REGIONS 8
 
     struct NpkSlot {
         File file;
@@ -157,6 +158,7 @@ namespace MapEngine {
         UIMapManager::Npk2YEntry* yTable = nullptr;
         char region[64] = {};
         uint8_t zoom = 255;
+        uint8_t splitIdx = 0;   // 0 = single file or split #0
         bool active = false;
         uint32_t lastAccess = 0;
     };
@@ -517,6 +519,7 @@ namespace MapEngine {
         memset(&s.header, 0, sizeof(s.header));
         s.region[0] = '\0';
         s.zoom = 255;
+        s.splitIdx = 0;
         s.active = false;
         s.lastAccess = 0;
     }
@@ -528,18 +531,9 @@ namespace MapEngine {
         npkAccessCounter = 0;
     }
 
-    // Open (or reuse) an NPK pack for a given region+zoom. Returns slot pointer or nullptr.
-    static NpkSlot* openNpkRegion(const char* region, uint8_t zoom) {
-        // 1. Check for existing slot with same region+zoom
-        for (int i = 0; i < NPK_MAX_REGIONS; i++) {
-            if (npkSlots[i].active && npkSlots[i].zoom == zoom &&
-                strcmp(npkSlots[i].region, region) == 0) {
-                npkSlots[i].lastAccess = ++npkAccessCounter;
-                return &npkSlots[i];
-            }
-        }
-
-        // 2. Find a free slot
+    // Helper: allocate a slot (free or LRU-evicted), returns slot index
+    static int allocNpkSlot(const char* region, uint8_t zoom) {
+        // Find a free slot
         int slotIdx = -1;
         for (int i = 0; i < NPK_MAX_REGIONS; i++) {
             if (!npkSlots[i].active) {
@@ -547,8 +541,7 @@ namespace MapEngine {
                 break;
             }
         }
-
-        // 3. No free slot → evict LRU
+        // No free slot → evict LRU
         if (slotIdx < 0) {
             slotIdx = 0;
             uint32_t oldest = npkSlots[0].lastAccess;
@@ -558,21 +551,24 @@ namespace MapEngine {
                     slotIdx = i;
                 }
             }
-            Serial.printf("[NPK] Evicting slot %d (%s/Z%d) for %s/Z%d\n",
-                          slotIdx, npkSlots[slotIdx].region, npkSlots[slotIdx].zoom, region, zoom);
+            Serial.printf("[NPK] Evicting slot %d (%s/Z%d split%d) for %s/Z%d\n",
+                          slotIdx, npkSlots[slotIdx].region, npkSlots[slotIdx].zoom,
+                          npkSlots[slotIdx].splitIdx, region, zoom);
             closeNpkSlot(slotIdx);
         }
+        return slotIdx;
+    }
 
-        // 4. Open the pack file
+    // Helper: open an NPK2 file into a slot, read header + Y-table. Returns slot pointer.
+    static NpkSlot* openNpkFile(int slotIdx, const char* packPath, const char* region, uint8_t zoom, uint8_t splitIdx) {
         NpkSlot& s = npkSlots[slotIdx];
-        char packPath[128];
-        snprintf(packPath, sizeof(packPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
 
-        // Helper: mark slot as active (even on failure) to prevent repeated open attempts
+        // Mark slot as active (even on failure) to prevent repeated open attempts
         auto markSlot = [&]() {
             strncpy(s.region, region, sizeof(s.region) - 1);
             s.region[sizeof(s.region) - 1] = '\0';
             s.zoom = zoom;
+            s.splitIdx = splitIdx;
             s.active = true;
             s.lastAccess = ++npkAccessCounter;
         };
@@ -583,7 +579,6 @@ namespace MapEngine {
         }
 
         if (!s.file) {
-            // No pack file — mark slot to avoid retrying
             markSlot();
             return &s;  // findNpkTileInSlot will return false (no yTable)
         }
@@ -594,7 +589,7 @@ namespace MapEngine {
             Serial.printf("[NPK] Invalid magic in %s (expected NPK2)\n", packPath);
             s.file.close();
             markSlot();
-            return &s;  // Cached as "no valid NPK2 for this region/zoom"
+            return &s;
         }
 
         if (s.header.tile_count == 0 || s.header.y_max < s.header.y_min) {
@@ -627,8 +622,87 @@ namespace MapEngine {
         }
 
         markSlot();
-        Serial.printf("[NPK] Opened pack: %s (%u tiles, Y-table %u bytes)\n",
-                      packPath, s.header.tile_count, (unsigned)ytableSize);
+        Serial.printf("[NPK] Opened pack: %s (%u tiles, Y %u-%u, Y-table %u bytes)\n",
+                      packPath, s.header.tile_count, s.header.y_min, s.header.y_max, (unsigned)ytableSize);
+        return &s;
+    }
+
+    // Open (or reuse) an NPK pack for a given region+zoom+tileY. Returns slot pointer or nullptr.
+    // tileY is used to select the correct split when the pack is split into multiple files.
+    static NpkSlot* openNpkRegion(const char* region, uint8_t zoom, uint32_t tileY = 0) {
+        // 1. Check for existing slot with same region+zoom that covers tileY
+        for (int i = 0; i < NPK_MAX_REGIONS; i++) {
+            if (npkSlots[i].active && npkSlots[i].zoom == zoom &&
+                strcmp(npkSlots[i].region, region) == 0) {
+                // For slots without yTable (failed open), match any tileY
+                // For valid slots, check if tileY falls within this slot's Y-range
+                if (!npkSlots[i].yTable ||
+                    (tileY >= npkSlots[i].header.y_min && tileY <= npkSlots[i].header.y_max)) {
+                    npkSlots[i].lastAccess = ++npkAccessCounter;
+                    return &npkSlots[i];
+                }
+            }
+        }
+
+        // 2. Allocate a slot
+        int slotIdx = allocNpkSlot(region, zoom);
+
+        // 3. Try single file first: Z{z}.nav
+        char packPath[128];
+        snprintf(packPath, sizeof(packPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
+
+        bool singleExists = false;
+        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            singleExists = SD.exists(packPath);
+            xSemaphoreGiveRecursive(spiMutex);
+        }
+
+        if (singleExists) {
+            return openNpkFile(slotIdx, packPath, region, zoom, 0);
+        }
+
+        // 4. Single file absent → scan splits: Z{z}_0.nav, Z{z}_1.nav, ...
+        for (uint8_t si = 0; si < 16; si++) {
+            snprintf(packPath, sizeof(packPath), "/LoRa_Tracker/VectMaps/%s/Z%d_%d.nav", region, zoom, si);
+
+            bool splitExists = false;
+            if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                splitExists = SD.exists(packPath);
+                xSemaphoreGiveRecursive(spiMutex);
+            }
+
+            if (!splitExists) break;  // No more splits
+
+            // Read header to check Y-range without fully opening
+            UIMapManager::Npk2Header splitHeader;
+            bool headerOk = false;
+            if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                File f = SD.open(packPath, FILE_READ);
+                if (f) {
+                    headerOk = (f.read((uint8_t*)&splitHeader, sizeof(splitHeader)) == sizeof(splitHeader) &&
+                                memcmp(splitHeader.magic, "NPK2", 4) == 0);
+                    f.close();
+                }
+                xSemaphoreGiveRecursive(spiMutex);
+            }
+
+            if (!headerOk) continue;
+
+            if (tileY >= splitHeader.y_min && tileY <= splitHeader.y_max) {
+                Serial.printf("[NPK] Split Z%d_%d.nav covers tileY=%u (Y %u-%u)\n",
+                              zoom, si, tileY, splitHeader.y_min, splitHeader.y_max);
+                return openNpkFile(slotIdx, packPath, region, zoom, si);
+            }
+        }
+
+        // 5. No split covers tileY — mark slot as empty to avoid retrying
+        NpkSlot& s = npkSlots[slotIdx];
+        strncpy(s.region, region, sizeof(s.region) - 1);
+        s.region[sizeof(s.region) - 1] = '\0';
+        s.zoom = zoom;
+        s.splitIdx = 0;
+        s.active = true;
+        s.lastAccess = ++npkAccessCounter;
         return &s;
     }
 
@@ -1248,7 +1322,7 @@ namespace MapEngine {
         if (regionCount > 1) {
             // Check if the center tile actually exists in each region
             for (int r = 0; r < regionCount && r < NPK_MAX_REGIONS; r++) {
-                NpkSlot* slot = openNpkRegion(regions[r], zoom);
+                NpkSlot* slot = openNpkRegion(regions[r], zoom, (uint32_t)centerTileIdxY);
                 if (!slot || !slot->yTable) continue;
                 UIMapManager::Npk2IndexEntry dummy;
                 if (findNpkTileInSlot(slot, (uint32_t)centerTileIdxX, (uint32_t)centerTileIdxY, &dummy)) {
@@ -1378,7 +1452,7 @@ namespace MapEngine {
                         dispatchFeatures(navCache[cacheIdx].data, navCache[cacheIdx].size,
                                          tileOffsetX, tileOffsetY);
                     } else {
-                        NpkSlot* slot = openNpkRegion(activeRegions[r].name, zoom);
+                        NpkSlot* slot = openNpkRegion(activeRegions[r].name, zoom, (uint32_t)tileY);
                         UIMapManager::Npk2IndexEntry entry;
                         if (slot && findNpkTileInSlot(slot, (uint32_t)tileX, (uint32_t)tileY, &entry)
                             && pendingCount < 72) {
