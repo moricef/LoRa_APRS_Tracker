@@ -1500,7 +1500,7 @@ namespace MapEngine {
                 if (evictUnusedNavCache(tileBuffers, pr.entry.size)) {
                     readNpkTileData(pr.slot, &pr.entry, &data, &fileSize);
                 }
-                if (!data) break;  // PSRAM exhausted — stop loading
+                if (!data) continue;  // Skip this tile, try smaller ones
             }
 
             if (!data) continue;
