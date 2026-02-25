@@ -100,8 +100,10 @@ namespace UIMapManager {
     static uint8_t ownTraceHead = 0;
 
     // Forward declarations
+    void cleanup_station_buttons();
     void draw_station_traces();
     void update_station_objects();
+    void redraw_map_canvas();
 
     // Station hit zones for click detection (replaces LVGL buttons - no alloc/dealloc)
     struct StationHitZone {
@@ -148,19 +150,62 @@ namespace UIMapManager {
     static float filteredOwnLon = 0.0f;
     static bool  filteredOwnValid = false;
 
-    // Timer callback for periodic station refresh
-    // Full redraw required to clear old station icons/traces before drawing new ones.
-    // NAV cache in PSRAM avoids SD re-reads, so this is fast (~100-200ms vs 600ms cold).
+    // Lightweight station-only refresh: restore NAV background from sprite, redraw stations.
+    // Cost: ~10-50ms (memcpy 1.2MB + station icons) vs 500-3000ms for full NAV re-render.
+    static void refreshStationOverlay() {
+        if (!map_canvas || !map_canvas_buf) return;
+
+        if (navModeActive && persistentViewportSprite) {
+            // NAV mode: restore clean background from cached sprite (no station artifacts)
+            uint16_t* src = (uint16_t*)persistentViewportSprite->getBuffer();
+            if (src) {
+                memcpy(map_canvas_buf, src, MAP_CANVAS_WIDTH * MAP_CANVAS_HEIGHT * sizeof(lv_color_t));
+            }
+        } else {
+            // Raster mode: can't restore background without re-decoding PNGs → full redraw
+            redraw_map_canvas();
+            return;
+        }
+
+        cleanup_station_buttons();
+        draw_station_traces();
+        update_station_objects();
+
+        if (map_info_label) {
+            char info_text[64];
+            snprintf(info_text, sizeof(info_text), "Lat: %.4f  Lon: %.4f  Stations: %d",
+                     map_center_lat, map_center_lon, mapStationsCount);
+            lv_label_set_text(map_info_label, info_text);
+        }
+
+        lv_obj_set_pos(map_canvas, -MAP_CANVAS_MARGIN, -MAP_CANVAS_MARGIN);
+        lv_obj_invalidate(map_container);
+    }
+
+    // Timer callback for periodic station refresh.
+    // In NAV mode: skip full re-render if position/zoom unchanged — just refresh station overlay.
+    // This eliminates the 500-3000ms UI freeze every 10 seconds when stationary.
     static void map_refresh_timer_cb(lv_timer_t* timer) {
         if (screen_map && lv_scr_act() == screen_map
             && !touch_dragging && !redraw_in_progress) {
+            float prevLat = map_center_lat;
+            float prevLon = map_center_lon;
+
             // Follow GPS: update map center with filtered position before redraw
             if (map_follow_gps && filteredOwnValid) {
                 map_center_lat = filteredOwnLat;
                 map_center_lon = filteredOwnLon;
             }
-            Serial.println("[MAP] Periodic refresh (full redraw)");
-            redraw_map_canvas();
+
+            bool posChanged = (map_center_lat != prevLat || map_center_lon != prevLon);
+
+            if (posChanged) {
+                Serial.println("[MAP] Periodic refresh (GPS moved, full redraw)");
+                redraw_map_canvas();
+            } else {
+                Serial.println("[MAP] Periodic refresh (station overlay only)");
+                refreshStationOverlay();
+            }
         }
     }
 
@@ -1075,7 +1120,7 @@ namespace UIMapManager {
             char navCheckPath[128];
             bool isNavMode = false;
             if (navRegionCount > 0 && map_current_zoom >= 9) {
-                if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+                if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
                     for (int r = 0; r < navRegionCount && !isNavMode; r++) {
                         // Try NPK2 pack file first
                         snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
@@ -1095,6 +1140,8 @@ namespace UIMapManager {
                         }
                     }
                     xSemaphoreGive(spiMutex);
+                } else {
+                    Serial.printf("[NAV] isNavMode check TIMEOUT (spiMutex busy) at Z%d\n", map_current_zoom);
                 }
             }
 
@@ -1828,7 +1875,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                 char navCheckPath[128];
                 bool isNavMode = false;
                 if (navRegionCount > 0 && map_current_zoom >= 9) {
-                    if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+                    if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
                         for (int r = 0; r < navRegionCount && !isNavMode; r++) {
                             // Try NPK2 pack file first
                             snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
@@ -1848,6 +1895,8 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
                             }
                         }
                         xSemaphoreGive(spiMutex);
+                    } else {
+                        Serial.printf("[NAV] isNavMode check TIMEOUT (spiMutex busy) at Z%d\n", map_current_zoom);
                     }
                 }
 
