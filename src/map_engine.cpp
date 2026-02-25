@@ -1286,25 +1286,20 @@ namespace MapEngine {
         std::sort(tileOrder, tileOrder + tileCount,
                   [](const TileSlot& a, const TileSlot& b) { return a.distSq < b.distSq; });
 
-        // Pre-evict navCache entries outside the current viewport grid to reduce
-        // PSRAM fragmentation before loading new tiles (proactive vs reactive eviction)
+        // Pre-evict navCache entries from a different zoom level (useless after zoom change).
+        // Grid-based eviction removed: nearby tiles are kept for cache hits on next pan.
+        // Phase 3 eviction (LRU) handles PSRAM pressure when loading new tiles.
         {
-            int gridMinX = centerTileIdxX + minDx;
-            int gridMaxX = centerTileIdxX + maxDx;
-            int gridMinY = centerTileIdxY + minDy;
-            int gridMaxY = centerTileIdxY + maxDy;
             int preEvicted = 0;
             for (int i = (int)navCache.size() - 1; i >= 0; i--) {
-                if (navCache[i].zoom != zoom ||
-                    navCache[i].tileX < gridMinX || navCache[i].tileX > gridMaxX ||
-                    navCache[i].tileY < gridMinY || navCache[i].tileY > gridMaxY) {
+                if (navCache[i].zoom != zoom) {
                     free(navCache[i].data);
                     navCache.erase(navCache.begin() + i);
                     preEvicted++;
                 }
             }
             if (preEvicted > 0) {
-                Serial.printf("[NAV-CACHE] Pre-evicted %d out-of-viewport entries, free: %u KB, largest: %u KB\n",
+                Serial.printf("[NAV-CACHE] Pre-evicted %d wrong-zoom entries, free: %u KB, largest: %u KB\n",
                               preEvicted, (unsigned)(ESP.getFreePsram() / 1024),
                               (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
             }

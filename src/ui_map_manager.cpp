@@ -179,7 +179,8 @@ namespace UIMapManager {
         }
 
         lv_obj_set_pos(map_canvas, -MAP_CANVAS_MARGIN, -MAP_CANVAS_MARGIN);
-        lv_obj_invalidate(map_container);
+        lv_canvas_set_buffer(map_canvas, map_canvas_buf, MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT, LV_IMG_CF_TRUE_COLOR);
+        lv_obj_invalidate(map_canvas);
     }
 
     // Timer callback for periodic station refresh.
@@ -1235,8 +1236,11 @@ namespace UIMapManager {
         // Recenter canvas after drawing new tiles (avoids visual jump)
         lv_obj_set_pos(map_canvas, -MAP_CANVAS_MARGIN, -MAP_CANVAS_MARGIN);
 
-        // Force container update (needed for touch pan to work)
-        lv_obj_invalidate(map_container);
+        // Force LVGL to re-read the canvas buffer after direct memcpy writes.
+        // Without lv_canvas_set_buffer, LVGL may use a stale cached state and
+        // not repaint tiles that were written via memcpy (not lv_canvas_draw_*).
+        lv_canvas_set_buffer(map_canvas, map_canvas_buf, MAP_CANVAS_WIDTH, MAP_CANVAS_HEIGHT, LV_IMG_CF_TRUE_COLOR);
+        lv_obj_invalidate(map_canvas);
 
         // Reset periodic refresh timer so it doesn't fire right after this redraw
         // (avoids double-blocking: pan redraw 600ms + immediate periodic refresh 600ms)
