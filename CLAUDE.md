@@ -30,8 +30,10 @@ See `VERSIONING.md` for full details and history.
 
 ## Rôles
 
-- **Claude** : Écriture et modification du code uniquement. **NE JAMAIS compiler** (`pio run`).
-- **Utilisateur** : Compilation (`pio run`) et upload (`pio run -t upload`). C'est l'utilisateur qui compile, pas Claude.
+- **Claude** : Écriture et modification du code uniquement. **NE JAMAIS compiler**.
+- **Utilisateur** : Compilation et upload. C'est l'utilisateur qui compile, pas Claude.
+  - Compilation : `~/.platformio/penv/bin/pio run -e ttgo_t_deck_plus_433`
+  - Upload : `~/.platformio/penv/bin/pio run -e ttgo_t_deck_plus_433 -t upload`
 
 ## Méthodologie debug
 

@@ -29,7 +29,7 @@ bool Configuration::writeFile() {
 
     Serial.println("Saving config..");
 
-    StaticJsonDocument<3584> data;
+    DynamicJsonDocument data(8192);
     File configFile = SPIFFS.open("/tracker_conf.json", "w");
 
     if (!configFile) {
@@ -149,6 +149,12 @@ bool Configuration::writeFile() {
         data["other"]["disableGPS"]                 = disableGPS;
         data["other"]["email"]                      = email;
 
+        if (data.overflowed()) {
+            Serial.println("Error: JSON buffer overflow! Config truncated.");
+            configFile.close();
+            return false;
+        }
+
         serializeJson(data, configFile);
         configFile.close();
         return true;
@@ -165,7 +171,7 @@ bool Configuration::readFile() {
 
     if (configFile) {
         bool needsRewrite = false;
-        StaticJsonDocument<3584> data;
+        DynamicJsonDocument data(8192);
 
         DeserializationError error = deserializeJson(data, configFile);
         if (error) {
@@ -244,21 +250,14 @@ bool Configuration::readFile() {
             loraType.codingRate4        = LoraTypesArray[j]["codingRate4"] | 5;
             loraType.power              = LoraTypesArray[j]["power"] | 20;
 
-            // 1. Physical bitrate formula: BW * (SF / 2^SF) * (4 / CR)
-            double bw = (double)loraType.signalBandwidth;
-            double sf = (double)loraType.spreadingFactor;
-            double cr = (double)loraType.codingRate4;
-            double rawBps = bw * (sf / pow(2.0, sf)) * (4.0 / cr);
-
-            // 2. Mapping to nominal standard rates for UI display
-            // This ensures SF9/CR7 (~1256bps) maps to 1200, SF12/CR5 (~293bps) to 300, etc.
-            if (rawBps < 250)        loraType.dataRate = 183;  // SF12, CR4:8
-            else if (rawBps < 450)   loraType.dataRate = 300;  // SF12, CR4:5
-            else if (rawBps < 900)   loraType.dataRate = 600;  // SF11, CR4:5
-            else if (rawBps < 1800)  loraType.dataRate = 1200; // SF10, CR4:5 or SF9, CR4:7
-            else if (rawBps < 3600)  loraType.dataRate = 2400; // SF9, CR4:5
-            else if (rawBps < 7200)  loraType.dataRate = 4800; // SF8, CR4:5
-            else                     loraType.dataRate = 9600; // SF7, CR4:5
+            // Map SF+CR4 to nominal data rate for the 6 standard presets
+            if      (loraType.spreadingFactor == 12 && loraType.codingRate4 == 5) loraType.dataRate = 300;
+            else if (loraType.spreadingFactor == 12 && loraType.codingRate4 == 6) loraType.dataRate = 244;
+            else if (loraType.spreadingFactor == 12 && loraType.codingRate4 == 7) loraType.dataRate = 209;
+            else if (loraType.spreadingFactor == 12 && loraType.codingRate4 == 8) loraType.dataRate = 183;
+            else if (loraType.spreadingFactor == 10 && loraType.codingRate4 == 8) loraType.dataRate = 610;
+            else if (loraType.spreadingFactor == 9  && loraType.codingRate4 == 7) loraType.dataRate = 1200;
+            else                                                                  loraType.dataRate = 300;
 
             loraTypes.push_back(loraType);
         }
@@ -412,19 +411,21 @@ void Configuration::setDefaultValues() {
     wifiAutoAP.timeout              = 10;
     wifiEnabled                     = true;  // WiFi enabled by default
 
-    for (int i = 0; i < 3; i++) {
-        Beacon beacon;
-        beacon.callsign             = "NOCALL-7";
-        beacon.symbol               = "[";
-        beacon.overlay              = "/";
-        beacon.micE                 = "";
-        beacon.comment              = "";
-        beacon.smartBeaconActive    = true;
-        beacon.smartBeaconSetting   = 0;
-        beacon.gpsEcoMode           = false;
-        beacon.profileLabel         = "";
-        beacon.status               = "";
-        beacons.push_back(beacon);
+    {
+        Beacon b1;
+        b1.callsign = "NOCALL-7"; b1.symbol = "["; b1.overlay = "/";
+        b1.smartBeaconActive = true; b1.smartBeaconSetting = 0; b1.gpsEcoMode = false;
+        beacons.push_back(b1);
+
+        Beacon b2;
+        b2.callsign = "NOCALL-8"; b2.symbol = "<"; b2.overlay = "/";
+        b2.smartBeaconActive = true; b2.smartBeaconSetting = 1; b2.gpsEcoMode = false;
+        beacons.push_back(b2);
+
+        Beacon b3;
+        b3.callsign = "NOCALL-9"; b3.symbol = ">"; b3.overlay = "/";
+        b3.smartBeaconActive = true; b3.smartBeaconSetting = 2; b3.gpsEcoMode = false;
+        beacons.push_back(b3);
     }
 
     display.ecoMode                 = false;
@@ -532,21 +533,19 @@ void Configuration::setDefaultValues() {
 }
 
 Configuration::Configuration() {
-    if (!SPIFFS.begin(true)) {  // true = format on first boot
-        Serial.println("SPIFFS Mount Failed - using defaults");
-        setDefaultValues();  // Set defaults so vectors aren't empty
-        return;
+    // No SPIFFS access here — global constructor runs before FreeRTOS.
+    // Just load defaults. init() will be called from setup() to load from SPIFFS.
+    setDefaultValues();
+}
+
+void Configuration::init() {
+    // Called from setup() after STORAGE_Utils::setup() has mounted/formatted SPIFFS.
+    if (SPIFFS.exists("/tracker_conf.json")) {
+        beacons.clear();
+        wifiAPs.clear();
+        loraTypes.clear();
+        readFile();
     } else {
-        Serial.println("SPIFFS Mounted");
-    }
-
-    bool exists = SPIFFS.exists("/tracker_conf.json");
-    if (!exists) {
-        setDefaultValues();
         writeFile();
-        delay(1000);
-        ESP.restart();
     }
-
-    readFile();
 }

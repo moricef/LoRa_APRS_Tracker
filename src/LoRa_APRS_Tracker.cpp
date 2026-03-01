@@ -174,11 +174,15 @@ void setup() {
         startupScreen(loraIndex, versionDate);
     #endif
 
+    // Storage + Config first: SPIFFS must be ready before WiFi/BLE read Config
+    #ifdef USE_LVGL_UI
+        LVGL_UI::updateInitStatus("Storage...");
+    #endif
+    STORAGE_Utils::setup();        // Formats SPIFFS on first boot
+    Config.init();                 // Now SPIFFS is ready, load or create config
+    STORAGE_Utils::loadStats();
+
     // WiFi/BLE coexistence: WiFi first, then BLE
-    // Start WiFi setup - will enter blocking web-conf mode if:
-    // - NOCALL callsign (fresh install)
-    // - No WiFi configured
-    // - wifiAutoAP.active flag set
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("WiFi...");
     #endif
@@ -197,12 +201,6 @@ void setup() {
             #endif
         }
     }
-
-    #ifdef USE_LVGL_UI
-        LVGL_UI::updateInitStatus("Storage...");
-    #endif
-    STORAGE_Utils::setup();
-    STORAGE_Utils::loadStats();
     MSG_Utils::loadNumMessages();
 
     // Initialize SD logger for debugging reboots

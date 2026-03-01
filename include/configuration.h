@@ -171,6 +171,7 @@ public:
 
     void setDefaultValues();
     bool writeFile();
+    void init();
     Configuration();
 
 private:

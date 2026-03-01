@@ -226,11 +226,14 @@ function loadSettings(settings) {
         const loraElement = document.createElement("div");
         loraElement.classList.add("row", "lora", "border-bottom", "py-2");
 
+        // Build dataRate key from current SF+CR4 to pre-select the right option
+        const drKey = `${lora.spreadingFactor}_${lora.codingRate4}`;
+
         loraElement.innerHTML = `
             <div class="col-1 px-1 mb-2 d-flex align-items-center">
                 <strong>${displayIndex})</strong>
             </div>
-            <div class="form-floating col-6 col-md-3 px-1 mb-2">
+            <div class="form-floating col-5 col-md-3 px-1 mb-2">
                 <input
                     type="number"
                     class="form-control form-control-sm"
@@ -242,38 +245,30 @@ function loadSettings(settings) {
                     title="${freqMinMHz}-${freqMaxMHz} MHz">
                 <label for="lora.${index}.frequency">Freq (${freqMinMHz}-${freqMaxMHz})</label>
             </div>
-            <div class="form-floating col-4 col-md-2 px-1 mb-2">
-                <input 
-                    type="number" 
-                    class="form-control form-control-sm" 
-                    name="lora.${index}.spreadingFactor" 
-                    id="lora.${index}.spreadingFactor" 
-                    value="${lora.spreadingFactor}"
-                    min="7"
-                    max="12">
-                <label for="lora.${index}.spreadingFactor">SF</label>
+            <div class="form-floating col-6 col-md-5 px-1 mb-2">
+                <select
+                    class="form-select form-select-sm"
+                    name="lora.${index}.dataRate"
+                    id="lora.${index}.dataRate">
+                    <option value="300"  ${drKey === "12_5" ? "selected" : ""}>SF12 CR4:5 — 300 bps</option>
+                    <option value="244"  ${drKey === "12_6" ? "selected" : ""}>SF12 CR4:6 — 244 bps</option>
+                    <option value="209"  ${drKey === "12_7" ? "selected" : ""}>SF12 CR4:7 — 209 bps</option>
+                    <option value="183"  ${drKey === "12_8" ? "selected" : ""}>SF12 CR4:8 — 183 bps</option>
+                    <option value="610"  ${drKey === "10_8" ? "selected" : ""}>SF10 CR4:8 — 610 bps</option>
+                    <option value="1200" ${drKey === "9_7"  ? "selected" : ""}>SF9  CR4:7 — 1200 bps</option>
+                </select>
+                <label for="lora.${index}.dataRate">Data Rate</label>
             </div>
-            <div class="form-floating col-4 col-md-2 px-1 mb-2">
-                <input 
-                    type="number" 
-                    class="form-control form-control-sm" 
-                    name="lora.${index}.codingRate4" 
-                    id="lora.${index}.codingRate4" 
-                    value="${lora.codingRate4}"
-                    min="5"
-                    max="8">
-                <label for="lora.${index}.codingRate4">CR4</label>
-            </div>
-            <div class="form-floating col-4 col-md-2 px-1 mb-2">
-                <input 
-                    type="number" 
-                    class="form-control form-control-sm" 
-                    name="lora.${index}.signalBandwidth" 
-                    id="lora.${index}.signalBandwidth" 
-                    value="${lora.signalBandwidth}"
-                    min="62500"
-                    max="500000">
-                <label for="lora.${index}.signalBandwidth">BW</label>
+            <div class="form-floating col-3 col-md-2 px-1 mb-2">
+                <input
+                    type="number"
+                    class="form-control form-control-sm"
+                    name="lora.${index}.power"
+                    id="lora.${index}.power"
+                    value="${lora.power}"
+                    min="1"
+                    max="22">
+                <label for="lora.${index}.power">Power (dBm)</label>
             </div>
         `;
         loraContainer.appendChild(loraElement);

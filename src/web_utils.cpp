@@ -86,7 +86,7 @@ namespace WEB_Utils {
         file.close();
 
         // Add board-specific frequency limits dynamically
-        StaticJsonDocument<4096> doc;
+        DynamicJsonDocument doc(8192);
         DeserializationError error = deserializeJson(doc, fileContent);
         if (!error) {
             #if defined(LORA_FREQ_MIN) && defined(LORA_FREQ_MAX)
@@ -217,10 +217,19 @@ namespace WEB_Utils {
         // LORA
         for (int i = 0; i < 4; i++) {
             Config.loraTypes[i].frequency       = getParamDoubleSafe("lora." + String(i) + ".frequency", Config.loraTypes[i].frequency);
-            Config.loraTypes[i].spreadingFactor = getParamIntSafe("lora." + String(i) + ".spreadingFactor", Config.loraTypes[i].spreadingFactor);
-            Config.loraTypes[i].codingRate4     = getParamIntSafe("lora." + String(i) + ".codingRate4", Config.loraTypes[i].codingRate4);
-            Config.loraTypes[i].signalBandwidth = getParamIntSafe("lora." + String(i) + ".signalBandwidth", Config.loraTypes[i].signalBandwidth);
-            Config.loraTypes[i].dataRate        = getParamIntSafe("lora." + String(i) + ".dataRate", Config.loraTypes[i].dataRate);
+            int dataRate                        = getParamIntSafe("lora." + String(i) + ".dataRate", Config.loraTypes[i].dataRate);
+            Config.loraTypes[i].dataRate        = dataRate;
+            Config.loraTypes[i].signalBandwidth = 125000;
+            switch (dataRate) {
+                case 300:  Config.loraTypes[i].spreadingFactor = 12; Config.loraTypes[i].codingRate4 = 5; break;
+                case 244:  Config.loraTypes[i].spreadingFactor = 12; Config.loraTypes[i].codingRate4 = 6; break;
+                case 209:  Config.loraTypes[i].spreadingFactor = 12; Config.loraTypes[i].codingRate4 = 7; break;
+                case 183:  Config.loraTypes[i].spreadingFactor = 12; Config.loraTypes[i].codingRate4 = 8; break;
+                case 610:  Config.loraTypes[i].spreadingFactor = 10; Config.loraTypes[i].codingRate4 = 8; break;
+                case 1200: Config.loraTypes[i].spreadingFactor = 9;  Config.loraTypes[i].codingRate4 = 7; break;
+                default:   Config.loraTypes[i].spreadingFactor = 12; Config.loraTypes[i].codingRate4 = 5; dataRate = 300; break;
+            }
+            Config.loraTypes[i].power           = getParamIntSafe("lora." + String(i) + ".power", Config.loraTypes[i].power);
         }
 
         //  Battery
