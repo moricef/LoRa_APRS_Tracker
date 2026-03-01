@@ -8,8 +8,7 @@
       "parts": [
         { "path": "firmware/devel/bootloader.bin", "offset": 0 },
         { "path": "firmware/devel/partitions.bin", "offset": 32768 },
-        { "path": "firmware/devel/firmware.bin", "offset": 65536 },
-        { "path": "firmware/devel/spiffs.bin", "offset": 3211264 }
+        { "path": "firmware/devel/firmware.bin", "offset": 65536 }
       ]
     }
   ]
