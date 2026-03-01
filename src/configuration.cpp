@@ -532,7 +532,7 @@ void Configuration::setDefaultValues() {
 }
 
 Configuration::Configuration() {
-    if (!SPIFFS.begin(false)) {
+    if (!SPIFFS.begin(true)) {  // true = format on first boot
         Serial.println("SPIFFS Mount Failed - using defaults");
         setDefaultValues();  // Set defaults so vectors aren't empty
         return;
