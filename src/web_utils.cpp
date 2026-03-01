@@ -195,7 +195,7 @@ namespace WEB_Utils {
         }
 
         // LORA
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < (int)Config.loraTypes.size(); i++) {
             Config.loraTypes[i].frequency       = getParamDoubleSafe("lora." + String(i) + ".frequency", Config.loraTypes[i].frequency);
             int dataRate                        = getParamIntSafe("lora." + String(i) + ".dataRate", Config.loraTypes[i].dataRate);
             Config.loraTypes[i].dataRate        = dataRate;

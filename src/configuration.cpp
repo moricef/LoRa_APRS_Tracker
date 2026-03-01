@@ -448,38 +448,30 @@ void Configuration::setDefaultValues() {
     aprs_is.port                    = 14580;
     aprs_is.passcode                = "-1";
 
-    for (int j = 0; j < 4; j++) {
-        LoraType loraType;
-        switch (j) {
-            case 0:  // EU
-                loraType.frequency           = 433775000;
-                loraType.spreadingFactor     = 12;
-                loraType.codingRate4         = 5;
-                loraType.dataRate            = 300;    // SF12, CR4/5
-                break;
-            case 1:  // PL
-                loraType.frequency           = 434855000;
-                loraType.spreadingFactor     = 9;
-                loraType.codingRate4         = 7;
-                loraType.dataRate            = 1200;   // SF9, CR4/7
-                break;
-            case 2:  // UK
-                loraType.frequency           = 439912500;
-                loraType.spreadingFactor     = 12;
-                loraType.codingRate4         = 5;
-                loraType.dataRate            = 300;    // SF12, CR4/5
-                break;
-            case 3:  // US
-                loraType.frequency           = 915000000;
-                loraType.spreadingFactor     = 12;
-                loraType.codingRate4         = 5;
-                loraType.dataRate            = 300;    // SF12, CR4/5
-                break;
-        }
-        loraType.signalBandwidth    = 125000;
-        loraType.power              = 20;
-        loraTypes.push_back(loraType);
-    }
+    auto addLoraType = [&](long freq, int sf, int cr4, int dataRate) {
+        LoraType lt;
+        lt.frequency        = freq;
+        lt.spreadingFactor  = sf;
+        lt.codingRate4      = cr4;
+        lt.signalBandwidth  = 125000;
+        lt.power            = 20;
+        lt.dataRate         = dataRate;
+        loraTypes.push_back(lt);
+    };
+
+    #if defined(LORA_FREQ_MIN) && LORA_FREQ_MIN < 500000000
+        // 433 MHz boards: EU, PL, UK
+        addLoraType(433775000, 12, 5, 300);   // EU  — SF12 CR4:5
+        addLoraType(434855000,  9, 7, 1200);  // PL  — SF9  CR4:7
+        addLoraType(439912500, 12, 5, 300);   // UK  — SF12 CR4:5
+    #elif defined(LORA_FREQ_MIN) && LORA_FREQ_MIN >= 800000000
+        // 868/915 MHz boards: EU868, US915
+        addLoraType(868200000, 12, 5, 300);   // EU868
+        addLoraType(915000000, 12, 5, 300);   // US915
+    #else
+        // Fallback: EU 433
+        addLoraType(433775000, 12, 5, 300);
+    #endif
 
     battery.sendVoltage             = false;
     battery.voltageAsTelemetry      = false;
