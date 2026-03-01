@@ -148,37 +148,17 @@ namespace WEB_Utils {
 
         //  Beacons
         for (int i = 0; i < 3; i++) {
-            Config.beacons[i].callsign      = request->getParam("beacons." + String(i) + ".callsign", true)->value();
-            Config.beacons[i].symbol        = request->getParam("beacons." + String(i) + ".symbol", true)->value();
-            Config.beacons[i].overlay       = request->getParam("beacons." + String(i) + ".overlay", true)->value();
-            Config.beacons[i].micE          = request->getParam("beacons." + String(i) + ".micE", true)->value();
-            Config.beacons[i].comment       = request->getParam("beacons." + String(i) + ".comment", true)->value();
-            Config.beacons[i].status        = request->getParam("beacons." + String(i) + ".status", true)->value();
-            Config.beacons[i].profileLabel  = request->getParam("beacons." + String(i) + ".profileLabel", true)->value();
-
-            String paramGpsEcoMode = "beacons." + String(i) + ".gpsEcoMode";
-            if (request->hasParam(paramGpsEcoMode, true)) {
-                String paramGpsEcoModeValue = request->getParam(paramGpsEcoMode, true)->value();
-                if (paramGpsEcoModeValue == "1") {
-                    Config.beacons[i].gpsEcoMode = true;
-                } else {
-                    Config.beacons[i].gpsEcoMode = false;
-                }
-            } else {
-                Config.beacons[i].gpsEcoMode = false;
-            }
-            String paramSmartBeaconActive = "beacons." + String(i) + ".smartBeaconActive";
-            if (request->hasParam(paramSmartBeaconActive, true)) {
-                String paramSmartBeaconActiveValue = request->getParam(paramSmartBeaconActive, true)->value();
-                if (paramSmartBeaconActiveValue == "1") {
-                    Config.beacons[i].smartBeaconActive = true;
-                } else {
-                    Config.beacons[i].smartBeaconActive = false;
-                }
-            } else {
-                Config.beacons[i].smartBeaconActive = false;
-            }
-            Config.beacons[i].smartBeaconSetting    = request->getParam("beacons." + String(i) + ".smartBeaconSetting", true)->value().toInt();
+            String prefix = "beacons." + String(i) + ".";
+            Config.beacons[i].callsign          = getParamStringSafe(prefix + "callsign", Config.beacons[i].callsign);
+            Config.beacons[i].symbol            = getParamStringSafe(prefix + "symbol", Config.beacons[i].symbol);
+            Config.beacons[i].overlay           = getParamStringSafe(prefix + "overlay", Config.beacons[i].overlay);
+            Config.beacons[i].micE              = getParamStringSafe(prefix + "micE", Config.beacons[i].micE);
+            Config.beacons[i].comment           = getParamStringSafe(prefix + "comment", Config.beacons[i].comment);
+            Config.beacons[i].status            = getParamStringSafe(prefix + "status", Config.beacons[i].status);
+            Config.beacons[i].profileLabel      = getParamStringSafe(prefix + "profileLabel", Config.beacons[i].profileLabel);
+            Config.beacons[i].gpsEcoMode        = request->hasParam(prefix + "gpsEcoMode", true);
+            Config.beacons[i].smartBeaconActive = request->hasParam(prefix + "smartBeaconActive", true);
+            Config.beacons[i].smartBeaconSetting = getParamIntSafe(prefix + "smartBeaconSetting", Config.beacons[i].smartBeaconSetting);
         }
         
         //  Station Config
