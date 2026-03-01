@@ -311,6 +311,15 @@ namespace WIFI_Utils {
         #endif
     }
 
+    void stop() {
+        Serial.println("[WiFi] Stopping WiFi for BLE coexistence");
+        WiFi.disconnect(true);
+        esp_wifi_stop();
+        WiFiConnected = false;
+        wifiConnecting = false;
+        WiFiEcoMode = false;
+    }
+
     bool isConnected() {
         return WiFiConnected;
     }

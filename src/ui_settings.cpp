@@ -1522,23 +1522,12 @@ static void ble_setup_timer_cb(lv_timer_t *timer) {
     const uint32_t MIN_CONTIGUOUS_HEAP_FOR_BLE = 40 * 1024;
 
     if (Config.bluetooth.useBLE) {
-        if (largestBlock < MIN_CONTIGUOUS_HEAP_FOR_BLE) {
-            Serial.printf("[UISettings] WARNING: Insufficient contiguous memory (%u bytes) for BLE init. Aborting.\n",
-                          largestBlock);
-            if (bluetooth_status_label) {
-                lv_label_set_text(bluetooth_status_label, "Failed (Mem)");
-                lv_obj_set_style_text_color(bluetooth_status_label, lv_color_hex(0xff6b6b), 0);
-            }
-            if (bluetooth_switch) {
-                lv_obj_clear_state(bluetooth_switch, LV_STATE_CHECKED);
-            }
-            bluetoothActive = false;
-            Config.bluetooth.useBLE = false;
-            Config.writeFile();
-        } else {
-            BLE_Utils::setup();
-            Serial.printf("[UISettings] BLE setup done (deferred). Free heap: %u bytes\n", ESP.getFreeHeap());
-        }
+        // Stop WiFi to free DRAM for BLE
+        WIFI_Utils::stop();
+        Serial.printf("[UISettings] WiFi stopped. Free heap: %u bytes\n", ESP.getFreeHeap());
+
+        BLE_Utils::setup();
+        Serial.printf("[UISettings] BLE setup done (deferred). Free heap: %u bytes\n", ESP.getFreeHeap());
     }
     lv_timer_del(timer);
 }
@@ -1549,6 +1538,13 @@ static void ble_stop_timer_cb(lv_timer_t *timer) {
         BLE_Utils::stop();
         Serial.printf("[UISettings] BLE stop done (deferred). Free heap: %u bytes\n", ESP.getFreeHeap());
     }
+
+    // Restart WiFi after BLE release
+    if (Config.wifiEnabled) {
+        WIFI_Utils::startStationMode();
+        Serial.println("[UISettings] WiFi restarted after BLE stop");
+    }
+
     lv_timer_del(timer);
 }
 

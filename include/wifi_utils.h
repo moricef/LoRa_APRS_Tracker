@@ -27,6 +27,7 @@ namespace WIFI_Utils {
     void checkWiFi();
     void startBlockingWebConfig();
     void startStationMode();
+    void stop();
     void setup();
     bool needsWebConfig();
     bool isConnected();

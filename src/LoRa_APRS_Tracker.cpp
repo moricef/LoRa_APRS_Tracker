@@ -182,25 +182,11 @@ void setup() {
     Config.init();                 // Now SPIFFS is ready, load or create config
     STORAGE_Utils::loadStats();
 
-    // WiFi/BLE coexistence: WiFi first, then BLE
+    // Always start WiFi at boot — BLE is manual-only via Settings
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("WiFi...");
     #endif
     WIFI_Utils::setup();
-
-    // Then start BLE if active
-    if (bluetoothActive) {
-        #ifdef USE_LVGL_UI
-            LVGL_UI::updateInitStatus("Bluetooth...");
-        #endif
-        if (Config.bluetooth.useBLE) {
-            BLE_Utils::setup();
-        } else {
-            #ifdef HAS_BT_CLASSIC
-                BLUETOOTH_Utils::setup();
-            #endif
-        }
-    }
     MSG_Utils::loadNumMessages();
 
     // Initialize SD logger for debugging reboots
