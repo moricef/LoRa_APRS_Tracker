@@ -86,27 +86,11 @@
     <h2>Firmware Installation</h2>
     <p>Connect your T-Deck Plus via USB and click the button:</p>
 
-    <label style="display:inline-flex; align-items:center; gap:8px; margin-bottom:15px; cursor:pointer; user-select:none;">
-      <input type="checkbox" id="erase-toggle" style="width:18px; height:18px; cursor:pointer;">
-      <span>Erase all data (reset config)</span>
-    </label>
-
-    <esp-web-install-button id="install-btn" class="install-btn" manifest="manifest-devel.json">
+    <esp-web-install-button class="install-btn" manifest="manifest-devel.json">
       <button slot="activate">Install Firmware</button>
       <span slot="unsupported">Browser not supported. Use Chrome, Edge, or Chromium.</span>
       <span slot="not-allowed">USB access not authorized.</span>
     </esp-web-install-button>
-
-    <script>
-      document.getElementById('erase-toggle').addEventListener('change', function() {
-        const btn = document.getElementById('install-btn');
-        if (this.checked) {
-          btn.setAttribute('erase-first', '');
-        } else {
-          btn.removeAttribute('erase-first');
-        }
-      });
-    </script>
   </div>
 
   <div class="warning">
