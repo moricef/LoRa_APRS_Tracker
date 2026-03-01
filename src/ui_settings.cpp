@@ -13,6 +13,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include <WiFi.h>
+#include <esp_task_wdt.h>
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>
 #include <math.h>
@@ -1729,12 +1730,26 @@ void UISettings::createBluetoothScreen() {
 // =============================================================================
 
 static void webconf_reboot_cb(lv_event_t *e) {
+    Serial.println("[UISettings] Reboot button pressed!");
     webconf_reboot_requested = true;
 }
 
+// Flag to defer openWebConf() outside lv_timer_handler() context
+volatile bool webconf_pending = false;
+
 static void setup_item_webconf(lv_event_t *e) {
     Serial.println("[UISettings] Web-Conf Mode selected");
-    UISettings::openWebConf();
+    // Set flag — actual openWebConf() runs from LVGL_UI::loop() to avoid reentrancy
+    webconf_pending = true;
+}
+
+bool UISettings::checkPendingWebConf() {
+    if (webconf_pending) {
+        webconf_pending = false;
+        openWebConf();
+        return true;  // blocking — never actually returns until reboot
+    }
+    return false;
 }
 
 void UISettings::openWebConf() {
@@ -1834,6 +1849,7 @@ void UISettings::openWebConf() {
             lv_tick_inc(now - last_tick);
             last_tick = now;
             lv_timer_handler();
+            esp_task_wdt_reset();
             yield();
             delay(10);
         }

@@ -52,6 +52,7 @@ namespace UISettings {
     // Web-Conf mode (blocking)
     void openWebConf();
     void showBootWebConfig();
+    bool checkPendingWebConf();
 
 }
 

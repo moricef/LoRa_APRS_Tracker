@@ -567,6 +567,9 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     // Handle LVGL tasks
     lv_timer_handler();
 
+    // Check if Web-Conf was requested from Settings (deferred to avoid reentrancy)
+    UISettings::checkPendingWebConf();
+
     // Display eco mode: dim screen after inactivity timeout
     // Use fresh millis() value since lastActivityTime may have been updated
     // during lv_timer_handler()
