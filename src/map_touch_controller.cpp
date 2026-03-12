@@ -178,31 +178,35 @@ bool MapTouchController::scroll(int16_t dx, int16_t dy) {
     }
     
     // ORIGINAL: shift tile if |offset| > PAN_TILE_THRESHOLD
+    // CRITICAL BUG FIX: Must adjust offsetX/Y after tile shift to prevent infinite loop
     int targetX = centerTileX;
     int targetY = centerTileY;
-    int16_t tempX = offsetX, tempY = offsetY;
     
-    if (tempX >= PAN_TILE_THRESHOLD) { 
+    if (offsetX >= PAN_TILE_THRESHOLD) { 
         targetX++; 
-        tempX -= MAP_TILE_SIZE; 
+        offsetX -= MAP_TILE_SIZE;  // ADJUST offset to stay within [-128, 128] range
         tileShifted = true;
     }
-    else if (tempX <= -PAN_TILE_THRESHOLD) { 
+    else if (offsetX <= -PAN_TILE_THRESHOLD) { 
         targetX--; 
-        tempX += MAP_TILE_SIZE; 
+        offsetX += MAP_TILE_SIZE;  // ADJUST offset to stay within [-128, 128] range
         tileShifted = true;
     }
     
-    if (tempY >= PAN_TILE_THRESHOLD) { 
+    if (offsetY >= PAN_TILE_THRESHOLD) { 
         targetY++; 
-        tempY -= MAP_TILE_SIZE; 
+        offsetY -= MAP_TILE_SIZE;  // ADJUST offset to stay within [-128, 128] range
         tileShifted = true;
     }
-    else if (tempY <= -PAN_TILE_THRESHOLD) { 
+    else if (offsetY <= -PAN_TILE_THRESHOLD) { 
         targetY--; 
-        tempY += MAP_TILE_SIZE; 
+        offsetY += MAP_TILE_SIZE;  // ADJUST offset to stay within [-128, 128] range
         tileShifted = true;
     }
+    
+    // Re-clamp after adjustment (should still be within bounds)
+    offsetX = clampValue<int16_t>(offsetX, -MAP_MARGIN_X, MAP_MARGIN_X);
+    offsetY = clampValue<int16_t>(offsetY, -MAP_MARGIN_Y, MAP_MARGIN_Y);
     
     // Callbacks
     if (scrollCallback) {
