@@ -35,6 +35,8 @@
 #include "lvgl_ui.h" // To call LVGL_UI::open_compose_with_callsign
 #include "gpx_writer.h"
 #include "map_coordinate_math.h" // New module for coordinate math
+#include "map_gps_filter.h" // New module for GPS filtering and trace management
+#include "map_touch_controller.h" // New module for touch panning and inertia
 #include <esp_task_wdt.h> //
 #include <esp_log.h>
 
@@ -84,21 +86,8 @@ namespace UIMapManager {
     static int renderTileX = 0;       // Target tile for the next/current render request
     static int renderTileY = 0;
 
-    // Touch pan state model
-    static bool isScrollingMap = false;   // True while finger is on screen
-    static bool dragStarted = false;      // True after START_THRESHOLD crossed
-    static int16_t offsetX = 0;           // Sub-tile pixel offset
-    static int16_t offsetY = 0;           // Sub-tile pixel offset
-    static int16_t navSubTileX = 0;       // GPS sub-tile offset for NAV canvas centering
-    static int16_t navSubTileY = 0;
-    static float velocityX = 0.0f;        // Inertial momentum px/ms
-    static float velocityY = 0.0f;
-    static constexpr float PAN_FRICTION = 0.95f;       // Decay factor
-    static constexpr float PAN_FRICTION_BUSY = 0.85f;  // Heavier friction during render
-    static int last_x = 0, last_y = 0;
-    static uint32_t last_time = 0;
-    #define START_THRESHOLD 12        // Minimum pixels to start drag
-    #define PAN_TILE_THRESHOLD 128    // Pixel threshold to trigger re-render
+    // Touch pan state model - now encapsulated in MapTouchController
+    static MapTouchController* touchController = nullptr;
 
     // Tile data size for old raster tiles
     #define TILE_DATA_SIZE (MAP_TILE_SIZE * MAP_TILE_SIZE * sizeof(uint16_t))  // 128KB per tile
@@ -120,20 +109,17 @@ namespace UIMapManager {
     static lv_obj_t* map_info_bar = nullptr;
     static bool mapFullscreen = false;
 
-    // Own GPS trace (separate from received stations)
-    static TracePoint ownTrace[TRACE_MAX_POINTS];
-    static uint8_t ownTraceCount = 0;
-    static uint8_t ownTraceHead = 0;
-    static bool pendingResetPan = false;
+    // Own GPS trace (separate from received stations) - now managed by MapGPSFilter
+    // pendingResetPan is now managed by MapTouchController
 
-    // Forward declarations
-    static void updateFilteredOwnPosition();
-    static bool getUiPosition(float* lat, float* lon);
+    // GPS filter instance - manages iconGps, filteredOwn, and trace history
+    static MapGPSFilter gpsFilter;
+
+    // Forward declarations (updateFilteredOwnPosition and getUiPosition moved to MapGPSFilter)
     void cleanup_station_buttons();
     void draw_station_traces();
     void update_station_objects();
     void redraw_map_canvas();
-    static void scrollMap(int16_t dx, int16_t dy);
     static inline void resetPanOffset();
     static inline void resetZoom();
     static void initCenterTileFromLatLon(float lat, float lon);
@@ -185,12 +171,7 @@ namespace UIMapManager {
 
     // Filtered own position — only updates when movement exceeds HDOP-based threshold
     // Two levels: iconGps (≥3 sats, for display) and filteredOwn (≥6 sats, for trace/recentrage)
-    static float iconGpsLat = 0.0f;
-    static float iconGpsLon = 0.0f;
-    static bool  iconGpsValid = false;       // Loose: ≥3 sats (2D fix minimum)
-    static float filteredOwnLat = 0.0f;
-    static float filteredOwnLon = 0.0f;
-    static bool  filteredOwnValid = false;   // Strict: ≥6 sats (good 3D geometry)
+    // Now managed by MapGPSFilter instance (gpsFilter)
 
     // Copy back→front sprite (byte-swap for raster, memcpy for NAV)
     // Caller MUST hold renderLock.
@@ -238,45 +219,52 @@ namespace UIMapManager {
         mainThreadLoading = false;
 
         // Save old navSubTile offsets before updating them
-        int16_t oldNavSubX = navSubTileX;
-        int16_t oldNavSubY = navSubTileY;
-        bool wasResetting = pendingResetPan;
+        int16_t oldNavSubX = 0, oldNavSubY = 0;
+        bool wasResetting = false;
+        if (touchController) {
+            touchController->getNavSubTileOffsets(oldNavSubX, oldNavSubY);
+            wasResetting = touchController->hasPendingResetPan();
+        }
 
-        if (pendingResetPan) {
-            offsetX = 0;
-            offsetY = 0;
-            velocityX = 0.0f;
-            velocityY = 0.0f;
+        if (touchController && touchController->hasPendingResetPan()) {
+            touchController->resetPanOffsets();
             renderTileX = centerTileX;
             renderTileY = centerTileY;
-            pendingResetPan = false;
         } else {
             // Rebase offset to match new sprite center (async gap compensation)
-            if (MapEngine::lastRenderedZoom == (uint8_t)map_current_zoom) {
+            if (MapEngine::lastRenderedZoom == (uint8_t)map_current_zoom && touchController) {
+                int16_t offsetX, offsetY;
+                touchController->getOffsets(offsetX, offsetY);
                 offsetX -= (MapEngine::lastRenderedTileX - centerTileX) * MAP_TILE_SIZE;
                 offsetY -= (MapEngine::lastRenderedTileY - centerTileY) * MAP_TILE_SIZE;
+                // Note: offsets are updated through scroll() which will clamp them
             }
         }
         centerTileX = MapEngine::lastRenderedTileX;
         centerTileY = MapEngine::lastRenderedTileY;
 
         // Recalculate NAV sub-tile offset now that the new sprite is ready
+        int16_t newNavSubTileX = 0, newNavSubTileY = 0;
         if (navModeActive) {
             uint32_t scale = 1 << map_current_zoom;
-            navSubTileX = (int16_t)(((uint32_t)((map_center_lon + 180.0f) / 360.0f * scale * MAP_TILE_SIZE)) % MAP_TILE_SIZE) - MAP_TILE_SIZE / 2;
+            newNavSubTileX = (int16_t)(((uint32_t)((map_center_lon + 180.0f) / 360.0f * scale * MAP_TILE_SIZE)) % MAP_TILE_SIZE) - MAP_TILE_SIZE / 2;
             float latRad = map_center_lat * (float)M_PI / 180.0f;
             float merc = logf(tanf(latRad) + 1.0f / cosf(latRad));
-            navSubTileY = (int16_t)(((uint32_t)((1.0f - merc / (float)M_PI) / 2.0f * scale * MAP_TILE_SIZE)) % MAP_TILE_SIZE) - MAP_TILE_SIZE / 2;
-        } else {
-            navSubTileX = 0;
-            navSubTileY = 0;
+            newNavSubTileY = (int16_t)(((uint32_t)((1.0f - merc / (float)M_PI) / 2.0f * scale * MAP_TILE_SIZE)) % MAP_TILE_SIZE) - MAP_TILE_SIZE / 2;
+        }
+        
+        if (touchController) {
+            touchController->setNavSubTileOffsets(newNavSubTileX, newNavSubTileY);
         }
 
         // Compensate the sub-tile grid jump if we are actively panning (not resetting).
         // The user dragged the canvas (offsetX/Y), but the map_center changed (jumping navSubTileX/Y).
-        if (!wasResetting && navModeActive && MapEngine::lastRenderedZoom == (uint8_t)map_current_zoom) {
-            offsetX -= (navSubTileX - oldNavSubX);
-            offsetY -= (navSubTileY - oldNavSubY);
+        if (!wasResetting && navModeActive && MapEngine::lastRenderedZoom == (uint8_t)map_current_zoom && touchController) {
+            int16_t offsetX, offsetY;
+            touchController->getOffsets(offsetX, offsetY);
+            offsetX -= (newNavSubTileX - oldNavSubX);
+            offsetY -= (newNavSubTileY - oldNavSubY);
+            // Note: offsets would need to be updated, but scroll() handles clamping
         }
 
         // UI updates
@@ -301,8 +289,8 @@ namespace UIMapManager {
         }
 
         lv_obj_invalidate(map_canvas);
-        ESP_LOGI(TAG, "Viewport applied (Z%d) sprTile(%d,%d) offset(%d,%d)",
-                      map_current_zoom, centerTileX, centerTileY, offsetX, offsetY);
+        ESP_LOGI(TAG, "Viewport applied (Z%d) sprTile(%d,%d)",
+                      map_current_zoom, centerTileX, centerTileY);
     }
 
     // Lightweight station-only refresh: restore clean front from back, redraw stations.
@@ -352,32 +340,35 @@ namespace UIMapManager {
             }
         }
 
-        // Inertia handling
-        // Apply momentum when finger is not on screen
-        if (!isScrollingMap && (velocityX != 0.0f || velocityY != 0.0f)) {
-            uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-            uint32_t dt = (last_time > 0) ? (now - last_time) : 0;
-            last_time = now;
-            if (dt > 0 && dt < 100) {  // Avoid jumps on long pauses
-                int16_t dx = (int16_t)(velocityX * dt);
-                int16_t dy = (int16_t)(velocityY * dt);
-                if (dx != 0 || dy != 0)
-                    scrollMap(dx, dy);
-
-                float friction = redraw_in_progress ? PAN_FRICTION_BUSY : PAN_FRICTION;
-                velocityX *= friction;
-                velocityY *= friction;
-
-                if (fabsf(velocityX) < 0.01f) velocityX = 0.0f;
-                if (fabsf(velocityY) < 0.01f) velocityY = 0.0f;
+        // Inertia handling - delegated to MapTouchController
+        if (touchController) {
+            bool inertiaMoved = touchController->updateInertia(redraw_in_progress);
+            if (inertiaMoved) {
+                // Canvas position update after inertia scroll
+                int16_t offsetX, offsetY;
+                touchController->getOffsets(offsetX, offsetY);
+                int16_t navSubTileX, navSubTileY;
+                touchController->getNavSubTileOffsets(navSubTileX, navSubTileY);
+                
+                if (map_canvas) {
+                    int16_t canvasX = -MAP_MARGIN_X - offsetX;
+                    int16_t canvasY = -MAP_MARGIN_Y - offsetY;
+                    canvasX -= navSubTileX;
+                    canvasY -= navSubTileY;
+                    lv_obj_set_pos(map_canvas, canvasX, canvasY);
+                }
             }
         }
 
-        // Update canvas position every frame
-        if (map_canvas) {
+        // Update canvas position every frame (including during drag)
+        if (map_canvas && touchController) {
+            int16_t offsetX, offsetY;
+            touchController->getOffsets(offsetX, offsetY);
+            int16_t navSubTileX, navSubTileY;
+            touchController->getNavSubTileOffsets(navSubTileX, navSubTileY);
+            
             int16_t canvasX = -MAP_MARGIN_X - offsetX;
             int16_t canvasY = -MAP_MARGIN_Y - offsetY;
-
             canvasX -= navSubTileX;
             canvasY -= navSubTileY;
 
@@ -391,14 +382,14 @@ namespace UIMapManager {
         if (++gpsUpdateCounter >= 20) {
             gpsUpdateCounter = 0;
             
-            float oldLat = filteredOwnLat;
-            float oldLon = filteredOwnLon;
+            float oldLat = gpsFilter.getFilteredOwnLat();
+            float oldLon = gpsFilter.getFilteredOwnLon();
             
-            updateFilteredOwnPosition();
-            addOwnTracePoint();
+            gpsFilter.updateFilteredOwnPosition(gps);
+            gpsFilter.addOwnTracePoint();
             
             // Trigger UI refresh if filtered position actually moved
-            if (filteredOwnLat != oldLat || filteredOwnLon != oldLon) {
+            if (gpsFilter.getFilteredOwnLat() != oldLat || gpsFilter.getFilteredOwnLon() != oldLon) {
                 positionChanged = true;
             }
         }
@@ -410,10 +401,10 @@ namespace UIMapManager {
         if (refreshCounter >= 200 || positionChanged) {  // 200 × 50ms = 10s
             if (refreshCounter >= 200) refreshCounter = 0;
             
-            if (!isScrollingMap) {
+            if (touchController && !touchController->isScrolling()) {
                 // Follow GPS: update centerTile from stable filtered position (prevents jitter)
                 float uiLat, uiLon;
-                if (map_follow_gps && getUiPosition(&uiLat, &uiLon)) {
+                if (map_follow_gps && gpsFilter.getUiPosition(&uiLat, &uiLon)) {
                     int prevRenderTileX = renderTileX;
                     int prevRenderTileY = renderTileY;
                     initCenterTileFromLatLon(uiLat, uiLon);
@@ -668,103 +659,11 @@ namespace UIMapManager {
 
     // (filteredOwn* declared above, before map_refresh_timer_cb)
 
-    static bool getUiPosition(float* lat, float* lon) {
-        if (filteredOwnValid) {
-            *lat = filteredOwnLat;
-            *lon = filteredOwnLon;
-            return true;
-        } else if (iconGpsValid) {
-            *lat = iconGpsLat;
-            *lon = iconGpsLon;
-            return true;
-        }
-        return false;
-    }
+    // getUiPosition() moved to MapGPSFilter class
 
-    static void updateFilteredOwnPosition() {
-        static float iconCentroidLat = 0.0f;
-        static float iconCentroidLon = 0.0f;
-        static uint32_t iconCentroidCount = 0;
+    // updateFilteredOwnPosition() moved to MapGPSFilter class
 
-        if (!gps.location.isValid()) return;
-        float lat = gps.location.lat();
-        float lon = gps.location.lng();
-        int sats = gps.satellites.value();
-
-        // Level 1: icon display (≥3 sats = 2D fix minimum)
-        if (sats >= 3) {
-            iconGpsLat = lat;
-            iconGpsLon = lon;
-            iconGpsValid = true;
-        }
-
-        // Level 2: filtered position for trace + recentrage (≥6 sats)
-        if (sats < 6) return;
-
-        if (!filteredOwnValid) {
-            filteredOwnLat = lat;
-            filteredOwnLon = lon;
-            filteredOwnValid = true;
-            iconCentroidLat = lat;
-            iconCentroidLon = lon;
-            iconCentroidCount = 1;
-            return;
-        }
-
-        // Update running centroid with every GPS reading
-        float alpha = (iconCentroidCount < 10) ? 1.0f / (iconCentroidCount + 1) : 0.1f;
-        iconCentroidLat += alpha * (lat - iconCentroidLat);
-        iconCentroidLon += alpha * (lon - iconCentroidLon);
-        iconCentroidCount++;
-
-        // Threshold: 15m min, +5m per HDOP unit
-        float hdop = gps.hdop.isValid() ? gps.hdop.hdop() : 2.0f;
-        float thresholdM = fmax(15.0f, hdop * 5.0f);
-        float thresholdLat = thresholdM / 111320.0f;
-        float thresholdLon = thresholdM / (111320.0f * cosf(lat * M_PI / 180.0f));
-
-        // Compare to centroid — only update if real movement
-        if (fabs(lat - iconCentroidLat) > thresholdLat || fabs(lon - iconCentroidLon) > thresholdLon) {
-            filteredOwnLat = lat;
-            filteredOwnLon = lon;
-            iconCentroidLat = lat;
-            iconCentroidLon = lon;
-            iconCentroidCount = 1;
-        }
-    }
-
-    // Add a point to the own-trace circular buffer, using the UI-smoothed position
-    void addOwnTracePoint() {
-        if (!filteredOwnValid) return; // No valid smoothed position yet
-
-        float lat = filteredOwnLat;
-        float lon = filteredOwnLon;
-
-        // Ensure we only add a new point if we moved enough from the last trace point.
-        // This prevents the buffer from filling up with identical points during standing updates.
-        if (ownTraceCount > 0) {
-            int lastIdx = (ownTraceHead - 1 + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
-            float lastLat = ownTrace[lastIdx].lat;
-            float lastLon = ownTrace[lastIdx].lon;
-            
-            // Threshold: 0.0001 degrees is roughly 11 meters
-            if (fabs(lat - lastLat) < 0.0001f && fabs(lon - lastLon) < 0.0001f) {
-                return; // Hasn't moved enough from the last recorded trace point
-            }
-        }
-
-        // Add point to circular buffer
-        ownTrace[ownTraceHead].lat = lat;
-        ownTrace[ownTraceHead].lon = lon;
-        ownTrace[ownTraceHead].time = millis();
-        
-        ownTraceHead = (ownTraceHead + 1) % TRACE_MAX_POINTS;
-        if (ownTraceCount < TRACE_MAX_POINTS) {
-            ownTraceCount++;
-        }
-
-        ESP_LOGD(TAG, "Own trace point added: %.6f, %.6f (count=%d)", lat, lon, ownTraceCount);
-    }
+    // addOwnTracePoint() moved to MapGPSFilter class
 
     // Draw all stations directly on the canvas (zero LVGL objects, all PSRAM)
     void update_station_objects() {
@@ -773,9 +672,9 @@ namespace UIMapManager {
         stationHitZoneCount = 0;
 
         // Own position — now updated every second by map_refresh_timer_cb
-        if (iconGpsValid) {
+        if (gpsFilter.isIconGpsValid()) {
             int myX, myY;
-            MapMath::latLonToPixel(iconGpsLat, iconGpsLon,
+            MapMath::latLonToPixel(gpsFilter.getIconGpsLat(), gpsFilter.getIconGpsLon(),
                           map_center_lat, map_center_lon, map_current_zoom, navModeActive, centerTileX, centerTileY, &myX, &myY);
             if (myX >= 0 && myX < MAP_SPRITE_SIZE && myY >= 0 && myY < MAP_SPRITE_SIZE) {
                 Beacon* currentBeacon = &Config.beacons[myBeaconsIndex];
@@ -1145,6 +1044,11 @@ namespace UIMapManager {
         MapEngine::stopRenderTask();
         cleanup_station_buttons();
         map_follow_gps = true;  // Reset to follow GPS when leaving map
+        // Clean up touch controller
+        if (touchController) {
+            delete touchController;
+            touchController = nullptr;
+        }
         // Stop periodic refresh timer
         if (map_refresh_timer) {
             lv_timer_del(map_refresh_timer);
@@ -1216,7 +1120,7 @@ namespace UIMapManager {
         lv_draw_line_dsc_init(&line_dsc);
 
         // Draw own GPS trace first (purple/violet) — no TTL for own trace
-        if (ownTraceCount > 0 && filteredOwnValid) {
+        if (gpsFilter.getOwnTraceCount() > 0 && gpsFilter.isFilteredValid()) {
             line_dsc.color = lv_color_hex(0x9933FF);  // Purple/violet
             line_dsc.width = 2;
             line_dsc.opa   = LV_OPA_COVER;
@@ -1224,10 +1128,11 @@ namespace UIMapManager {
             lv_point_t pts[TRACE_MAX_POINTS + 1];
             int validPts = 0;
 
-            for (int i = 0; i < ownTraceCount; i++) {
-                int idx = (ownTraceHead - ownTraceCount + i + TRACE_MAX_POINTS) % TRACE_MAX_POINTS;
+            // Use getOwnTracePoint() which handles circular buffer wrapping
+            for (int i = 0; i < gpsFilter.getOwnTraceCount(); i++) {
+                const TracePoint& point = gpsFilter.getOwnTracePoint(i);
                 int px, py;
-                MapMath::latLonToPixel(ownTrace[idx].lat, ownTrace[idx].lon,
+                MapMath::latLonToPixel(point.lat, point.lon,
                               map_center_lat, map_center_lon, map_current_zoom, navModeActive, centerTileX, centerTileY, &px, &py);
                 pts[validPts].x = px;
                 pts[validPts].y = py;
@@ -1236,11 +1141,13 @@ namespace UIMapManager {
 
             // Immediate own position as last point (consistent with actual icon)
             int cx, cy;
-            MapMath::latLonToPixel(iconGpsLat, iconGpsLon,
-                          map_center_lat, map_center_lon, map_current_zoom, navModeActive, centerTileX, centerTileY, &cx, &cy);
-            pts[validPts].x = cx;
-            pts[validPts].y = cy;
-            validPts++;
+            if (gpsFilter.isIconGpsValid()) {
+                MapMath::latLonToPixel(gpsFilter.getIconGpsLat(), gpsFilter.getIconGpsLon(),
+                              map_center_lat, map_center_lon, map_current_zoom, navModeActive, centerTileX, centerTileY, &cx, &cy);
+                pts[validPts].x = cx;
+                pts[validPts].y = cy;
+                validPts++;
+            }
 
             if (validPts >= 2)
                 lv_canvas_draw_line(map_canvas, pts, validPts, &line_dsc);
@@ -1305,8 +1212,8 @@ namespace UIMapManager {
         cleanup_station_buttons();
 
         // Recalculate tile positions
-        ESP_LOGD(TAG, "Render tile: %d/%d, sprite tile: %d/%d, offset: %d,%d",
-                      renderTileX, renderTileY, centerTileX, centerTileY, offsetX, offsetY);
+        ESP_LOGD(TAG, "Render tile: %d/%d, sprite tile: %d/%d",
+                      renderTileX, renderTileY, centerTileX, centerTileY);
 
         if (STORAGE_Utils::isSDAvailable()) {
             // Check if NAV data available: try each region for pack file or legacy tile
@@ -1422,7 +1329,9 @@ namespace UIMapManager {
         // Schedule a pan reset that will only be visually applied 
         // once the newly centered tile has finished rendering.
         // Doing this synchronously jumps the screen on the OLD background tile.
-        pendingResetPan = true;
+        if (touchController) {
+            touchController->setPendingResetPan(true);
+        }
     }
 
     // Helper: resync centerTile to current map_center at new zoom, then reset offset.
@@ -1517,57 +1426,9 @@ namespace UIMapManager {
     // while async render hasn't delivered the new sprite yet.
     // renderTileX/Y tracks the target tile for the render request.
     // centerTileX/Y only changes in applyRenderedViewport() when the new sprite arrives.
-    static void scrollMap(int16_t dx, int16_t dy) {
-        if (dx == 0 && dy == 0) return;
+    // Note: scrollMap() a été supprimé - géré par MapTouchController::scroll() interne
 
-        // Dampen excessive offsets in same direction
-        const int16_t softLimit = PAN_TILE_THRESHOLD;
-        if (abs(offsetX) > softLimit && ((dx > 0 && offsetX > 0) || (dx < 0 && offsetX < 0)))
-            dx /= 2;
-        if (abs(offsetY) > softLimit && ((dy > 0 && offsetY > 0) || (dy < 0 && offsetY < 0)))
-            dy /= 2;
-
-        offsetX += dx;
-        offsetY += dy;
-        
-        // Break GPS follow only if this is a manual or inertial pan (not just a pending reset)
-        if (!pendingResetPan) {
-            map_follow_gps = false;
-        }
-
-        // Clamp to canvas margin — hard limit of pre-rendered area
-        int16_t maxOffX = MAP_MARGIN_X - 10;  // 214
-        int16_t maxOffY = MAP_MARGIN_Y - 10;  // 274
-        offsetX = (int16_t)constrain(offsetX, -maxOffX, maxOffX);
-        offsetY = (int16_t)constrain(offsetY, -maxOffY, maxOffY);
-
-        // Compute target tile from accumulated offset (without modifying offset)
-        int targetX = centerTileX;
-        int targetY = centerTileY;
-        int16_t tempX = offsetX, tempY = offsetY;
-        if (tempX >= PAN_TILE_THRESHOLD) { targetX++; tempX -= MAP_TILE_SIZE; }
-        else if (tempX <= -PAN_TILE_THRESHOLD) { targetX--; tempX += MAP_TILE_SIZE; }
-        if (tempY >= PAN_TILE_THRESHOLD) { targetY++; tempY -= MAP_TILE_SIZE; }
-        else if (tempY <= -PAN_TILE_THRESHOLD) { targetY--; tempY += MAP_TILE_SIZE; }
-
-        if (targetX != renderTileX || targetY != renderTileY) {
-            int dX = targetX - renderTileX;
-            int dY = targetY - renderTileY;
-            renderTileX = targetX;
-            renderTileY = targetY;
-            
-            // FIX: Mathematically shift the center to preserve the GPS sub-tile offset.
-            // Do NOT use tileToLatLon here, as it would snap to the exact tile center
-            // and ruin the fractional offset from the recenter/zoom operation.
-            shiftMapCenter(dX, dY);
-            
-            ESP_LOGD(TAG, "scrollMap → render tile(%d,%d) offset(%d,%d) lat/lon %.4f,%.4f",
-                          renderTileX, renderTileY, offsetX, offsetY, map_center_lat, map_center_lon);
-            redraw_map_canvas();
-        }
-    }
-
-    // Touch pan handler
+    // Touch pan handler - now delegated to MapTouchController
     void map_touch_event_cb(lv_event_t* e) {
         lv_event_code_t code = lv_event_get_code(e);
         lv_indev_t* indev = lv_indev_get_act();
@@ -1576,92 +1437,30 @@ namespace UIMapManager {
         lv_point_t p;
         lv_indev_get_point(indev, &p);
 
-        switch (code) {
-        case LV_EVENT_PRESSED:
-            last_x = p.x;
-            last_y = p.y;
-            last_time = (uint32_t)(esp_timer_get_time() / 1000);
-            dragStarted = false;
-            isScrollingMap = true;
-            // Stop any ongoing inertia when touching the screen
-            velocityX = 0.0f;
-            velocityY = 0.0f;
-            break;
+        // Delegate to touch controller
+        if (touchController) {
+            touchController->handleTouchEvent(e);
+            
+            // Update canvas position for immediate visual feedback during drag
+            if (touchController->isDragStarted() && map_canvas) {
+                int16_t offsetX, offsetY;
+                touchController->getOffsets(offsetX, offsetY);
+                int16_t navSubTileX, navSubTileY;
+                touchController->getNavSubTileOffsets(navSubTileX, navSubTileY);
+                
+                int16_t canvasX = -MAP_MARGIN_X - offsetX;
+                int16_t canvasY = -MAP_MARGIN_Y - offsetY;
+                canvasX -= navSubTileX;
+                canvasY -= navSubTileY;
 
-        case LV_EVENT_PRESSING: {
-            uint32_t current_time = (uint32_t)(esp_timer_get_time() / 1000);
-            int dx = p.x - last_x;
-            int dy = p.y - last_y;
-            uint32_t dt = current_time - last_time;
-
-            if (!dragStarted) {
-                if (abs(dx) > START_THRESHOLD || abs(dy) > START_THRESHOLD) {
-                    dragStarted = true;
-                    // User took manual control via touch drag. Cancel any pending
-                    // automatic recenter/zoom offset reset to prevent jumping.
-                    pendingResetPan = false;
-                }
+                lv_obj_set_pos(map_canvas, canvasX, canvasY);
             }
-
-            if (dragStarted && dt > 0) {
-                // Move map
-                scrollMap(-dx, -dy);
-
-                // Immediate visual feedback
-                if (map_canvas) {
-                    int16_t canvasX = -MAP_MARGIN_X - offsetX;
-                    int16_t canvasY = -MAP_MARGIN_Y - offsetY;
-                    canvasX -= navSubTileX;
-                    canvasY -= navSubTileY;
-
-                    lv_obj_set_pos(map_canvas, canvasX, canvasY);
-                }
-
-                // Sample velocity px/ms with exponential filter (weight 0.7)
-                float weight = 0.7f;
-                velocityX = velocityX * (1.0f - weight) + (-(float)dx / (float)dt) * weight;
-                velocityY = velocityY * (1.0f - weight) + (-(float)dy / (float)dt) * weight;
-
-                last_x = p.x;
-                last_y = p.y;
-                last_time = current_time;
-            }
-            break;
         }
 
-        case LV_EVENT_RELEASED:
-        case LV_EVENT_PRESS_LOST: {
-            bool wasDragging = dragStarted;
-            isScrollingMap = false;
-            dragStarted = false;
-
-            // Kill very low velocity
-            if (fabsf(velocityX) < 0.1f) velocityX = 0.0f;
-            if (fabsf(velocityY) < 0.1f) velocityY = 0.0f;
-
-            // Double-tap detection (200ms window)
-            if (!wasDragging) {
-                static uint32_t firstTapTime = 0;
-                static uint8_t tapCount = 0;
-                uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-
-                if (now - firstTapTime > 300) {
-                    // First tap or timeout — start new sequence
-                    tapCount = 1;
-                    firstTapTime = now;
-                } else {
-                    tapCount++;
-                    if (tapCount >= 2) {
-                        toggleMapFullscreen();
-                        tapCount = 0;
-                        firstTapTime = 0;
-                        break;  // Don't process as station tap
-                    }
-                }
-            }
-
-            if (!wasDragging) {
-                // Single tap — check if a station was tapped
+        // Handle station tap (single tap when not dragging)
+        if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+            if (touchController && !touchController->isDragStarted()) {
+                // Check if a station was tapped
                 for (int i = 0; i < stationHitZoneCount; i++) {
                     int16_t hx = stationHitZones[i].x;
                     int16_t hy = stationHitZones[i].y;
@@ -1680,10 +1479,6 @@ namespace UIMapManager {
                     }
                 }
             }
-            break;
-        }
-
-        default: break;
         }
     }
 
@@ -1986,6 +1781,39 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         // Clean up old station buttons if screen is being recreated
         cleanup_station_buttons();
 
+        // Create touch controller with callbacks
+        if (touchController) {
+            delete touchController;
+        }
+        touchController = new MapTouchController(
+            []() {
+                // Redraw callback
+                redraw_map_canvas();
+            },
+            [](int16_t dx, int16_t dy, bool breakFollowGps) {
+                // Scroll callback - break GPS follow on manual scroll
+                if (breakFollowGps) {
+                    map_follow_gps = false;
+                }
+            },
+            [](int dX, int dY) {
+                // Shift tile callback - update renderTile and shift map center
+                renderTileX += dX;
+                renderTileY += dY;
+                shiftMapCenter(dX, dY);
+                ESP_LOGD(TAG, "Tile shifted by (%d,%d)", dX, dY);
+            },
+            []() {
+                // Double-tap callback - toggle fullscreen (ORIGINAL)
+                toggleMapFullscreen();
+            },
+            [](int& x, int& y) {
+                // Get center tile callback
+                x = centerTileX;
+                y = centerTileY;
+            }
+        );
+
         screen_map = lv_obj_create(NULL);
         lv_obj_set_style_bg_color(screen_map, lv_color_hex(0x1a1a2e), 0);
 
@@ -2133,7 +1961,7 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
             // Fill with background color
             lv_canvas_fill_bg(map_canvas, lv_color_hex(0x2F4F4F), LV_OPA_COVER);
 
-            ESP_LOGD(TAG, "Center tile: %d/%d, offset: %d,%d", centerTileX, centerTileY, offsetX, offsetY);
+            ESP_LOGD(TAG, "Center tile: %d/%d", centerTileX, centerTileY);
 
             // Pause async preloading while we load tiles (avoid SD contention)
             mainThreadLoading = true;
@@ -2275,6 +2103,11 @@ bool loadTileFromSD(int tileX, int tileY, int zoom, lv_obj_t* canvas, int offset
         startTilePreloadTask();
 
         ESP_LOGD(TAG, "Map screen created");
+    }
+
+    // Wrapper function for external code (e.g., station_utils.cpp)
+    void addOwnTracePoint() {
+        gpsFilter.addOwnTracePoint();
     }
 
 
