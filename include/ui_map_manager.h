@@ -39,12 +39,6 @@ extern SemaphoreHandle_t spiMutex; // Declared extern for SPI bus mutex access
 #define MAP_MARGIN_X  ((MAP_SPRITE_SIZE - SCREEN_WIDTH) / 2)       // 224
 #define MAP_MARGIN_Y  ((MAP_SPRITE_SIZE - MAP_VISIBLE_HEIGHT) / 2) // 284
 
-// Touch pan constants (from ui_map_manager.cpp)
-#define START_THRESHOLD 12        // Minimum pixels to start drag
-#define PAN_TILE_THRESHOLD 128    // Pixel threshold to trigger re-render
-#define PAN_FRICTION 0.95f        // Decay factor
-#define PAN_FRICTION_BUSY 0.85f   // Heavier friction during render
-
 // Dimensions de l'affichage
 #define SCREEN_WIDTH  320
 #define SCREEN_HEIGHT 240
