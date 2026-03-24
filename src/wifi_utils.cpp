@@ -206,7 +206,8 @@ namespace WIFI_Utils {
         WiFi.mode(WIFI_MODE_NULL);
         WiFi.disconnect(true, true); // Stop WiFi and clear persistent NVS state
         WiFi.mode(WIFI_AP);
-        WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str(), 1, 0, 4); // Channel 1, visible, max 4 clients
+
+        WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str());
 
         WEB_Utils::setup();
 
@@ -338,7 +339,8 @@ namespace WIFI_Utils {
 
         ESP_LOGI(TAG, "AP Password is: '%s' (Length: %d)", Config.wifiAutoAP.password.c_str(), Config.wifiAutoAP.password.length());
 
-        bool success = WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str(), 1, 0, 4); // Channel 1, visible, max 4 clients
+        // Use password to restore security, but now with explicit IP config
+        bool success = WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str()); 
         if (success) {
             ESP_LOGI(TAG, "AP Started - IP: %s", WiFi.softAPIP().toString().c_str());
             WEB_Utils::setup();
