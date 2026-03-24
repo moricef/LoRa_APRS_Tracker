@@ -205,7 +205,7 @@ namespace WIFI_Utils {
 
         WiFi.mode(WIFI_MODE_NULL);
         WiFi.mode(WIFI_AP);
-        WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password);
+        WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str());
 
         WEB_Utils::setup();
 
@@ -334,7 +334,7 @@ namespace WIFI_Utils {
         WiFi.mode(WIFI_AP);
         delay(100);
 
-        bool success = WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password);
+        bool success = WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str());
         if (success) {
             ESP_LOGI(TAG, "AP Started - IP: %s", WiFi.softAPIP().toString().c_str());
             WEB_Utils::setup();
