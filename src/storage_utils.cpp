@@ -91,8 +91,14 @@ namespace STORAGE_Utils {
 
     void setup() {
         // Always init LittleFS as fallback (format on fail for first boot)
-        if (!LittleFS.begin(true)) {
-            ESP_LOGE(TAG, "LittleFS mount failed");
+        if (!LittleFS.begin(true, "/littlefs", 10, "spiffs")) {
+            ESP_LOGE(TAG, "LittleFS mount failed. Forcing format...");
+            LittleFS.format();
+            if (!LittleFS.begin(true, "/littlefs", 10, "spiffs")) {
+                ESP_LOGE(TAG, "LittleFS format and mount failed permanently");
+            } else {
+                ESP_LOGI(TAG, "LittleFS mounted after format");
+            }
         } else {
             ESP_LOGI(TAG, "LittleFS mounted");
         }
