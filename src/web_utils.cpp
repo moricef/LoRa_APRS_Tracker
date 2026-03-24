@@ -81,7 +81,7 @@ namespace WEB_Utils {
     }
 
     void handleReadConfiguration(AsyncWebServerRequest *request) {
-        File file = SPIFFS.open("/tracker_conf.json");
+        File file = LittleFS.open("/tracker_conf.json");
         if (!file) {
             request->send(404, "text/plain", "Config file not found");
             return;

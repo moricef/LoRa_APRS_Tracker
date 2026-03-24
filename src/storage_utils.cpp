@@ -16,7 +16,7 @@
  * along with LoRa APRS Tracker. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <SPIFFS.h>
+#include <LittleFS.h>
 #include <SD.h>
 #include <SPI.h>
 #include <vector>
@@ -90,11 +90,11 @@ namespace STORAGE_Utils {
     }
 
     void setup() {
-        // Always init SPIFFS as fallback (format on fail for first boot)
-        if (!SPIFFS.begin(true)) {
-            ESP_LOGE(TAG, "SPIFFS mount failed");
+        // Always init LittleFS as fallback (format on fail for first boot)
+        if (!LittleFS.begin(true)) {
+            ESP_LOGE(TAG, "LittleFS mount failed");
         } else {
-            ESP_LOGI(TAG, "SPIFFS mounted");
+            ESP_LOGI(TAG, "LittleFS mounted");
         }
 
         #ifdef BOARD_SDCARD_CS
@@ -124,15 +124,15 @@ namespace STORAGE_Utils {
 
                     // Load last 20 frames from SD into RAM cache
                     loadFramesFromSD();
-                }
-            } else {
-                ESP_LOGE(TAG, "SD card init failed, using SPIFFS");
-                sdAvailable = false;
-            }
-        #else
-            ESP_LOGW(TAG, "No SD card support, using SPIFFS");
-        #endif
-    }
+                    }
+                    } else {
+                    ESP_LOGE(TAG, "SD card init failed, using LittleFS");
+                    sdAvailable = false;
+                    }
+                    #else
+                    ESP_LOGW(TAG, "No SD card support, using LittleFS");
+                    #endif
+                    }
 
     bool isSDAvailable() {
         return sdAvailable;
@@ -172,9 +172,9 @@ namespace STORAGE_Utils {
             // Legacy: prepend messages path
             String sdPath = String(MESSAGES_DIR) + path;
             return SD.exists(sdPath);
-        }
-        return SPIFFS.exists(path);
-    }
+            }
+            return LittleFS.exists(path);
+            }
 
     File openFile(const String& path, const char* mode) {
         if (sdAvailable) {
@@ -191,13 +191,13 @@ namespace STORAGE_Utils {
                 return File();  // Return empty File object
             }
             return SD.open(sdPath, mode);
-        }
-        // For SPIFFS read mode, check existence first
-        if (strcmp(mode, "r") == 0 && !SPIFFS.exists(path)) {
+            }
+            // For LittleFS read mode, check existence first
+            if (strcmp(mode, "r") == 0 && !LittleFS.exists(path)) {
             return File();
-        }
-        return SPIFFS.open(path, mode);
-    }
+            }
+            return LittleFS.open(path, mode);
+            }
 
     // Read file data directly into destination buffer.
     // Returns number of bytes actually read, or 0 on failure.
@@ -213,9 +213,9 @@ namespace STORAGE_Utils {
             }
             String sdPath = String(MESSAGES_DIR) + path;
             return SD.remove(sdPath);
-        }
-        return SPIFFS.remove(path);
-    }
+            }
+            return LittleFS.remove(path);
+            }
 
     bool mkdir(const String& path) {
         if (sdAvailable) {
@@ -228,9 +228,9 @@ namespace STORAGE_Utils {
                 sdPath = String(MESSAGES_DIR) + path;
             }
             return SD.mkdir(sdPath);
-        }
-        return true;  // SPIFFS doesn't need directories
-    }
+            }
+            return true;  // LittleFS doesn't need directories
+            }
 
     // List files in a directory (SD only)
     std::vector<String> listFiles(const String& dirPath) {
@@ -275,21 +275,21 @@ namespace STORAGE_Utils {
     }
 
     String getStorageType() {
-        return sdAvailable ? "SD" : "SPIFFS";
+        return sdAvailable ? "SD" : "LittleFS";
     }
 
     uint64_t getUsedBytes() {
         if (sdAvailable) {
             return SD.usedBytes();
         }
-        return SPIFFS.usedBytes();
+        return LittleFS.usedBytes();
     }
 
     uint64_t getTotalBytes() {
         if (sdAvailable) {
             return SD.totalBytes();
         }
-        return SPIFFS.totalBytes();
+        return LittleFS.totalBytes();
     }
 
     // ========== Contacts Management ==========

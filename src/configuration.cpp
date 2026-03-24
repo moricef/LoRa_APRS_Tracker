@@ -18,7 +18,7 @@
 
 #include <esp_log.h>
 #include <ArduinoJson.h>
-#include <SPIFFS.h>
+#include <LittleFS.h>
 #include "configuration.h"
 #include "lora_utils.h"
 #include "board_pinout.h"
@@ -30,7 +30,7 @@ bool Configuration::writeFile() {
     ESP_LOGI(TAG, "Saving config..");
 
     DynamicJsonDocument data(8192);
-    File configFile = SPIFFS.open("/tracker_conf.json", "w");
+    File configFile = LittleFS.open("/tracker_conf.json", "w");
 
     if (!configFile) {
         ESP_LOGE(TAG, "Could not open config file for writing");
@@ -167,7 +167,7 @@ bool Configuration::writeFile() {
 
 bool Configuration::readFile() {
     ESP_LOGI(TAG, "Reading config..");
-    File configFile = SPIFFS.open("/tracker_conf.json", "r");
+    File configFile = LittleFS.open("/tracker_conf.json", "r");
 
     if (configFile) {
         bool needsRewrite = false;
@@ -518,14 +518,14 @@ void Configuration::setDefaultValues() {
 }
 
 Configuration::Configuration() {
-    // No SPIFFS access here — global constructor runs before FreeRTOS.
-    // Just load defaults. init() will be called from setup() to load from SPIFFS.
+    // No LittleFS access here — global constructor runs before FreeRTOS.
+    // Just load defaults. init() will be called from setup() to load from LittleFS.
     setDefaultValues();
 }
 
 void Configuration::init() {
-    // Called from setup() after STORAGE_Utils::setup() has mounted/formatted SPIFFS.
-    if (SPIFFS.exists("/tracker_conf.json")) {
+    // Called from setup() after STORAGE_Utils::setup() has mounted/formatted LittleFS.
+    if (LittleFS.exists("/tracker_conf.json")) {
         beacons.clear();
         wifiAPs.clear();
         loraTypes.clear();

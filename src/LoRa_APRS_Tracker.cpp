@@ -175,12 +175,12 @@ void setup() {
         startupScreen(loraIndex, versionDate);
     #endif
 
-    // Storage + Config first: SPIFFS must be ready before WiFi/BLE read Config
+    // Storage + Config first: LittleFS must be ready before WiFi/BLE read Config
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("Storage...");
     #endif
-    STORAGE_Utils::setup();        // Formats SPIFFS on first boot
-    Config.init();                 // Now SPIFFS is ready, load or create config
+    STORAGE_Utils::setup();        // Formats LittleFS on first boot
+    Config.init();                 // Now LittleFS is ready, load or create config
     STORAGE_Utils::loadStats();
 
     // WiFi/BLE: no auto-start at boot — manual activation only via Settings
