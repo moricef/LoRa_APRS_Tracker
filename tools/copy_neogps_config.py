@@ -23,8 +23,8 @@ def copy_neogps_config(source, target, env):
         dst = os.path.join(dst_dir, cfg)
         if os.path.isfile(src):
             shutil.copy2(src, dst)
-            print(f"  [NeoGPS Config] Copied {cfg} -> {dst_dir}")
+            print(f"  Copied {cfg} -> {dst_dir}")
 
-    # Execute immediately during SCons environment initialization
-    # This ensures files are copied before any compilation step begins
-    copy_neogps_config(None, None, env)
+env.AddPreAction("buildprog", copy_neogps_config)
+# Also run before lib building
+env.AddPreAction("$BUILD_DIR/lib", copy_neogps_config)
