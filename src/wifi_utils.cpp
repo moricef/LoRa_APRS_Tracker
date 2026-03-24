@@ -204,8 +204,9 @@ namespace WIFI_Utils {
         ESP_LOGW(TAG, "WebConfiguration Started!");
 
         WiFi.mode(WIFI_MODE_NULL);
+        WiFi.disconnect(true, true); // Stop WiFi and clear persistent NVS state
         WiFi.mode(WIFI_AP);
-        WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str());
+        WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str(), 1, 0, 4); // Channel 1, visible, max 4 clients
 
         WEB_Utils::setup();
 
@@ -330,11 +331,14 @@ namespace WIFI_Utils {
 
         // Configure AP mode
         WiFi.mode(WIFI_MODE_NULL);
+        WiFi.disconnect(true, true); // Stop WiFi and clear persistent NVS state
         delay(100);
         WiFi.mode(WIFI_AP);
         delay(100);
 
-        bool success = WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str());
+        ESP_LOGI(TAG, "AP Password is: '%s' (Length: %d)", Config.wifiAutoAP.password.c_str(), Config.wifiAutoAP.password.length());
+
+        bool success = WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str(), 1, 0, 4); // Channel 1, visible, max 4 clients
         if (success) {
             ESP_LOGI(TAG, "AP Started - IP: %s", WiFi.softAPIP().toString().c_str());
             WEB_Utils::setup();
