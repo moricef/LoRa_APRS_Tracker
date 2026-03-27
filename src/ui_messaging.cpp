@@ -1143,12 +1143,12 @@ static void populate_stats(lv_obj_t *cont) {
                 lv_style_init(&style_header_text);
                 lv_style_set_text_color(&style_header_text, lv_color_hex(0xFF8C00)); // Orange
                 lv_style_set_text_font(&style_header_text, &lv_font_montserrat_14); // Specify font for headers
-                style_header_text_initialized = true; // Mark style as initialized
-            }
-            // Apply style for headers (using custom state)
-            lv_obj_add_style(stats_table, &style_header_text, LV_PART_ITEMS | LV_STATE_USER_1);
+                    style_header_text_initialized = true; // Mark style as initialized
+                }
+                // Apply style for headers (using custom state)
+                lv_obj_add_style(stats_table, &style_header_text, (lv_style_selector_t)(LV_PART_ITEMS | LV_STATE_USER_1));
 
-            // Column widths adjusted (total ~290px for content area)
+                // Column widths adjusted (total ~290px for content area)
             // Old: Time (0, 65), Station (1, 80), Pkts (2, 38), RSSI (3, 45), SNR (4, 45)
             // Column widths adjusted to use full width (~310px) and shift Pkts
             // Column widths adjusted to use full width (~310px)
@@ -1205,7 +1205,7 @@ static void populate_stats(lv_obj_t *cont) {
                 lv_table_set_cell_value(stats_table, row, 0, s.callsign.c_str());
 
                 // Packets
-                snprintf(buf, sizeof(buf), "%d", s.count);
+                snprintf(buf, sizeof(buf), "%lu", s.count);
                 lv_table_set_cell_value(stats_table, row, 1, buf);
 
                 // RSSI (average)
@@ -1557,11 +1557,11 @@ void createMsgScreen() {
         lv_obj_set_style_border_width(tab_bar, 1, LV_PART_ITEMS);
         lv_obj_set_style_border_side(tab_bar, LV_BORDER_SIDE_RIGHT, LV_PART_ITEMS);
         // Active tab: light blue background, dark blue border and text
-        lv_obj_set_style_bg_color(tab_bar, lv_color_hex(0x86B8F7), LV_PART_ITEMS | LV_STATE_CHECKED);
-        lv_obj_set_style_text_color(tab_bar, lv_color_hex(0x0952AD), LV_PART_ITEMS | LV_STATE_CHECKED);
-        lv_obj_set_style_border_color(tab_bar, lv_color_hex(0x0952AD), LV_PART_ITEMS | LV_STATE_CHECKED);
-        lv_obj_set_style_border_width(tab_bar, 3, LV_PART_ITEMS | LV_STATE_CHECKED);
-        lv_obj_set_style_border_side(tab_bar, LV_BORDER_SIDE_BOTTOM, LV_PART_ITEMS | LV_STATE_CHECKED);
+        lv_obj_set_style_bg_color(tab_bar, lv_color_hex(0x86B8F7), (lv_style_selector_t)(LV_PART_ITEMS | LV_STATE_CHECKED));
+        lv_obj_set_style_text_color(tab_bar, lv_color_hex(0x0952AD), (lv_style_selector_t)(LV_PART_ITEMS | LV_STATE_CHECKED));
+        lv_obj_set_style_border_color(tab_bar, lv_color_hex(0x0952AD), (lv_style_selector_t)(LV_PART_ITEMS | LV_STATE_CHECKED));
+        lv_obj_set_style_border_width(tab_bar, 3, (lv_style_selector_t)(LV_PART_ITEMS | LV_STATE_CHECKED));
+        lv_obj_set_style_border_side(tab_bar, LV_BORDER_SIDE_BOTTOM, (lv_style_selector_t)(LV_PART_ITEMS | LV_STATE_CHECKED));
     }
 
     // APRS Tab

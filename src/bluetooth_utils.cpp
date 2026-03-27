@@ -1,3 +1,4 @@
+#if !defined(TTGO_T_DECK_PLUS)
 /* Copyright (C) 2025 Ricardo Guzman - CA2RXU
  * 
  * This file is part of LoRa APRS Tracker.
@@ -142,3 +143,4 @@ namespace BLUETOOTH_Utils {
     }
   
 }
+#endif // !defined(TTGO_T_DECK_PLUS)

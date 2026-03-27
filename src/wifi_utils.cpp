@@ -25,6 +25,7 @@
 #include "web_utils.h"
 #include "display.h"
 #include "lvgl_ui.h"
+#include <Network.h>  // Force PlatformIO to link Network library
 
 extern Configuration        Config;
 

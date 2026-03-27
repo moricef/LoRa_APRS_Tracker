@@ -293,8 +293,11 @@ namespace MapEngine {
         RenderRequest request;
         NavRenderRequest navReq;
         ESP_LOGI(TAG, "Render task started on Core 0");
+        esp_task_wdt_add(NULL);  // Subscribe this task to WDT
 
         while (true) {
+            esp_task_wdt_reset();
+
             // Priority: NAV viewport requests (latest-wins — drain queue)
             if (navRenderQueue && xQueueReceive(navRenderQueue, &navReq, 0) == pdTRUE) {
                 NavRenderRequest latest = navReq;

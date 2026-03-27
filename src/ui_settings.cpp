@@ -698,9 +698,9 @@ static void eco_switch_changed(lv_event_t *e) {
         // Disable timeout slider and gray out everything
         if (timeout_slider) {
             lv_obj_add_state(timeout_slider, LV_STATE_DISABLED);
-            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DISABLED);
-            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x555555), LV_PART_INDICATOR | LV_STATE_DISABLED);
-            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x888888), LV_PART_KNOB | LV_STATE_DISABLED);
+            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x333333), (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_DISABLED));
+            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x555555), (lv_style_selector_t)(LV_PART_INDICATOR | LV_STATE_DISABLED));
+            lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x888888), (lv_style_selector_t)(LV_PART_KNOB | LV_STATE_DISABLED));
             if (timeout_row) {
                 lv_obj_t* timeout_title = lv_obj_get_child(timeout_row, 0);
                 lv_obj_set_style_text_color(timeout_title, lv_color_hex(0x666666), 0);
@@ -812,7 +812,7 @@ void UISettings::createDisplayScreen() {
     lv_obj_align(eco_switch, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(eco_switch, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_bg_color(eco_switch, lv_color_hex(UIColors::TEXT_GREEN),
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+                              (lv_style_selector_t)(LV_PART_INDICATOR | LV_STATE_CHECKED));
     lv_obj_set_style_bg_color(eco_switch, lv_color_hex(UIColors::TEXT_WHITE), LV_PART_KNOB);
     if (displayEcoMode) {
         lv_obj_add_state(eco_switch, LV_STATE_CHECKED);
@@ -858,9 +858,9 @@ void UISettings::createDisplayScreen() {
         lv_obj_add_state(timeout_slider, LV_STATE_DISABLED);
         lv_obj_set_style_text_color(timeout_title, lv_color_hex(0x666666), 0);
         lv_obj_set_style_text_color(timeout_label, lv_color_hex(0x666666), 0);
-        lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DISABLED);
-        lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x555555), LV_PART_INDICATOR | LV_STATE_DISABLED);
-        lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x888888), LV_PART_KNOB | LV_STATE_DISABLED);
+        lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x333333), (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_DISABLED));
+        lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x555555), (lv_style_selector_t)(LV_PART_INDICATOR | LV_STATE_DISABLED));
+        lv_obj_set_style_bg_color(timeout_slider, lv_color_hex(0x888888), (lv_style_selector_t)(LV_PART_KNOB | LV_STATE_DISABLED));
     }
 
     // Brightness row
@@ -1005,7 +1005,7 @@ void UISettings::createSoundScreen() {
     lv_obj_align(sound_switch, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(sound_switch, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_bg_color(sound_switch, lv_color_hex(UIColors::TEXT_GREEN),
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+                              (lv_style_selector_t)(LV_PART_INDICATOR | LV_STATE_CHECKED));
     lv_obj_set_style_bg_color(sound_switch, lv_color_hex(UIColors::TEXT_WHITE), LV_PART_KNOB);
     if (Config.notification.buzzerActive) {
         lv_obj_add_state(sound_switch, LV_STATE_CHECKED);
@@ -1062,7 +1062,7 @@ void UISettings::createSoundScreen() {
     lv_obj_align(tx_sw, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(tx_sw, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_bg_color(tx_sw, lv_color_hex(UIColors::TEXT_GREEN),
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+                              (lv_style_selector_t)(LV_PART_INDICATOR | LV_STATE_CHECKED));
     if (Config.notification.txBeep)
         lv_obj_add_state(tx_sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(tx_sw, tx_beep_changed, LV_EVENT_VALUE_CHANGED, NULL);
@@ -1085,7 +1085,7 @@ void UISettings::createSoundScreen() {
     lv_obj_align(rx_sw, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(rx_sw, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_bg_color(rx_sw, lv_color_hex(UIColors::TEXT_GREEN),
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+                              (lv_style_selector_t)(LV_PART_INDICATOR | LV_STATE_CHECKED));
     if (Config.notification.messageRxBeep)
         lv_obj_add_state(rx_sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(rx_sw, rx_beep_changed, LV_EVENT_VALUE_CHANGED, NULL);
@@ -1108,7 +1108,7 @@ void UISettings::createSoundScreen() {
     lv_obj_align(sta_sw, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(sta_sw, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_bg_color(sta_sw, lv_color_hex(UIColors::TEXT_GREEN),
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+                              (lv_style_selector_t)(LV_PART_INDICATOR | LV_STATE_CHECKED));
     if (Config.notification.stationBeep)
         lv_obj_add_state(sta_sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sta_sw, station_beep_changed, LV_EVENT_VALUE_CHANGED, NULL);
@@ -1302,7 +1302,7 @@ void UISettings::createRepeaterScreen() {
     lv_obj_align(repeater_switch, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(repeater_switch, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_bg_color(repeater_switch, lv_color_hex(UIColors::TEXT_GREEN),
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+                              (lv_style_selector_t)(LV_PART_INDICATOR | LV_STATE_CHECKED));
     lv_obj_set_style_bg_color(repeater_switch, lv_color_hex(UIColors::TEXT_WHITE), LV_PART_KNOB);
     if (Config.lora.repeaterMode) {
         lv_obj_add_state(repeater_switch, LV_STATE_CHECKED);
@@ -1384,7 +1384,7 @@ void UISettings::createWifiScreen() {
     lv_obj_align(wifi_switch, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(wifi_switch, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_bg_color(wifi_switch, lv_color_hex(UIColors::TEXT_GREEN),
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+                              (lv_style_selector_t)(LV_PART_INDICATOR | LV_STATE_CHECKED));
     lv_obj_set_style_bg_color(wifi_switch, lv_color_hex(UIColors::TEXT_WHITE), LV_PART_KNOB);
     if (!WiFiUserDisabled) {
         lv_obj_add_state(wifi_switch, LV_STATE_CHECKED);
@@ -1636,7 +1636,7 @@ void UISettings::createBluetoothScreen() {
     lv_obj_align(bluetooth_switch, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(bluetooth_switch, lv_color_hex(0x333333), LV_PART_MAIN);
     lv_obj_set_style_bg_color(bluetooth_switch, lv_color_hex(UIColors::TEXT_PURPLE),
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+                              (lv_style_selector_t)(LV_PART_INDICATOR | LV_STATE_CHECKED));
     lv_obj_set_style_bg_color(bluetooth_switch, lv_color_hex(UIColors::TEXT_WHITE), LV_PART_KNOB);
     if (bluetoothActive) {
         lv_obj_add_state(bluetooth_switch, LV_STATE_CHECKED);

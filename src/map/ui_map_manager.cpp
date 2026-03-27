@@ -584,7 +584,10 @@ void create_map_screen() {
                     ESP_LOGW(TAG, "No viewport sprites available for NAV rendering");
                 }
 
-                esp_task_wdt_add(xTaskGetCurrentTaskHandle());
+                esp_err_t wdt_err = esp_task_wdt_add(xTaskGetCurrentTaskHandle());
+                if (wdt_err != ESP_OK) {
+                    ESP_LOGE(TAG, "WDT re-add failed: %s", esp_err_to_name(wdt_err));
+                }
                 esp_task_wdt_reset();
             } else {
                 if (navModeActive) {

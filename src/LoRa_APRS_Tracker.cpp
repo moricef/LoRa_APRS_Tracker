@@ -148,6 +148,10 @@ extern bool gpsIsActive;
 void setup() {
     Serial.begin(115200);
 
+    // Silence GPIO 14 warning spam (pin used by PSRAM on ESP32-S3)
+    // Arduino Core 3 warns if digitalRead() is called on unconfigured pins
+    pinMode(14, INPUT);
+
     // Boost CPU to 240MHz for fast init
     setCpuFrequencyMhz(240);
     ESP_LOGI(TAG, "CPU frequency: %d MHz", getCpuFrequencyMhz());
@@ -237,10 +241,16 @@ void setup() {
     #endif
     ESP_LOGI(TAG, "Heap: %u KB total, %u KB free", ESP.getHeapSize()/1024, ESP.getFreeHeap()/1024);
 
-    // Initialize watchdog timer (30 seconds timeout)
-    esp_task_wdt_init(30, true);  // 30 seconds, panic on timeout
-    esp_task_wdt_add(NULL);       // Add current task to watchdog
-    ESP_LOGI(TAG, "Watchdog initialized (30s timeout)");
+    // Reconfigure watchdog timeout (Arduino Core 3 already initialized TWDT)
+    esp_task_wdt_config_t wdt_config = {
+        .timeout_ms = 30000,
+        .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+        .trigger_panic = true
+    };
+    esp_task_wdt_reconfigure(&wdt_config);
+    // Ensure loopTask is subscribed (ignore ESP_ERR_INVALID_STATE if already added)
+    esp_err_t wdt_err = esp_task_wdt_add(NULL);
+    ESP_LOGI(TAG, "Watchdog reconfigured (30s), add=%s", esp_err_to_name(wdt_err));
 
     ESP_LOGI(TAG, "Setup Done!");
 
