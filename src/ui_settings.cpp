@@ -1521,9 +1521,43 @@ static void bluetooth_screen_timer_cb(lv_timer_t *timer) {
 // Timer callbacks for deferred BLE operations
 // Phase 2: init BLE after WiFi memory is released
 static void ble_setup_phase2_cb(lv_timer_t *timer) {
-    ESP_LOGI(TAG, "BLE init: Free heap: %u bytes", ESP.getFreeHeap());
+    ESP_LOGI(TAG, "BLE init: Free DRAM: %u bytes, largest block: %u bytes",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    // Walk DRAM heap — collect into PSRAM buffer, log AFTER walk (no UART during heap lock)
+    struct HeapEntry { void* ptr; size_t size; bool used; };
+    static const int MAX_ENTRIES = 64;
+    HeapEntry* entries = (HeapEntry*)heap_caps_malloc(MAX_ENTRIES * sizeof(HeapEntry), MALLOC_CAP_SPIRAM);
+    if (entries) {
+        struct WalkCtx { HeapEntry* buf; int count; };
+        WalkCtx ctx = {entries, 0};
+        heap_caps_walk(MALLOC_CAP_INTERNAL,
+            [](walker_heap_into_t heap_info, walker_block_info_t block_info, void *userData) -> bool {
+                auto* c = static_cast<WalkCtx*>(userData);
+                // Collect free blocks and used blocks >= 4 KB
+                if (!block_info.used || block_info.size >= 4096) {
+                    if (c->count < MAX_ENTRIES) {
+                        c->buf[c->count++] = {block_info.ptr, block_info.size, block_info.used};
+                    }
+                }
+                return true;
+            }, &ctx);
+        // Now safe to log — heap lock released
+        ESP_LOGW(TAG, "=== DRAM heap map (%d entries) ===", ctx.count);
+        for (int i = 0; i < ctx.count; i++) {
+            if (entries[i].used) {
+                ESP_LOGW("HEAP", "USED %5u @ %p", entries[i].size, entries[i].ptr);
+            } else {
+                ESP_LOGI("HEAP", "FREE %5u @ %p", entries[i].size, entries[i].ptr);
+            }
+        }
+        ESP_LOGW(TAG, "=== End heap map ===");
+        heap_caps_free(entries);
+    }
     BLE_Utils::setup();
-    ESP_LOGI(TAG, "BLE started. Free heap: %u bytes", ESP.getFreeHeap());
+    ESP_LOGI(TAG, "BLE started. Free DRAM: %u bytes, largest block: %u bytes",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     lv_timer_del(timer);
 }
 

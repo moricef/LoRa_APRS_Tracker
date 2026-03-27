@@ -19,6 +19,7 @@
 #include <esp_log.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <esp_netif.h>
 #include <esp_task_wdt.h>
 #include "configuration.h"
 #include "wifi_utils.h"
@@ -316,6 +317,21 @@ namespace WIFI_Utils {
         WiFi.disconnect(true);
         esp_wifi_stop();
         esp_wifi_deinit();  // Full DRAM release (esp_wifi_stop alone keeps ~38 KB allocated)
+        // Destroy ALL network interfaces to free LwIP/netif DRAM allocations.
+        // Without this, netifs sit in the middle of the heap and fragment it
+        // (71 KB free but only 31 KB largest block → BLE advertising fails).
+        // WiFi.mode(WIFI_STA) will recreate netifs on next WiFi start.
+        esp_netif_t* netif = esp_netif_next(NULL);
+        while (netif) {
+            esp_netif_t* next = esp_netif_next(netif);
+            const char* key = esp_netif_get_ifkey(netif);
+            ESP_LOGI(TAG, "Destroying netif: %s", key ? key : "unknown");
+            esp_netif_destroy(netif);
+            netif = next;
+        }
+        ESP_LOGI(TAG, "After full cleanup - DRAM: %u, largest: %u",
+                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
         WiFiConnected = false;
         wifiConnecting = false;
         WiFiEcoMode = false;
