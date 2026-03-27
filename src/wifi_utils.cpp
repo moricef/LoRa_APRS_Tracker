@@ -23,6 +23,7 @@
 #include "configuration.h"
 #include "wifi_utils.h"
 #include "web_utils.h"
+#include "aprs_is_utils.h"
 #include "display.h"
 #include "lvgl_ui.h"
 #include <Network.h>  // Force PlatformIO to link Network library
@@ -310,6 +311,8 @@ namespace WIFI_Utils {
 
     void stop() {
         ESP_LOGI(TAG, "Stopping WiFi for BLE coexistence");
+        APRS_IS_Utils::disconnect();
+        WEB_Utils::stop();
         WiFi.disconnect(true);
         esp_wifi_stop();
         WiFiConnected = false;

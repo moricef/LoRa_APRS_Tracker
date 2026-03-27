@@ -36,6 +36,7 @@ namespace WEB_Utils {
     void handleBootstrapScript(AsyncWebServerRequest *request);
 
     void setup();
+    void stop();
     bool checkPendingRestart(); // Call from loop() — deferred ESP.restart() after web save
 
 }

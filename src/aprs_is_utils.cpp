@@ -145,6 +145,16 @@ namespace APRS_IS_Utils {
         ESP_LOGI(TAG, "Uploaded: %s", packet.c_str());
     }
 
+    void disconnect() {
+        if (aprsIsConnected) {
+            aprsIsClient.stop();
+            aprsIsConnected = false;
+            passcodeValid = false;
+            dnsResolved = false;
+            ESP_LOGI(TAG, "Disconnected (BLE coexistence)");
+        }
+    }
+
     bool isConnected() {
         return aprsIsConnected && aprsIsClient.connected();
     }
