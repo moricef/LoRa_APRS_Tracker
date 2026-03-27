@@ -315,6 +315,7 @@ namespace WIFI_Utils {
         WEB_Utils::stop();
         WiFi.disconnect(true);
         esp_wifi_stop();
+        esp_wifi_deinit();  // Full DRAM release (esp_wifi_stop alone keeps ~38 KB allocated)
         WiFiConnected = false;
         wifiConnecting = false;
         WiFiEcoMode = false;
