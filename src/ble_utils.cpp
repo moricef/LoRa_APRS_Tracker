@@ -157,10 +157,9 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 
 namespace BLE_Utils {
 
-
-        void stop() {
-            if (NimBLEDevice::isInitialized()) {
-                BLEDevice::deinit();
+    void stop() {
+        if (NimBLEDevice::isInitialized()) {
+            BLEDevice::deinit(true);  // true = full cleanup (NimBLE 2.x)
         }
         pServer = nullptr;
         pCharacteristicTx = nullptr;
@@ -190,10 +189,8 @@ namespace BLE_Utils {
 
             BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
             pAdvertising->addServiceUUID(useKISS ? SERVICE_UUID_0 : SERVICE_UUID_1);
-
-
-                        pAdvertising->start();
-            ESP_LOGD(TAG, "%s", "Waiting for BLE central to connect...");
+            pAdvertising->start();
+            ESP_LOGD(TAG, "Waiting for BLE central to connect...");
         } else {
             ESP_LOGE(TAG, "Failed to create BLE service");
         }

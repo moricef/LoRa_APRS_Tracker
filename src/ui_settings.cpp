@@ -1519,13 +1519,17 @@ static void bluetooth_screen_timer_cb(lv_timer_t *timer) {
 }
 
 // Timer callbacks for deferred BLE operations
-static void ble_setup_timer_cb(lv_timer_t *timer) {
-    uint32_t currentFreeHeap = ESP.getFreeHeap();
-    uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-    ESP_LOGI(TAG, "BLE setup timer: Free heap: %u bytes, Largest block: %u bytes",
-             currentFreeHeap, largestBlock);
+// Phase 2: init BLE after WiFi memory is released
+static void ble_setup_phase2_cb(lv_timer_t *timer) {
+    ESP_LOGI(TAG, "BLE init: Free heap: %u bytes", ESP.getFreeHeap());
+    BLE_Utils::setup();
+    ESP_LOGI(TAG, "BLE started. Free heap: %u bytes", ESP.getFreeHeap());
+    lv_timer_del(timer);
+}
 
-    const uint32_t MIN_CONTIGUOUS_HEAP_FOR_BLE = 40 * 1024;
+// Phase 1: stop WiFi, then schedule BLE init after 200ms for async cleanup
+static void ble_setup_timer_cb(lv_timer_t *timer) {
+    ESP_LOGI(TAG, "BLE setup: Free heap: %u bytes", ESP.getFreeHeap());
 
     if (Config.bluetooth.useBLE) {
         // Stop WiFi — mutually exclusive on ESP32-S3
@@ -1536,8 +1540,8 @@ static void ble_setup_timer_cb(lv_timer_t *timer) {
         }
         WIFI_Utils::stop();
 
-        BLE_Utils::setup();
-        ESP_LOGI(TAG, "BLE started. Free heap: %u bytes", ESP.getFreeHeap());
+        // Delay BLE init to let WiFi free DRAM asynchronously
+        lv_timer_create(ble_setup_phase2_cb, 200, NULL);
     }
     lv_timer_del(timer);
 }

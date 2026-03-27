@@ -372,6 +372,7 @@ namespace MapEngine {
         renderActive_ = false;
 
         if (mapRenderTaskHandle) {
+            esp_task_wdt_delete(mapRenderTaskHandle);
             vTaskDelete(mapRenderTaskHandle);
             mapRenderTaskHandle = nullptr;
         }

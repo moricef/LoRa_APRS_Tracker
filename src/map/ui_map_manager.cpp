@@ -563,8 +563,8 @@ void create_map_screen() {
                 MapTiles::switchZoomTable(nav_zooms, nav_zoom_count);
 
                 // NAV viewport rendering
-                // Temporarily unsubscribe loopTask from WDT — rendering can take 10-30s
-                esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
+                // renderNavViewport() calls esp_task_wdt_reset() frequently enough
+                // (every 32 scanlines, every 64 features) to stay within 30s timeout
 
                 // Build region pointer array for renderNavViewport
                 const char* regionPtrs[NAV_MAX_REGIONS];
@@ -584,10 +584,6 @@ void create_map_screen() {
                     ESP_LOGW(TAG, "No viewport sprites available for NAV rendering");
                 }
 
-                esp_err_t wdt_err = esp_task_wdt_add(xTaskGetCurrentTaskHandle());
-                if (wdt_err != ESP_OK) {
-                    ESP_LOGE(TAG, "WDT re-add failed: %s", esp_err_to_name(wdt_err));
-                }
                 esp_task_wdt_reset();
             } else {
                 if (navModeActive) {
