@@ -25,6 +25,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <freertos/idf_additions.h>
 #include <esp_log.h>
 
 #include "map_state.h"
@@ -182,7 +183,7 @@ static void tilePreloadTaskFunc(void* param) {
     }
 
     ESP_LOGI(TAG, "Tile preload task stopped");
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);  // Matches xTaskCreatePinnedToCoreWithCaps (frees PSRAM stack)
 }
 
 // =============================================================================
@@ -439,15 +440,20 @@ namespace MapTiles {
         if (tilePreloadQueue == nullptr)
             tilePreloadQueue = xQueueCreate(TILE_PRELOAD_QUEUE_SIZE, sizeof(TileRequest));
         preloadTaskRunning = true;
-        xTaskCreatePinnedToCore(tilePreloadTaskFunc, "TilePreload", 4096,
-                                NULL, 1, &tilePreloadTask, 1);
+        xTaskCreatePinnedToCoreWithCaps(tilePreloadTaskFunc, "TilePreload", 4096,
+                                NULL, 1, &tilePreloadTask, 1,
+                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);  // Stack in PSRAM (saves 4 KB DRAM)
     }
 
     void stopTilePreloadTask() {
         if (tilePreloadTask == nullptr) return;
         preloadTaskRunning = false;
-        vTaskDelay(pdMS_TO_TICKS(200));
+        vTaskDelay(pdMS_TO_TICKS(200));  // Wait for task self-delete
         tilePreloadTask = nullptr;
+        if (tilePreloadQueue) {
+            vQueueDelete(tilePreloadQueue);
+            tilePreloadQueue = nullptr;
+        }
     }
 
     // -------------------------------------------------------------------------
