@@ -394,7 +394,7 @@ namespace MapEngine {
             spriteMutex = nullptr;
         }
         // Free waterway label buffers
-        if (glyphSprite) { glyphSprite->deleteSprite(); delete glyphSprite; glyphSprite = nullptr; }
+        if (glyphSprite) { glyphSprite->deleteSprite(); psram_delete(glyphSprite); glyphSprite = nullptr; }
         glyphSpriteW = glyphSpriteH = 0;
         heap_caps_free(wlScreenX); wlScreenX = nullptr;
         heap_caps_free(wlScreenY); wlScreenY = nullptr;
@@ -457,7 +457,7 @@ namespace MapEngine {
         for (int i = 0; i < RASTER_TILE_CACHE_SIZE; ++i) {
             if (_tileSpritePool[i]) {
                 _tileSpritePool[i]->deleteSprite();
-                delete _tileSpritePool[i];
+                psram_delete(_tileSpritePool[i]);
                 _tileSpritePool[i] = nullptr;
             }
             if (i < (int)_tileCache.size()) {
@@ -514,7 +514,7 @@ namespace MapEngine {
             ESP_LOGI(TAG, "Initializing static raster tile pool (%d sprites)...", RASTER_TILE_CACHE_SIZE);
             for (int i = 0; i < RASTER_TILE_CACHE_SIZE; ++i) {
                 if (_tileSpritePool[i] == nullptr) {
-                    _tileSpritePool[i] = new LGFX_Sprite(_gfx);
+                    _tileSpritePool[i] = psram_new<LGFX_Sprite>(_gfx);
                     if (!_tileSpritePool[i]) {
                         ESP_LOGE(TAG, "Failed to allocate sprite %d in pool", i);
                         continue;
@@ -523,7 +523,7 @@ namespace MapEngine {
                     _tileSpritePool[i]->setColorDepth(16);
                     if (!_tileSpritePool[i]->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE)) {
                         ESP_LOGE(TAG, "Failed to create sprite %d in pool (PSRAM)", i);
-                        delete _tileSpritePool[i];
+                        psram_delete(_tileSpritePool[i]);
                         _tileSpritePool[i] = nullptr;
                     }
                 }
@@ -584,7 +584,7 @@ namespace MapEngine {
             ESP_LOGI(TAG, "Initializing static raster tile pool (%d sprites)...", RASTER_TILE_CACHE_SIZE);
             for (int i = 0; i < RASTER_TILE_CACHE_SIZE; ++i) {
                 if (_tileSpritePool[i] == nullptr) {
-                    _tileSpritePool[i] = new LGFX_Sprite(gfx);
+                    _tileSpritePool[i] = psram_new<LGFX_Sprite>(gfx);
                     if (!_tileSpritePool[i]) {
                         ESP_LOGE(TAG, "Failed to allocate sprite %d in pool", i);
                         return; // Abort
@@ -593,7 +593,7 @@ namespace MapEngine {
                     _tileSpritePool[i]->setColorDepth(16);
                     if (!_tileSpritePool[i]->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE)) {
                         ESP_LOGE(TAG, "Failed to create sprite %d in pool (PSRAM)", i);
-                        delete _tileSpritePool[i];
+                        psram_delete(_tileSpritePool[i]);
                         _tileSpritePool[i] = nullptr;
                         return; // Abort
                     }

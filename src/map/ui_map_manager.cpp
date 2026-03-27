@@ -27,6 +27,7 @@
 #include <freertos/task.h>
 
 #include "map_engine.h"
+#include "map_internal.h"
 #include "ui_map_manager.h"
 #include "map_state.h"
 #include "map_tiles.h"
@@ -464,21 +465,25 @@ void create_map_screen() {
     // Canvas buffer = front sprite buffer (zero-copy)
     const size_t spriteBytes = MAP_SPRITE_SIZE * MAP_SPRITE_SIZE * 2;
     if (!backViewportSprite) {
-        backViewportSprite = new LGFX_Sprite(&tft);
-        backViewportSprite->setPsram(true);
-        if (backViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
-            ESP_LOGE(TAG, "Failed to create back viewport sprite");
-            delete backViewportSprite;
-            backViewportSprite = nullptr;
+        backViewportSprite = psram_new<LGFX_Sprite>(&tft);
+        if (backViewportSprite) {
+            backViewportSprite->setPsram(true);
+            if (backViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
+                ESP_LOGE(TAG, "Failed to create back viewport sprite");
+                psram_delete(backViewportSprite);
+                backViewportSprite = nullptr;
+            }
         }
     }
     if (!frontViewportSprite) {
-        frontViewportSprite = new LGFX_Sprite(&tft);
-        frontViewportSprite->setPsram(true);
-        if (frontViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
-            ESP_LOGE(TAG, "Failed to create front viewport sprite");
-            delete frontViewportSprite;
-            frontViewportSprite = nullptr;
+        frontViewportSprite = psram_new<LGFX_Sprite>(&tft);
+        if (frontViewportSprite) {
+            frontViewportSprite->setPsram(true);
+            if (frontViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
+                ESP_LOGE(TAG, "Failed to create front viewport sprite");
+                psram_delete(frontViewportSprite);
+                frontViewportSprite = nullptr;
+            }
         }
     }
 

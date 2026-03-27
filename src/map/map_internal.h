@@ -13,7 +13,26 @@
 #include <cmath>
 #include <climits>
 #include <esp_task_wdt.h>
+#include <esp_heap_caps.h>
 #include <SD.h>
+#include <new>
+
+// Allocate a C++ object in PSRAM (placement new).
+// On ESP32-S3, PSRAM is cache-mapped so vtable dispatch works normally.
+template <typename T, typename... Args>
+inline T* psram_new(Args&&... args) {
+    void* mem = heap_caps_malloc(sizeof(T), MALLOC_CAP_SPIRAM);
+    if (!mem) return nullptr;
+    return new (mem) T(std::forward<Args>(args)...);
+}
+
+// Destroy a PSRAM-allocated object (explicit destructor + heap_caps_free).
+template <typename T>
+inline void psram_delete(T* ptr) {
+    if (!ptr) return;
+    ptr->~T();
+    heap_caps_free(ptr);
+}
 
 namespace MapEngine {
 

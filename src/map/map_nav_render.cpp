@@ -1196,18 +1196,18 @@ namespace MapEngine {
         int maxGlyphH = map.fontHeight() + 2;
         int maxGlyphW = maxGlyphH * 2;  // widest glyph won't exceed 2× height
         if (glyphSprite && (glyphSpriteW < maxGlyphW || glyphSpriteH < maxGlyphH)) {
-            glyphSprite->deleteSprite(); delete glyphSprite;
+            glyphSprite->deleteSprite(); psram_delete(glyphSprite);
             glyphSprite = nullptr;
         }
         if (!glyphSprite) {
-            glyphSprite = new LGFX_Sprite(&map);
+            glyphSprite = psram_new<LGFX_Sprite>(&map);
             glyphSprite->setColorDepth(16);
             glyphSprite->setPsram(true);
             if (glyphSprite->createSprite(maxGlyphW, maxGlyphH)) {
                 glyphSpriteW = maxGlyphW;
                 glyphSpriteH = maxGlyphH;
             } else {
-                delete glyphSprite; glyphSprite = nullptr;
+                psram_delete(glyphSprite); glyphSprite = nullptr;
                 glyphSpriteW = glyphSpriteH = 0;
             }
         }
