@@ -437,8 +437,16 @@ namespace MapTiles {
 
     void startTilePreloadTask() {
         if (tilePreloadTask != nullptr) return;
-        if (tilePreloadQueue == nullptr)
-            tilePreloadQueue = xQueueCreate(TILE_PRELOAD_QUEUE_SIZE, sizeof(TileRequest));
+
+        static uint8_t* preloadQBuf = nullptr;
+        static StaticQueue_t preloadQStruct;
+        if (!preloadQBuf) preloadQBuf = (uint8_t*)heap_caps_malloc(TILE_PRELOAD_QUEUE_SIZE * sizeof(TileRequest), MALLOC_CAP_SPIRAM);
+
+        if (tilePreloadQueue == nullptr) {
+            if (preloadQBuf) tilePreloadQueue = xQueueCreateStatic(TILE_PRELOAD_QUEUE_SIZE, sizeof(TileRequest), preloadQBuf, &preloadQStruct);
+            else tilePreloadQueue = xQueueCreate(TILE_PRELOAD_QUEUE_SIZE, sizeof(TileRequest)); // Fallback
+        }
+
         preloadTaskRunning = true;
         xTaskCreatePinnedToCoreWithCaps(tilePreloadTaskFunc, "TilePreload", 4096,
                                 NULL, 1, &tilePreloadTask, 1,

@@ -415,8 +415,19 @@ namespace MapEngine {
         canvas_to_invalidate_ = canvas_to_invalidate;
         if (!renderLock) renderLock = xSemaphoreCreateMutex();
         spriteMutex = xSemaphoreCreateMutex();
-        mapRenderQueue = xQueueCreate(10, sizeof(RenderRequest));
-        navRenderQueue = xQueueCreate(1, sizeof(NavRenderRequest));
+
+        static uint8_t* mapRenderQBuf = nullptr;
+        static StaticQueue_t mapRenderQStruct;
+        if (!mapRenderQBuf) mapRenderQBuf = (uint8_t*)heap_caps_malloc(10 * sizeof(RenderRequest), MALLOC_CAP_SPIRAM);
+        if (mapRenderQBuf) mapRenderQueue = xQueueCreateStatic(10, sizeof(RenderRequest), mapRenderQBuf, &mapRenderQStruct);
+        else mapRenderQueue = xQueueCreate(10, sizeof(RenderRequest)); // Fallback
+
+        static uint8_t* navRenderQBuf = nullptr;
+        static StaticQueue_t navRenderQStruct;
+        if (!navRenderQBuf) navRenderQBuf = (uint8_t*)heap_caps_malloc(1 * sizeof(NavRenderRequest), MALLOC_CAP_SPIRAM);
+        if (navRenderQBuf) navRenderQueue = xQueueCreateStatic(1, sizeof(NavRenderRequest), navRenderQBuf, &navRenderQStruct);
+        else navRenderQueue = xQueueCreate(1, sizeof(NavRenderRequest)); // Fallback
+
         mapEventGroup = xEventGroupCreate();
 
         // Allocate waterway label buffers in PSRAM (freed in stopRenderTask)

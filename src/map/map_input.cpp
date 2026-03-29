@@ -22,8 +22,11 @@
 #include "lvgl_ui.h"
 #include "ui_map_manager.h"  // For SCREEN_WIDTH, SCREEN_HEIGHT, MAP_VISIBLE_HEIGHT, MAP_MARGIN_X/Y, MAP_TILE_SIZE, redraw_map_canvas
 #include "ui_dashboard.h"
+#include "ble_utils.h"
 
 using namespace MapState;
+
+extern bool bluetoothActive;
 
 static const char* TAG = "MapInput";
 
@@ -131,10 +134,18 @@ namespace MapInput {
                       heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
+        // Resume BLE if it was paused for map entry
+        if (blePausedForMap) {
+            ESP_LOGI(TAG, "Resuming BLE after map exit");
+            BLE_Utils::setup();
+            bluetoothActive = true;
+            blePausedForMap = false;
+        }
+
         // Retour explicite au dashboard avec del=true pour détruire la map et libérer la DRAM
         lv_scr_load_anim(UIDashboard::getMainScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, true);
         MapState::screen_map = nullptr;
-        }
+    }
 
     void btn_map_recenter_clicked(lv_event_t* e) {
         ESP_LOGI(TAG, "Recentering on GPS");

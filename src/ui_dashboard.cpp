@@ -12,6 +12,7 @@ static const char *TAG = "Dashboard";
 #include "ui_settings.h"
 #include "ui_popups.h"
 #include "ui_map_manager.h"
+#include "map_state.h"
 #include "lvgl_ui.h"
 
 #include <Arduino.h>
@@ -161,6 +162,15 @@ static void btn_map_clicked(lv_event_t *e) {
                   heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                   heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                   heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
+    // Pause BLE if active — map needs DRAM that BLE occupies (~65 KB)
+    if (bluetoothActive) {
+        ESP_LOGI(TAG, "Pausing BLE for map entry");
+        BLE_Utils::stop();
+        bluetoothActive = false;
+        MapState::blePausedForMap = true;
+    }
+
     UIPopups::closeAll();
     ESP_LOGD(TAG, "Popups closed");
 

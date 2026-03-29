@@ -61,6 +61,7 @@ namespace MapState {
     // UI state
     // -------------------------------------------------------------------------
     bool mapFullscreen = false;
+    bool blePausedForMap = false;
 
     // -------------------------------------------------------------------------
     // Hit zones stations
