@@ -132,6 +132,7 @@ You will find details about:
 - [LVGL](https://lvgl.io/) - UI library
 - [LovyanGFX](https://github.com/lovyan03/LovyanGFX) - Graphics library
 - [IceNav-v3](https://github.com/jgauchia/IceNav-v3) - NAV format and vector rendering
+- [OpenStreetMap](https://www.openstreetmap.org/copyright) - Map data and tiles
 
 
 
