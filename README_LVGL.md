@@ -138,8 +138,9 @@ You will find details about:
 
 ## Support This Project
 
-If you find this project useful:
+If you find this project useful, star ⭐ the repo!
 
+You can also support development via:
 [PayPal donation](https://paypal.me/moricef09) | [GitHub Sponsors](https://github.com/sponsors/moricef)
 
 **Original project**: Support [CA2RXU](https://github.com/sponsors/richonguzman) too!
