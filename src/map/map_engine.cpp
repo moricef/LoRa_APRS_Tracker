@@ -878,52 +878,127 @@ namespace MapEngine {
             return &s;
         }
 
-        // Read NPK2 header (25 bytes)
-        if (s.file.read((uint8_t*)&s.header, sizeof(s.header)) != sizeof(s.header) ||
-            memcmp(s.header.magic, "NPK2", 4) != 0) {
-            ESP_LOGE(TAG, "Invalid magic in %s (expected NPK2)", packPath);
+        // Read magic first to determine version
+        char magic[4];
+        if (s.file.read((uint8_t*)magic, 4) != 4) {
+            ESP_LOGE(TAG, "Failed to read magic from %s", packPath);
             s.file.close();
             xSemaphoreGiveRecursive(spiMutex);
             markSlot();
             return &s;
         }
 
-        if (s.header.tile_count == 0 || s.header.y_max < s.header.y_min) {
-            ESP_LOGE(TAG, "Invalid header in %s (tiles=%u, y_min=%u, y_max=%u)",
-                          packPath, s.header.tile_count, s.header.y_min, s.header.y_max);
+        // Determine version based on magic
+        bool isNpk3 = (memcmp(magic, "NPK3", 4) == 0);
+        bool isNpk2 = (memcmp(magic, "NPK2", 4) == 0);
+        if (!isNpk2 && !isNpk3) {
+            ESP_LOGE(TAG, "Invalid magic in %s (expected NPK2 or NPK3)", packPath);
             s.file.close();
             xSemaphoreGiveRecursive(spiMutex);
             markSlot();
             return &s;
         }
 
-        // Load Y-table into PSRAM
-        uint32_t ySpan = s.header.y_max - s.header.y_min + 1;
-        size_t ytableSize = ySpan * sizeof(UIMapManager::Npk2YEntry);
-        s.yTable = (UIMapManager::Npk2YEntry*)heap_caps_malloc(ytableSize, MALLOC_CAP_SPIRAM);
-        if (!s.yTable) {
-            ESP_LOGE(TAG, "Failed to alloc Y-table (%u bytes)", (unsigned)ytableSize);
-            s.file.close();
-            xSemaphoreGiveRecursive(spiMutex);
-            markSlot();
-            return &s;
+        // Store version
+        s.version = isNpk3 ? 3 : 2;
+        // Copy magic into header.magic (common field)
+        memcpy(s.header.magic, magic, 4);
+
+        if (s.version == 2) {
+            // NPK2: read remaining 21 bytes of header (zoom + tile_count + y_min + y_max + ytable_offset + index_offset)
+            uint8_t remaining[21];
+            if (s.file.read(remaining, sizeof(remaining)) != sizeof(remaining)) {
+                ESP_LOGE(TAG, "Failed to read NPK2 header from %s", packPath);
+                s.file.close();
+                xSemaphoreGiveRecursive(spiMutex);
+                markSlot();
+                return &s;
+            }
+            s.header.zoom = remaining[0];
+            s.header.tile_count = *(uint32_t*)(remaining + 1);
+            s.header.y_min = *(uint32_t*)(remaining + 5);
+            s.header.y_max = *(uint32_t*)(remaining + 9);
+            s.header.ytable_offset = *(uint32_t*)(remaining + 13);
+            s.header.index_offset = *(uint32_t*)(remaining + 17);
+
+            if (s.header.tile_count == 0 || s.header.y_max < s.header.y_min) {
+                ESP_LOGE(TAG, "Invalid NPK2 header in %s (tiles=%u, y_min=%u, y_max=%u)",
+                              packPath, s.header.tile_count, s.header.y_min, s.header.y_max);
+                s.file.close();
+                xSemaphoreGiveRecursive(spiMutex);
+                markSlot();
+                return &s;
+            }
+        } else {
+            // NPK3: read remaining 22 bytes of header (zoom + tile_count + index_offset + reserved[16])
+            uint8_t remaining[22];
+            if (s.file.read(remaining, sizeof(remaining)) != sizeof(remaining)) {
+                ESP_LOGE(TAG, "Failed to read NPK3 header from %s", packPath);
+                s.file.close();
+                xSemaphoreGiveRecursive(spiMutex);
+                markSlot();
+                return &s;
+            }
+            s.header.zoom = remaining[0];
+            s.header.tile_count = *(uint32_t*)(remaining + 1);
+            s.header.index_offset = *(uint32_t*)(remaining + 5);
+            // y_min/y_max/ytable_offset are unused for NPK3, but keep them zero
+            s.header.y_min = 0;
+            s.header.y_max = 0;
+            s.header.ytable_offset = 0;
+            // Store NPK3-specific fields
+            s.tileCount3 = s.header.tile_count;
+            s.indexOffset3 = s.header.index_offset;
+
+            if (s.header.tile_count == 0) {
+                ESP_LOGE(TAG, "Invalid NPK3 header in %s (tiles=%u)",
+                              packPath, s.header.tile_count);
+                s.file.close();
+                xSemaphoreGiveRecursive(spiMutex);
+                markSlot();
+                return &s;
+            }
         }
 
-        s.file.seek(s.header.ytable_offset);
-        if (s.file.read((uint8_t*)s.yTable, ytableSize) != ytableSize) {
-            ESP_LOGE(TAG, "Failed to read Y-table from %s", packPath);
-            heap_caps_free(s.yTable);
+        // Load Y-table only for NPK2
+        if (s.version == 2) {
+            uint32_t ySpan = s.header.y_max - s.header.y_min + 1;
+            size_t ytableSize = ySpan * sizeof(UIMapManager::Npk2YEntry);
+            s.yTable = (UIMapManager::Npk2YEntry*)heap_caps_malloc(ytableSize, MALLOC_CAP_SPIRAM);
+            if (!s.yTable) {
+                ESP_LOGE(TAG, "Failed to alloc Y-table (%u bytes)", (unsigned)ytableSize);
+                s.file.close();
+                xSemaphoreGiveRecursive(spiMutex);
+                markSlot();
+                return &s;
+            }
+
+            s.file.seek(s.header.ytable_offset);
+            if (s.file.read((uint8_t*)s.yTable, ytableSize) != ytableSize) {
+                ESP_LOGE(TAG, "Failed to read Y-table from %s", packPath);
+                heap_caps_free(s.yTable);
+                s.yTable = nullptr;
+                s.file.close();
+                xSemaphoreGiveRecursive(spiMutex);
+                markSlot();
+                return &s;
+            }
+        } else {
+            // NPK3: no Y-table
             s.yTable = nullptr;
-            s.file.close();
-            xSemaphoreGiveRecursive(spiMutex);
-            markSlot();
-            return &s;
         }
 
         xSemaphoreGiveRecursive(spiMutex);
         markSlot();
-        ESP_LOGI(TAG, "Opened pack: %s (%u tiles, Y %u-%u, Y-table %u bytes)",
-                      packPath, s.header.tile_count, s.header.y_min, s.header.y_max, (unsigned)ytableSize);
+        if (s.version == 2) {
+            uint32_t ySpan = s.header.y_max - s.header.y_min + 1;
+            size_t ytableSize = ySpan * sizeof(UIMapManager::Npk2YEntry);
+            ESP_LOGI(TAG, "Opened NPK2 pack: %s (%u tiles, Y %u-%u, Y-table %u bytes)",
+                          packPath, s.header.tile_count, s.header.y_min, s.header.y_max, (unsigned)ytableSize);
+        } else {
+            ESP_LOGI(TAG, "Opened NPK3 pack: %s (%u tiles, Hilbert index)",
+                          packPath, s.header.tile_count);
+        }
         return &s;
     }
 
@@ -934,12 +1009,22 @@ namespace MapEngine {
         for (int i = 0; i < NPK_MAX_REGIONS; i++) {
             if (npkSlots[i].active && npkSlots[i].zoom == zoom &&
                 strcmp(npkSlots[i].region, region) == 0) {
-                // Only return slots with valid yTable — failed opens must be retried
-                if (npkSlots[i].yTable &&
-                    tileY >= npkSlots[i].header.y_min && tileY <= npkSlots[i].header.y_max) {
-                    npkSlots[i].lastAccess = ++npkAccessCounter;
-                    return &npkSlots[i];
+                // For NPK2: need valid yTable and Y-range coverage
+                // For NPK3: just need active slot with file (no Y-range)
+                if (npkSlots[i].version == 2) {
+                    if (npkSlots[i].yTable &&
+                        tileY >= npkSlots[i].header.y_min && tileY <= npkSlots[i].header.y_max) {
+                        npkSlots[i].lastAccess = ++npkAccessCounter;
+                        return &npkSlots[i];
+                    }
+                } else if (npkSlots[i].version == 3) {
+                    // NPK3 slot is valid regardless of tileY
+                    if (npkSlots[i].file) {
+                        npkSlots[i].lastAccess = ++npkAccessCounter;
+                        return &npkSlots[i];
+                    }
                 }
+                // else version unknown or file missing → treat as failed open
             }
         }
 
@@ -1045,94 +1130,140 @@ namespace MapEngine {
     // Uses index row cache to avoid redundant SD reads for the same Y-row.
     bool findNpkTileInSlot(NpkSlot* slot, uint32_t x, uint32_t y,
                                    UIMapManager::Npk2IndexEntry* result) {
-        if (!slot || !slot->yTable || !slot->file) return false;
+        if (!slot || !slot->file) return false;
 
-        // Check Y range
-        if (y < slot->header.y_min || y > slot->header.y_max) return false;
+        // NPK2 path
+        if (slot->version == 2) {
+            if (!slot->yTable) return false;
+            // Check Y range
+            if (y < slot->header.y_min || y > slot->header.y_max) return false;
 
-        const UIMapManager::Npk2YEntry& row = slot->yTable[y - slot->header.y_min];
-        if (row.idx_count == 0) return false;
+            const UIMapManager::Npk2YEntry& row = slot->yTable[y - slot->header.y_min];
+            if (row.idx_count == 0) return false;
 
-        // Determine slot index for cache key
-        int slotIdx = (int)(slot - npkSlots);
+            // Determine slot index for cache key
+            int slotIdx = (int)(slot - npkSlots);
 
-        // --- Check index row cache ---
-        for (int i = 0; i < IDX_ROW_CACHE_SIZE; i++) {
-            if (idxRowCache[i].valid && idxRowCache[i].slotIdx == (uint8_t)slotIdx &&
-                idxRowCache[i].rowY == y) {
-                // Cache hit — binary search in cached entries
-                UIMapManager::Npk2IndexEntry* entries = idxRowCache[i].entries;
-                int lo = 0, hi = (int)idxRowCache[i].count - 1;
-                while (lo <= hi) {
-                    int mid = (lo + hi) / 2;
-                    if (entries[mid].x < x) lo = mid + 1;
-                    else if (entries[mid].x > x) hi = mid - 1;
-                    else { *result = entries[mid]; return true; }
+            // --- Check index row cache ---
+            for (int i = 0; i < IDX_ROW_CACHE_SIZE; i++) {
+                if (idxRowCache[i].valid && idxRowCache[i].slotIdx == (uint8_t)slotIdx &&
+                    idxRowCache[i].rowY == y) {
+                    // Cache hit — binary search in cached entries
+                    UIMapManager::Npk2IndexEntry* entries = idxRowCache[i].entries;
+                    int lo = 0, hi = (int)idxRowCache[i].count - 1;
+                    while (lo <= hi) {
+                        int mid = (lo + hi) / 2;
+                        if (entries[mid].x < x) lo = mid + 1;
+                        else if (entries[mid].x > x) hi = mid - 1;
+                        else { *result = entries[mid]; return true; }
+                    }
+                    return false;
                 }
-                return false;
             }
-        }
 
-        // --- Cache miss — read from SD ---
-        uint32_t baseOff = slot->header.index_offset + row.idx_start * sizeof(UIMapManager::Npk2IndexEntry);
-        bool found = false;
+            // --- Cache miss — read from SD ---
+            uint32_t baseOff = slot->header.index_offset + row.idx_start * sizeof(UIMapManager::Npk2IndexEntry);
+            bool found = false;
 
-        if (npkRowBuf && row.idx_count <= npkRowBufCap) {
-            // Fast path: read entire row in one SD read, binary search in RAM
-            size_t readSize = row.idx_count * sizeof(UIMapManager::Npk2IndexEntry);
-            bool readOk = false;
-            if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                slot->file.seek(baseOff);
-                // Use DMA-chunked read to reduce SPI transaction overhead
-                readOk = (STORAGE_Utils::readChunked(slot->file, (uint8_t*)npkRowBuf, readSize) == readSize);
-                xSemaphoreGiveRecursive(spiMutex);
-            }
-            if (!readOk) return false;
-
-            // Try to cache this row in PSRAM for reuse
-            size_t allocSize = row.idx_count * sizeof(UIMapManager::Npk2IndexEntry);
-            UIMapManager::Npk2IndexEntry* cached =
-                (UIMapManager::Npk2IndexEntry*)heap_caps_malloc(allocSize, MALLOC_CAP_SPIRAM);
-            if (cached) {
-                memcpy(cached, npkRowBuf, allocSize);
-                // Evict existing entry at round-robin position
-                IndexRowCache& slot_c = idxRowCache[idxRowCacheNext];
-                if (slot_c.valid) {
-                    heap_caps_free(slot_c.entries);
+            if (npkRowBuf && row.idx_count <= npkRowBufCap) {
+                // Fast path: read entire row in one SD read, binary search in RAM
+                size_t readSize = row.idx_count * sizeof(UIMapManager::Npk2IndexEntry);
+                bool readOk = false;
+                if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    slot->file.seek(baseOff);
+                    // Use DMA-chunked read to reduce SPI transaction overhead
+                    readOk = (STORAGE_Utils::readChunked(slot->file, (uint8_t*)npkRowBuf, readSize) == readSize);
+                    xSemaphoreGiveRecursive(spiMutex);
                 }
-                slot_c.entries = cached;
-                slot_c.count = row.idx_count;
-                slot_c.slotIdx = (uint8_t)slotIdx;
-                slot_c.rowY = y;
-                slot_c.valid = true;
-                idxRowCacheNext = (idxRowCacheNext + 1) % IDX_ROW_CACHE_SIZE;
-            }
+                if (!readOk) return false;
 
-            // Binary search in npkRowBuf
-            int lo = 0, hi = (int)row.idx_count - 1;
-            while (lo <= hi) {
-                int mid = (lo + hi) / 2;
-                if (npkRowBuf[mid].x < x) lo = mid + 1;
-                else if (npkRowBuf[mid].x > x) hi = mid - 1;
-                else { *result = npkRowBuf[mid]; return true; }
-            }
-        } else {
-            // Fallback: binary search on disk for very large rows
-            if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                // Try to cache this row in PSRAM for reuse
+                size_t allocSize = row.idx_count * sizeof(UIMapManager::Npk2IndexEntry);
+                UIMapManager::Npk2IndexEntry* cached =
+                    (UIMapManager::Npk2IndexEntry*)heap_caps_malloc(allocSize, MALLOC_CAP_SPIRAM);
+                if (cached) {
+                    memcpy(cached, npkRowBuf, allocSize);
+                    // Evict existing entry at round-robin position
+                    IndexRowCache& slot_c = idxRowCache[idxRowCacheNext];
+                    if (slot_c.valid) {
+                        heap_caps_free(slot_c.entries);
+                    }
+                    slot_c.entries = cached;
+                    slot_c.count = row.idx_count;
+                    slot_c.slotIdx = (uint8_t)slotIdx;
+                    slot_c.rowY = y;
+                    slot_c.valid = true;
+                    idxRowCacheNext = (idxRowCacheNext + 1) % IDX_ROW_CACHE_SIZE;
+                }
+
+                // Binary search in npkRowBuf
                 int lo = 0, hi = (int)row.idx_count - 1;
-                UIMapManager::Npk2IndexEntry e;
                 while (lo <= hi) {
                     int mid = (lo + hi) / 2;
-                    slot->file.seek(baseOff + mid * sizeof(UIMapManager::Npk2IndexEntry));
-                    if (slot->file.read((uint8_t*)&e, sizeof(e)) != sizeof(e)) break;
-                    if (e.x < x) lo = mid + 1;
-                    else if (e.x > x) hi = mid - 1;
-                    else { *result = e; found = true; break; }
+                    if (npkRowBuf[mid].x < x) lo = mid + 1;
+                    else if (npkRowBuf[mid].x > x) hi = mid - 1;
+                    else { *result = npkRowBuf[mid]; return true; }
+                }
+            } else {
+                // Fallback: binary search on disk for very large rows
+                if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    int lo = 0, hi = (int)row.idx_count - 1;
+                    UIMapManager::Npk2IndexEntry e;
+                    while (lo <= hi) {
+                        int mid = (lo + hi) / 2;
+                        slot->file.seek(baseOff + mid * sizeof(UIMapManager::Npk2IndexEntry));
+                        if (slot->file.read((uint8_t*)&e, sizeof(e)) != sizeof(e)) break;
+                        if (e.x < x) lo = mid + 1;
+                        else if (e.x > x) hi = mid - 1;
+                        else { *result = e; found = true; break; }
+                    }
+                    xSemaphoreGiveRecursive(spiMutex);
+                }
+            }
+            return found;
+        }
+        // NPK3 path
+        else if (slot->version == 3) {
+            // Compute Hilbert index for the requested tile
+            uint64_t targetH = xyToHilbert(x, y, slot->zoom);
+            
+            // Binary search over the entire index
+            int32_t low = 0;
+            int32_t high = (int32_t)slot->tileCount3 - 1;
+            bool found = false;
+            
+            if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                while (low <= high) {
+                    int32_t mid = low + (high - low) / 2;
+                    // Read NPK3 index entry (16 bytes)
+                    uint64_t readH;
+                    uint32_t readOffset, readSize;
+                    slot->file.seek(slot->indexOffset3 + mid * sizeof(UIMapManager::Npk3IndexEntry));
+                    if (slot->file.read((uint8_t*)&readH, sizeof(readH)) != sizeof(readH)) break;
+                    if (slot->file.read((uint8_t*)&readOffset, sizeof(readOffset)) != sizeof(readOffset)) break;
+                    if (slot->file.read((uint8_t*)&readSize, sizeof(readSize)) != sizeof(readSize)) break;
+                    
+                    if (readH < targetH) {
+                        low = mid + 1;
+                    } else if (readH > targetH) {
+                        high = mid - 1;
+                    } else {
+                        // Found
+                        result->offset = readOffset;
+                        result->size = readSize;
+                        // x and y fields are not used for NPK3, but we can fill them
+                        result->x = x;
+                        result->y = y;
+                        found = true;
+                        break;
+                    }
                 }
                 xSemaphoreGiveRecursive(spiMutex);
             }
+            return found;
         }
-        return found;
+        // Unknown version
+        return false;
     }
 
     bool readNpkTileData(NpkSlot* slot, const UIMapManager::Npk2IndexEntry* entry,

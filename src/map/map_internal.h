@@ -44,11 +44,43 @@ namespace MapEngine {
         uint16_t* ringEnds;
     };
 
+    // --- Hilbert curve functions for NPK3 ---
+    static uint64_t xyToHilbert(uint32_t x, uint32_t y, uint8_t z) {
+        uint32_t rx, ry;
+        uint64_t d = 0;
+        uint32_t n = 1 << z;
+        for (uint32_t s = n / 2; s > 0; s /= 2) {
+            rx = (x & s) > 0;
+            ry = (y & s) > 0;
+            d += static_cast<uint64_t>(s) * s * ((3 * rx) ^ ry);
+            hilbertRot(s, &x, &y, rx, ry);
+        }
+        return d;
+    }
+
+    static void hilbertRot(uint32_t n, uint32_t* x, uint32_t* y, uint32_t rx, uint32_t ry) {
+        if (ry == 0) {
+            if (rx == 1) {
+                *x = n - 1 - *x;
+                *y = n - 1 - *y;
+            }
+            uint32_t t = *x;
+            *x = *y;
+            *y = t;
+        }
+    }
+
     // --- NPK slot (needed by renderNavViewport) ---
     struct NpkSlot {
         File file;
-        UIMapManager::Npk2Header header;
+        UIMapManager::Npk2Header header;  // header common (magic, zoom)
+        uint8_t version;  // 2 for NPK2, 3 for NPK3
+        // NPK2 fields
         UIMapManager::Npk2YEntry* yTable;
+        // NPK3 fields
+        uint32_t tileCount3;
+        uint32_t indexOffset3;
+        // common fields
         char region[64];
         uint8_t zoom;
         uint8_t splitIdx;
