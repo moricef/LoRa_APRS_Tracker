@@ -104,7 +104,7 @@ struct Npk3Header {
     uint8_t  zoom;
     uint32_t tile_count;
     uint32_t index_offset;
-    uint32_t reserved[4];     // 16 bytes reserved
+    uint8_t  reserved[13];    // 13 bytes reserved (total 26 bytes)
 } __attribute__((packed));
 
 // NPK3 index entry (16 bytes) - Hilbert Format

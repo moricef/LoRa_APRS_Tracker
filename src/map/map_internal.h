@@ -45,7 +45,7 @@ namespace MapEngine {
     };
 
     // --- Hilbert curve functions for NPK3 ---
-    static void hilbertRot(uint32_t n, uint32_t* x, uint32_t* y, uint32_t rx, uint32_t ry) {
+    [[maybe_unused]] static void hilbertRot(uint32_t n, uint32_t* x, uint32_t* y, uint32_t rx, uint32_t ry) {
         if (ry == 0) {
             if (rx == 1) {
                 *x = n - 1 - *x;
@@ -57,7 +57,7 @@ namespace MapEngine {
         }
     }
 
-    static uint64_t xyToHilbert(uint32_t x, uint32_t y, uint8_t z) {
+    [[maybe_unused]] static uint64_t xyToHilbert(uint32_t x, uint32_t y, uint8_t z) {
         uint32_t rx, ry;
         uint64_t d = 0;
         uint32_t n = 1 << z;
@@ -77,12 +77,9 @@ namespace MapEngine {
         uint8_t version;  // 2 for NPK2, 3 for NPK3
         // NPK2 fields
         UIMapManager::Npk2YEntry* yTable;
-        // NPK3 fields
-        uint32_t tileCount3;
-        uint32_t indexOffset3;
         // common fields
         char region[64];
-        uint8_t zoom;
+        uint8_t zoom;           // duplicate of header.zoom, kept for compatibility
         uint8_t splitIdx;
         bool active;
         uint32_t lastAccess;

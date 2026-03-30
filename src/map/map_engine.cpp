@@ -946,9 +946,6 @@ namespace MapEngine {
             s.header.y_min = 0;
             s.header.y_max = 0;
             s.header.ytable_offset = 0;
-            // Store NPK3-specific fields
-            s.tileCount3 = s.header.tile_count;
-            s.indexOffset3 = s.header.index_offset;
 
             if (s.header.tile_count == 0) {
                 ESP_LOGE(TAG, "Invalid NPK3 header in %s (tiles=%u)",
@@ -1225,11 +1222,12 @@ namespace MapEngine {
         // NPK3 path
         else if (slot->version == 3) {
             // Compute Hilbert index for the requested tile
-            uint64_t targetH = xyToHilbert(x, y, slot->zoom);
+            uint64_t targetH = xyToHilbert(x, y, slot->header.zoom);
+            // TODO: cache entire index in PSRAM for faster binary search (especially for large packs)
             
             // Binary search over the entire index
             int32_t low = 0;
-            int32_t high = (int32_t)slot->tileCount3 - 1;
+            int32_t high = (int32_t)slot->header.tile_count - 1;
             bool found = false;
             
             if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
@@ -1238,7 +1236,7 @@ namespace MapEngine {
                     // Read NPK3 index entry (16 bytes)
                     uint64_t readH;
                     uint32_t readOffset, readSize;
-                    slot->file.seek(slot->indexOffset3 + mid * sizeof(UIMapManager::Npk3IndexEntry));
+                    slot->file.seek(slot->header.index_offset + mid * sizeof(UIMapManager::Npk3IndexEntry));
                     if (slot->file.read((uint8_t*)&readH, sizeof(readH)) != sizeof(readH)) break;
                     if (slot->file.read((uint8_t*)&readOffset, sizeof(readOffset)) != sizeof(readOffset)) break;
                     if (slot->file.read((uint8_t*)&readSize, sizeof(readSize)) != sizeof(readSize)) break;
