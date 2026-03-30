@@ -531,12 +531,12 @@ void UISettings::createSpeedScreen() {
     // Speed options with data rates
     struct SpeedOption { int dataRate; const char *desc; };
     const SpeedOption speeds[] = {
-        {1200, "1200 bps (SF9, Fast)"},
+        {1200, "1200 bps (SF9)"},
         {610, "610 bps (SF10)"},
-        {300, "300 bps (SF12, Long range)"},
+        {300, "300 bps (SF12)"},
         {244, "244 bps (SF12)"},
         {209, "209 bps (SF12)"},
-        {183, "183 bps (SF12, Longest)"}
+        {183, "183 bps (SF12)"}
     };
 
     int currentDataRate = Config.loraTypes[loraIndex].dataRate;
@@ -2048,7 +2048,7 @@ void UISettings::showBootWebConfig() {
         lv_obj_set_style_text_font(lbl_ip, &lv_font_montserrat_18, 0);
 
         lv_obj_t *lbl_info = lv_label_create(content);
-        lv_label_set_text(lbl_info, "Connect to WiFi AP\nthen open http://192.168.4.1\nto configure callsign & WiFi");
+        lv_label_set_text(lbl_info, "Connect to WiFi AP\nthen open http://192.168.4.1\nto configure callsign");
         lv_obj_set_style_text_color(lbl_info, lv_color_hex(0xaaaaaa), 0);
         lv_obj_set_style_text_font(lbl_info, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_align(lbl_info, LV_TEXT_ALIGN_CENTER, 0);
