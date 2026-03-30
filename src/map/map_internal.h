@@ -45,6 +45,18 @@ namespace MapEngine {
     };
 
     // --- Hilbert curve functions for NPK3 ---
+    static void hilbertRot(uint32_t n, uint32_t* x, uint32_t* y, uint32_t rx, uint32_t ry) {
+        if (ry == 0) {
+            if (rx == 1) {
+                *x = n - 1 - *x;
+                *y = n - 1 - *y;
+            }
+            uint32_t t = *x;
+            *x = *y;
+            *y = t;
+        }
+    }
+
     static uint64_t xyToHilbert(uint32_t x, uint32_t y, uint8_t z) {
         uint32_t rx, ry;
         uint64_t d = 0;
@@ -56,18 +68,6 @@ namespace MapEngine {
             hilbertRot(s, &x, &y, rx, ry);
         }
         return d;
-    }
-
-    static void hilbertRot(uint32_t n, uint32_t* x, uint32_t* y, uint32_t rx, uint32_t ry) {
-        if (ry == 0) {
-            if (rx == 1) {
-                *x = n - 1 - *x;
-                *y = n - 1 - *y;
-            }
-            uint32_t t = *x;
-            *x = *y;
-            *y = t;
-        }
     }
 
     // --- NPK slot (needed by renderNavViewport) ---
