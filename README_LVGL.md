@@ -78,7 +78,7 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 - GPS tracking with auto-follow and manual pan
 
 ### APRS & Messaging
-- Full LoRa APRS support (433MHz / 868MHz)
+- Full LoRa APRS support (433MHz)
 - Threaded message conversations
 - Contact management (add/edit/delete)
 - Quick reply from map or station list
@@ -93,38 +93,17 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 - **Storage**: SD card (A1 class recommended for fast tile loading)
 - **Connectivity**: WiFi (AP + Station modes), Bluetooth LE
 
-## Installation
+## Documentation & User Guide
 
-### Option 1: Web Flasher (Recommended)
+**All instructions for installation, configuration, and usage can be found on the Wiki:**
 
-**Stable version:**
-https://moricef.github.io/LoRa_APRS_Tracker/
+📖 [**Read the Wiki / User Guide**](https://github.com/moricef/LoRa_APRS_Tracker/wiki)
 
-**Development version (this branch):**
-https://moricef.github.io/LoRa_APRS_Tracker/devel.html
-
-Requirements:
-- Google Chrome, Microsoft Edge, or Chromium browser (Firefox not supported)
-- USB cable
-- Close PlatformIO/Arduino IDE if open
-- If port not detected: hold BOOT button while connecting USB
-
-### Option 2: Build from Source
-
-Prerequisites: [PlatformIO](http://platformio.org/) and [git](http://git-scm.com/)
-
-```bash
-git clone https://github.com/moricef/LoRa_APRS_Tracker.git
-cd LoRa_APRS_Tracker
-
-# Build and upload (433MHz variant)
-pio run -e ttgo_t_deck_plus_433 --target upload
-
-# Upload filesystem
-pio run -e ttgo_t_deck_plus_433 --target uploadfs
-
-# For 868MHz: use ttgo_t_deck_plus_868 environment
-```
+You will find details about:
+- Installation and first boot (Web Flasher / PlatformIO)
+- SD card preparation and raster/vector map tiles
+- Messaging and UI operation
+- Advanced settings
 
 ## SD Card Setup
 
