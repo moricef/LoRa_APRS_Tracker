@@ -802,6 +802,10 @@ namespace MapEngine {
             heap_caps_free(s.yTable);
             s.yTable = nullptr;
         }
+        if (s.hilbertIndex) {
+            heap_caps_free(s.hilbertIndex);
+            s.hilbertIndex = nullptr;
+        }
         if (s.file) {
             s.file.close();
         }
@@ -957,8 +961,9 @@ namespace MapEngine {
             }
         }
 
-        // Load Y-table only for NPK2
+        // Load Y-table only for NPK2, Hilbert index only for NPK3
         if (s.version == 2) {
+            s.hilbertIndex = nullptr;  // NPK2 doesn't use Hilbert index
             uint32_t ySpan = s.header.y_max - s.header.y_min + 1;
             size_t ytableSize = ySpan * sizeof(UIMapManager::Npk2YEntry);
             s.yTable = (UIMapManager::Npk2YEntry*)heap_caps_malloc(ytableSize, MALLOC_CAP_SPIRAM);
@@ -981,8 +986,27 @@ namespace MapEngine {
                 return &s;
             }
         } else {
-            // NPK3: no Y-table
+            // NPK3: no Y-table, but load entire Hilbert index into PSRAM
             s.yTable = nullptr;
+            size_t indexSize = s.header.tile_count * sizeof(UIMapManager::Npk3IndexEntry);
+            s.hilbertIndex = (UIMapManager::Npk3IndexEntry*)heap_caps_malloc(indexSize, MALLOC_CAP_SPIRAM);
+            if (!s.hilbertIndex) {
+                ESP_LOGE(TAG, "Failed to alloc Hilbert index (%u bytes)", (unsigned)indexSize);
+                s.file.close();
+                xSemaphoreGiveRecursive(spiMutex);
+                markSlot();
+                return &s;
+            }
+            s.file.seek(s.header.index_offset);
+            if (s.file.read((uint8_t*)s.hilbertIndex, indexSize) != indexSize) {
+                ESP_LOGE(TAG, "Failed to read Hilbert index from %s", packPath);
+                heap_caps_free(s.hilbertIndex);
+                s.hilbertIndex = nullptr;
+                s.file.close();
+                xSemaphoreGiveRecursive(spiMutex);
+                markSlot();
+                return &s;
+            }
         }
 
         xSemaphoreGiveRecursive(spiMutex);
@@ -993,8 +1017,9 @@ namespace MapEngine {
             ESP_LOGI(TAG, "Opened NPK2 pack: %s (%u tiles, Y %u-%u, Y-table %u bytes)",
                           packPath, s.header.tile_count, s.header.y_min, s.header.y_max, (unsigned)ytableSize);
         } else {
-            ESP_LOGI(TAG, "Opened NPK3 pack: %s (%u tiles, Hilbert index)",
-                          packPath, s.header.tile_count);
+            size_t indexSize = s.header.tile_count * sizeof(UIMapManager::Npk3IndexEntry);
+            ESP_LOGI(TAG, "Opened NPK3 pack: %s (%u tiles, Hilbert index %u KB in PSRAM)",
+                          packPath, s.header.tile_count, (unsigned)(indexSize / 1024));
         }
         return &s;
     }
@@ -1219,46 +1244,35 @@ namespace MapEngine {
             }
             return found;
         }
-        // NPK3 path
+        // NPK3 path — binary search on cached Hilbert index (no SD reads)
         else if (slot->version == 3) {
+            if (!slot->hilbertIndex) return false;
+
             // Compute Hilbert index for the requested tile
             uint64_t targetH = xyToHilbert(x, y, slot->header.zoom);
-            // TODO: cache entire index in PSRAM for faster binary search (especially for large packs)
-            
-            // Binary search over the entire index
+
+            // Binary search over the cached index in PSRAM
             int32_t low = 0;
             int32_t high = (int32_t)slot->header.tile_count - 1;
-            bool found = false;
-            
-            if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                while (low <= high) {
-                    int32_t mid = low + (high - low) / 2;
-                    // Read NPK3 index entry (16 bytes)
-                    uint64_t readH;
-                    uint32_t readOffset, readSize;
-                    slot->file.seek(slot->header.index_offset + mid * sizeof(UIMapManager::Npk3IndexEntry));
-                    if (slot->file.read((uint8_t*)&readH, sizeof(readH)) != sizeof(readH)) break;
-                    if (slot->file.read((uint8_t*)&readOffset, sizeof(readOffset)) != sizeof(readOffset)) break;
-                    if (slot->file.read((uint8_t*)&readSize, sizeof(readSize)) != sizeof(readSize)) break;
-                    
-                    if (readH < targetH) {
-                        low = mid + 1;
-                    } else if (readH > targetH) {
-                        high = mid - 1;
-                    } else {
-                        // Found
-                        result->offset = readOffset;
-                        result->size = readSize;
-                        // x and y fields are not used for NPK3, but we can fill them
-                        result->x = x;
-                        result->y = y;
-                        found = true;
-                        break;
-                    }
+
+            while (low <= high) {
+                int32_t mid = low + (high - low) / 2;
+                const UIMapManager::Npk3IndexEntry& entry = slot->hilbertIndex[mid];
+
+                if (entry.h < targetH) {
+                    low = mid + 1;
+                } else if (entry.h > targetH) {
+                    high = mid - 1;
+                } else {
+                    // Found
+                    result->offset = entry.offset;
+                    result->size = entry.size;
+                    result->x = x;
+                    result->y = y;
+                    return true;
                 }
-                xSemaphoreGiveRecursive(spiMutex);
             }
-            return found;
+            return false;
         }
         // Unknown version
         return false;

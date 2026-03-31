@@ -77,6 +77,8 @@ namespace MapEngine {
         uint8_t version;  // 2 for NPK2, 3 for NPK3
         // NPK2 fields
         UIMapManager::Npk2YEntry* yTable;
+        // NPK3 fields
+        UIMapManager::Npk3IndexEntry* hilbertIndex;  // entire index cached in PSRAM
         // common fields
         char region[64];
         uint8_t zoom;           // duplicate of header.zoom, kept for compatibility
