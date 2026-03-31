@@ -98,13 +98,13 @@ struct Npk2IndexEntry {
     uint32_t size;            // NAV1 blob size
 } __attribute__((packed));
 
-// NPK3 pack file header (26 bytes) - Hilbert Format
+// NPK3 pack file header (29 bytes) - Hilbert Format (matches Tile-Generator v0.5)
 struct Npk3Header {
     char     magic[4];        // "NPK3"
     uint8_t  zoom;
     uint32_t tile_count;
     uint32_t index_offset;
-    uint8_t  reserved[13];    // 13 bytes reserved (total 26 bytes)
+    uint32_t reserved[4];     // 16 bytes reserved (total 29 bytes)
 } __attribute__((packed));
 
 // NPK3 index entry (16 bytes) - Hilbert Format

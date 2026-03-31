@@ -934,8 +934,8 @@ namespace MapEngine {
                 return &s;
             }
         } else {
-            // NPK3: read remaining 22 bytes of header (zoom + tile_count + index_offset + reserved[16])
-            uint8_t remaining[22];
+            // NPK3: read remaining 25 bytes of header (zoom + tile_count + index_offset + reserved[16])
+            uint8_t remaining[25];
             if (s.file.read(remaining, sizeof(remaining)) != sizeof(remaining)) {
                 ESP_LOGE(TAG, "Failed to read NPK3 header from %s", packPath);
                 s.file.close();
