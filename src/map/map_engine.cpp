@@ -986,26 +986,24 @@ namespace MapEngine {
                 return &s;
             }
         } else {
-            // NPK3: no Y-table, but load entire Hilbert index into PSRAM
+            // NPK3: no Y-table, optionally cache Hilbert index in PSRAM
             s.yTable = nullptr;
             size_t indexSize = s.header.tile_count * sizeof(UIMapManager::Npk3IndexEntry);
-            s.hilbertIndex = (UIMapManager::Npk3IndexEntry*)heap_caps_malloc(indexSize, MALLOC_CAP_SPIRAM);
-            if (!s.hilbertIndex) {
-                ESP_LOGE(TAG, "Failed to alloc Hilbert index (%u bytes)", (unsigned)indexSize);
-                s.file.close();
-                xSemaphoreGiveRecursive(spiMutex);
-                markSlot();
-                return &s;
-            }
-            s.file.seek(s.header.index_offset);
-            if (s.file.read((uint8_t*)s.hilbertIndex, indexSize) != indexSize) {
-                ESP_LOGE(TAG, "Failed to read Hilbert index from %s", packPath);
-                heap_caps_free(s.hilbertIndex);
+            constexpr size_t MAX_HILBERT_CACHE = 1024 * 1024;  // 1 MB max cache
+
+            if (indexSize <= MAX_HILBERT_CACHE) {
+                s.hilbertIndex = (UIMapManager::Npk3IndexEntry*)heap_caps_malloc(indexSize, MALLOC_CAP_SPIRAM);
+                if (s.hilbertIndex) {
+                    s.file.seek(s.header.index_offset);
+                    if (s.file.read((uint8_t*)s.hilbertIndex, indexSize) != indexSize) {
+                        ESP_LOGW(TAG, "Failed to read Hilbert index, using SD fallback");
+                        heap_caps_free(s.hilbertIndex);
+                        s.hilbertIndex = nullptr;
+                    }
+                }
+            } else {
+                // Index too large for PSRAM cache, use SD binary search
                 s.hilbertIndex = nullptr;
-                s.file.close();
-                xSemaphoreGiveRecursive(spiMutex);
-                markSlot();
-                return &s;
             }
         }
 
@@ -1018,8 +1016,13 @@ namespace MapEngine {
                           packPath, s.header.tile_count, s.header.y_min, s.header.y_max, (unsigned)ytableSize);
         } else {
             size_t indexSize = s.header.tile_count * sizeof(UIMapManager::Npk3IndexEntry);
-            ESP_LOGI(TAG, "Opened NPK3 pack: %s (%u tiles, Hilbert index %u KB in PSRAM)",
-                          packPath, s.header.tile_count, (unsigned)(indexSize / 1024));
+            if (s.hilbertIndex) {
+                ESP_LOGI(TAG, "Opened NPK3 pack: %s (%u tiles, Hilbert index %u KB in PSRAM)",
+                              packPath, s.header.tile_count, (unsigned)(indexSize / 1024));
+            } else {
+                ESP_LOGI(TAG, "Opened NPK3 pack: %s (%u tiles, SD binary search - index %u KB too large)",
+                              packPath, s.header.tile_count, (unsigned)(indexSize / 1024));
+            }
         }
         return &s;
     }
@@ -1244,35 +1247,59 @@ namespace MapEngine {
             }
             return found;
         }
-        // NPK3 path — binary search on cached Hilbert index (no SD reads)
+        // NPK3 path — binary search (cached PSRAM or SD fallback)
         else if (slot->version == 3) {
-            if (!slot->hilbertIndex) return false;
-
             // Compute Hilbert index for the requested tile
             uint64_t targetH = xyToHilbert(x, y, slot->header.zoom);
-
-            // Binary search over the cached index in PSRAM
             int32_t low = 0;
             int32_t high = (int32_t)slot->header.tile_count - 1;
 
-            while (low <= high) {
-                int32_t mid = low + (high - low) / 2;
-                const UIMapManager::Npk3IndexEntry& entry = slot->hilbertIndex[mid];
+            if (slot->hilbertIndex) {
+                // Fast path: binary search on cached index in PSRAM
+                while (low <= high) {
+                    int32_t mid = low + (high - low) / 2;
+                    const UIMapManager::Npk3IndexEntry& entry = slot->hilbertIndex[mid];
 
-                if (entry.h < targetH) {
-                    low = mid + 1;
-                } else if (entry.h > targetH) {
-                    high = mid - 1;
-                } else {
-                    // Found
-                    result->offset = entry.offset;
-                    result->size = entry.size;
-                    result->x = x;
-                    result->y = y;
-                    return true;
+                    if (entry.h < targetH) {
+                        low = mid + 1;
+                    } else if (entry.h > targetH) {
+                        high = mid - 1;
+                    } else {
+                        result->offset = entry.offset;
+                        result->size = entry.size;
+                        result->x = x;
+                        result->y = y;
+                        return true;
+                    }
                 }
+                return false;
+            } else {
+                // Slow path: binary search on SD (index too large for PSRAM)
+                bool found = false;
+                if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                    while (low <= high) {
+                        int32_t mid = low + (high - low) / 2;
+                        UIMapManager::Npk3IndexEntry entry;
+                        slot->file.seek(slot->header.index_offset + mid * sizeof(UIMapManager::Npk3IndexEntry));
+                        if (slot->file.read((uint8_t*)&entry, sizeof(entry)) != sizeof(entry)) break;
+
+                        if (entry.h < targetH) {
+                            low = mid + 1;
+                        } else if (entry.h > targetH) {
+                            high = mid - 1;
+                        } else {
+                            result->offset = entry.offset;
+                            result->size = entry.size;
+                            result->x = x;
+                            result->y = y;
+                            found = true;
+                            break;
+                        }
+                    }
+                    xSemaphoreGiveRecursive(spiMutex);
+                }
+                return found;
             }
-            return false;
         }
         // Unknown version
         return false;
