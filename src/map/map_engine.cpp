@@ -170,11 +170,16 @@ namespace MapEngine {
 
     // --- NAV POOL ---
     #define NAV_POOL_SLOT_SIZE 524288 // 512KB — Z9 tiles range 290-500KB
-    #define NAV_POOL_MAX_SLOTS 5
+    #define NAV_POOL_MAX_SLOTS 4      // 4 slots × 512KB = 2 MB
 
     static uint8_t* _navPool[NAV_POOL_MAX_SLOTS] = {nullptr};
     static bool _navPoolInUse[NAV_POOL_MAX_SLOTS] = {false};
     static bool _navPoolActive = false;
+
+    // --- HILBERT INDEX BUFFER (static, allocated once at boot) ---
+    #define HILBERT_INDEX_BUFFER_SIZE (1228 * 1024)  // 1.2 MB - fits Z13 (1.1 MB), Z14+ use SD fallback
+    static uint8_t* _hilbertIndexBuffer = nullptr;
+    static bool _hilbertIndexInUse = false;
     static LovyanGFX* _gfx = nullptr;
 
     NpkSlot npkSlots[NPK_MAX_REGIONS];
@@ -477,6 +482,17 @@ namespace MapEngine {
             _navPoolInUse[i] = false;
         }
 
+        // 3. Allocate Hilbert index buffer (static, never freed during runtime)
+        if (!_hilbertIndexBuffer) {
+            _hilbertIndexBuffer = (uint8_t*)heap_caps_malloc(HILBERT_INDEX_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
+            if (_hilbertIndexBuffer) {
+                ESP_LOGI(TAG, "Hilbert index buffer allocated: %d KB", HILBERT_INDEX_BUFFER_SIZE / 1024);
+            } else {
+                ESP_LOGW(TAG, "Failed to allocate Hilbert index buffer (%d KB)", HILBERT_INDEX_BUFFER_SIZE / 1024);
+            }
+        }
+        _hilbertIndexInUse = false;
+
         _navPoolActive = true;
         ESP_LOGI(TAG, "NAV pool initialized with %d slots (%dKB each)", allocated, NAV_POOL_SLOT_SIZE / 1024);
 
@@ -500,6 +516,14 @@ namespace MapEngine {
             }
             _navPoolInUse[i] = false;
         }
+
+        // 3. Free Hilbert index buffer
+        if (_hilbertIndexBuffer) {
+            heap_caps_free(_hilbertIndexBuffer);
+            _hilbertIndexBuffer = nullptr;
+        }
+        _hilbertIndexInUse = false;
+
         _navPoolActive = false;
 
         // 3. Restore raster pool
@@ -802,8 +826,12 @@ namespace MapEngine {
             heap_caps_free(s.yTable);
             s.yTable = nullptr;
         }
+        // Hilbert index uses static buffer - just release, don't free
         if (s.hilbertIndex) {
-            heap_caps_free(s.hilbertIndex);
+            if (s.hilbertIndex == (UIMapManager::Npk3IndexEntry*)_hilbertIndexBuffer) {
+                _hilbertIndexInUse = false;  // Release static buffer
+            }
+            // else: was dynamically allocated (legacy), don't free to avoid double-free
             s.hilbertIndex = nullptr;
         }
         if (s.file) {
@@ -986,23 +1014,22 @@ namespace MapEngine {
                 return &s;
             }
         } else {
-            // NPK3: no Y-table, optionally cache Hilbert index in PSRAM
+            // NPK3: no Y-table, use static Hilbert index buffer if available
             s.yTable = nullptr;
             size_t indexSize = s.header.tile_count * sizeof(UIMapManager::Npk3IndexEntry);
-            constexpr size_t MAX_HILBERT_CACHE = 1024 * 1024;  // 1 MB max cache
 
-            if (indexSize <= MAX_HILBERT_CACHE) {
-                s.hilbertIndex = (UIMapManager::Npk3IndexEntry*)heap_caps_malloc(indexSize, MALLOC_CAP_SPIRAM);
-                if (s.hilbertIndex) {
-                    s.file.seek(s.header.index_offset);
-                    if (s.file.read((uint8_t*)s.hilbertIndex, indexSize) != indexSize) {
-                        ESP_LOGW(TAG, "Failed to read Hilbert index, using SD fallback");
-                        heap_caps_free(s.hilbertIndex);
-                        s.hilbertIndex = nullptr;
-                    }
+            // Use static buffer if: available, not in use, and index fits
+            if (_hilbertIndexBuffer && !_hilbertIndexInUse && indexSize <= HILBERT_INDEX_BUFFER_SIZE) {
+                s.file.seek(s.header.index_offset);
+                if (s.file.read(_hilbertIndexBuffer, indexSize) == indexSize) {
+                    s.hilbertIndex = (UIMapManager::Npk3IndexEntry*)_hilbertIndexBuffer;
+                    _hilbertIndexInUse = true;
+                } else {
+                    ESP_LOGW(TAG, "Failed to read Hilbert index, using SD fallback");
+                    s.hilbertIndex = nullptr;
                 }
             } else {
-                // Index too large for PSRAM cache, use SD binary search
+                // Buffer unavailable or index too large - use SD binary search
                 s.hilbertIndex = nullptr;
             }
         }
@@ -1017,11 +1044,12 @@ namespace MapEngine {
         } else {
             size_t indexSize = s.header.tile_count * sizeof(UIMapManager::Npk3IndexEntry);
             if (s.hilbertIndex) {
-                ESP_LOGI(TAG, "Opened NPK3 pack: %s (%u tiles, Hilbert index %u KB in PSRAM)",
+                ESP_LOGI(TAG, "Opened NPK3 pack: %s (%u tiles, index %u KB in static buffer)",
                               packPath, s.header.tile_count, (unsigned)(indexSize / 1024));
             } else {
-                ESP_LOGI(TAG, "Opened NPK3 pack: %s (%u tiles, SD binary search - index %u KB too large)",
-                              packPath, s.header.tile_count, (unsigned)(indexSize / 1024));
+                ESP_LOGI(TAG, "Opened NPK3 pack: %s (%u tiles, SD fallback - index %u KB > buffer %u KB)",
+                              packPath, s.header.tile_count, (unsigned)(indexSize / 1024),
+                              HILBERT_INDEX_BUFFER_SIZE / 1024);
             }
         }
         return &s;
