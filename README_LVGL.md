@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.9.1-blue)
+![Version](https://img.shields.io/badge/version-2.10.0-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus**
@@ -15,6 +15,11 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 | **Dashboard** | **Vector Map** | **Messaging** |
 
 ---
+## What's New in v2.10.x
+- **NPK3 (Hilbert) format support** - New vector map pack format using Hilbert curve index for faster tile lookups. Auto-detected alongside NPK2, fully backward compatible
+- **Static Hilbert index buffer** - 1.2 MB PSRAM buffer allocated once at boot (no fragmentation). Z9-Z13 indexes cached in PSRAM, Z14+ use SD binary search fallback
+- **Reduced memory footprint** - NAV pool reduced from 5 to 4 slots (−500 KB), gains ~800 KB PSRAM margin. Eliminates "PSRAM exhausted" errors at high zoom levels
+
 ## What's New in v2.9.x
 - **Strict 3D Fix (PDOP)** - New configurable mode to enforce PDOP filtering for altitude reliability, with a visual indicator on the dashboard.
 - **Persistent Map State** - Map's NAV memory pool and zoom/pan state are preserved across sessions to avoid PSRAM fragmentation and improve user experience.
