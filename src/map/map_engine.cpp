@@ -829,10 +829,16 @@ namespace MapEngine {
         // Hilbert index uses static buffer - just release, don't free
         if (s.hilbertIndex) {
             if (s.hilbertIndex == (UIMapManager::Npk3IndexEntry*)_hilbertIndexBuffer) {
-                _hilbertIndexInUse = false;  // Release static buffer
+                _hilbertIndexInUse = false;
             }
-            // else: was dynamically allocated (legacy), don't free to avoid double-free
             s.hilbertIndex = nullptr;
+        }
+        // Release Hilbert window (also uses static buffer)
+        if (s.windowPtr) {
+            _hilbertIndexInUse = false;
+            s.windowPtr = nullptr;
+            s.windowMinH = s.windowMaxH = 0;
+            s.windowCount = 0;
         }
         if (s.file) {
             s.file.close();
@@ -992,6 +998,9 @@ namespace MapEngine {
         // Load Y-table only for NPK2, Hilbert index only for NPK3
         if (s.version == 2) {
             s.hilbertIndex = nullptr;  // NPK2 doesn't use Hilbert index
+            s.windowPtr = nullptr;
+            s.windowMinH = s.windowMaxH = 0;
+            s.windowCount = 0;
             uint32_t ySpan = s.header.y_max - s.header.y_min + 1;
             size_t ytableSize = ySpan * sizeof(UIMapManager::Npk2YEntry);
             s.yTable = (UIMapManager::Npk2YEntry*)heap_caps_malloc(ytableSize, MALLOC_CAP_SPIRAM);
@@ -1029,9 +1038,13 @@ namespace MapEngine {
                     s.hilbertIndex = nullptr;
                 }
             } else {
-                // Buffer unavailable or index too large - use SD binary search
+                // Buffer unavailable or index too large - use SD binary search with window
                 s.hilbertIndex = nullptr;
             }
+            // Initialize window fields
+            s.windowPtr = nullptr;
+            s.windowMinH = s.windowMaxH = 0;
+            s.windowCount = 0;
         }
 
         xSemaphoreGiveRecursive(spiMutex);
@@ -1179,6 +1192,24 @@ namespace MapEngine {
         idxRowCacheNext = 0;
     }
 
+    // Binary search on SD for the first NPK3 index entry with h >= targetH.
+    // Returns the index position (0-based). Caller must hold spiMutex.
+    static int32_t hilbertLowerBound(NpkSlot* slot, uint64_t targetH) {
+        int32_t lo = 0, hi = (int32_t)slot->header.tile_count;
+        while (lo < hi) {
+            int32_t mid = lo + (hi - lo) / 2;
+            uint64_t h;
+            slot->file.seek(slot->header.index_offset + mid * sizeof(UIMapManager::Npk3IndexEntry));
+            if (slot->file.read((uint8_t*)&h, sizeof(h)) != sizeof(h)) return lo;
+            if (h < targetH) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    // Maximum window entries for Hilbert range load (~160 KB at 16 bytes each)
+    #define HILBERT_WINDOW_MAX 10000
+
     // Find a tile in a single NPK slot (binary search in Y-table + index)
     // Uses index row cache to avoid redundant SD reads for the same Y-row.
     bool findNpkTileInSlot(NpkSlot* slot, uint32_t x, uint32_t y,
@@ -1302,20 +1333,109 @@ namespace MapEngine {
                 }
                 return false;
             } else {
-                // Slow path: binary search on SD (index too large for PSRAM)
-                bool found = false;
-                if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                // --- Window path: load a viewport-sized slice of the index ---
+
+                // 1. Check window hit (0 SD reads)
+                if (slot->windowPtr && targetH >= slot->windowMinH && targetH <= slot->windowMaxH) {
+                    int32_t wLo = 0, wHi = (int32_t)slot->windowCount - 1;
+                    while (wLo <= wHi) {
+                        int32_t mid = wLo + (wHi - wLo) / 2;
+                        if (slot->windowPtr[mid].h < targetH) wLo = mid + 1;
+                        else if (slot->windowPtr[mid].h > targetH) wHi = mid - 1;
+                        else {
+                            result->offset = slot->windowPtr[mid].offset;
+                            result->size = slot->windowPtr[mid].size;
+                            result->x = x;
+                            result->y = y;
+                            return true;
+                        }
+                    }
+                    return false;  // in range but not found (tile doesn't exist)
+                }
+
+                // 2. Window miss — compute 3×3 Hilbert range and load window
+                if (_hilbertIndexBuffer && spiMutex != NULL &&
+                    xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+
+                    // Release old window if any
+                    if (slot->windowPtr) {
+                        _hilbertIndexInUse = false;
+                        slot->windowPtr = nullptr;
+                    }
+
+                    // Compute min/max Hilbert for 3×3 neighborhood
+                    uint64_t rangeMin = targetH, rangeMax = targetH;
+                    uint32_t maxTile = (1u << slot->header.zoom) - 1;
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            uint32_t nx = (x + dx) <= maxTile ? (x + dx) : x;
+                            uint32_t ny = (y + dy) <= maxTile ? (y + dy) : y;
+                            if ((int32_t)(x + dx) < 0) nx = 0;
+                            if ((int32_t)(y + dy) < 0) ny = 0;
+                            uint64_t h = xyToHilbert(nx, ny, slot->header.zoom);
+                            if (h < rangeMin) rangeMin = h;
+                            if (h > rangeMax) rangeMax = h;
+                        }
+                    }
+
+                    // Find index positions via binary search on SD
+                    int32_t posLo = hilbertLowerBound(slot, rangeMin);
+                    int32_t posHi = hilbertLowerBound(slot, rangeMax + 1);
+                    int32_t windowEntries = posHi - posLo;
+                    if (windowEntries < 1) windowEntries = 1;
+
+                    bool windowLoaded = false;
+                    size_t windowBytes = windowEntries * sizeof(UIMapManager::Npk3IndexEntry);
+
+                    if (windowEntries <= HILBERT_WINDOW_MAX &&
+                        windowBytes <= HILBERT_INDEX_BUFFER_SIZE &&
+                        !_hilbertIndexInUse) {
+
+                        // Bulk read the window into static buffer
+                        slot->file.seek(slot->header.index_offset + posLo * sizeof(UIMapManager::Npk3IndexEntry));
+                        if (slot->file.read(_hilbertIndexBuffer, windowBytes) == windowBytes) {
+                            slot->windowPtr = (UIMapManager::Npk3IndexEntry*)_hilbertIndexBuffer;
+                            slot->windowMinH = slot->windowPtr[0].h;
+                            slot->windowMaxH = slot->windowPtr[windowEntries - 1].h;
+                            slot->windowCount = windowEntries;
+                            _hilbertIndexInUse = true;
+                            windowLoaded = true;
+                            ESP_LOGD(TAG, "Hilbert window loaded: %d entries (%d KB) for 3x3 at (%u,%u)",
+                                          windowEntries, (int)(windowBytes / 1024), x, y);
+                        }
+                    }
+
+                    if (windowLoaded) {
+                        xSemaphoreGiveRecursive(spiMutex);
+                        // Search in freshly loaded window
+                        int32_t wLo = 0, wHi = (int32_t)slot->windowCount - 1;
+                        while (wLo <= wHi) {
+                            int32_t mid = wLo + (wHi - wLo) / 2;
+                            if (slot->windowPtr[mid].h < targetH) wLo = mid + 1;
+                            else if (slot->windowPtr[mid].h > targetH) wHi = mid - 1;
+                            else {
+                                result->offset = slot->windowPtr[mid].offset;
+                                result->size = slot->windowPtr[mid].size;
+                                result->x = x;
+                                result->y = y;
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+
+                    // 3. Fallback: per-tile SD binary search (window too large or buffer busy)
+                    bool found = false;
+                    low = 0;
+                    high = (int32_t)slot->header.tile_count - 1;
                     while (low <= high) {
                         int32_t mid = low + (high - low) / 2;
                         UIMapManager::Npk3IndexEntry entry;
                         slot->file.seek(slot->header.index_offset + mid * sizeof(UIMapManager::Npk3IndexEntry));
                         if (slot->file.read((uint8_t*)&entry, sizeof(entry)) != sizeof(entry)) break;
-
-                        if (entry.h < targetH) {
-                            low = mid + 1;
-                        } else if (entry.h > targetH) {
-                            high = mid - 1;
-                        } else {
+                        if (entry.h < targetH) low = mid + 1;
+                        else if (entry.h > targetH) high = mid - 1;
+                        else {
                             result->offset = entry.offset;
                             result->size = entry.size;
                             result->x = x;
@@ -1325,8 +1445,9 @@ namespace MapEngine {
                         }
                     }
                     xSemaphoreGiveRecursive(spiMutex);
+                    return found;
                 }
-                return found;
+                return false;
             }
         }
         // Unknown version

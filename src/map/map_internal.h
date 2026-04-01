@@ -78,7 +78,12 @@ namespace MapEngine {
         // NPK2 fields
         UIMapManager::Npk2YEntry* yTable;
         // NPK3 fields
-        UIMapManager::Npk3IndexEntry* hilbertIndex;  // entire index cached in PSRAM
+        UIMapManager::Npk3IndexEntry* hilbertIndex;  // entire index cached in PSRAM (small zooms)
+        // NPK3 Hilbert window (large zooms — partial index loaded around viewport)
+        UIMapManager::Npk3IndexEntry* windowPtr;     // points into _hilbertIndexBuffer
+        uint64_t windowMinH;
+        uint64_t windowMaxH;
+        uint32_t windowCount;
         // common fields
         char region[64];
         uint8_t zoom;           // duplicate of header.zoom, kept for compatibility
