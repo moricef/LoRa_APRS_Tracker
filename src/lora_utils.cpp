@@ -27,6 +27,7 @@
 #include "display.h"
 #include "station_utils.h"
 #include "storage_utils.h"
+#include "compat/arduino_compat.h"
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #endif
@@ -290,8 +291,8 @@ namespace LoRa_Utils {
 
     void setup() {
         #ifdef LIGHTTRACKER_PLUS_1_0
-            pinMode(RADIO_VCC_PIN,OUTPUT);
-            digitalWrite(RADIO_VCC_PIN,HIGH);
+            compat_pinMode(RADIO_VCC_PIN,COMPAT_OUTPUT);
+            compat_digitalWrite(RADIO_VCC_PIN,COMPAT_HIGH);
         #endif
         ESP_LOGD(TAG, "Set SPI pins!");
         #if defined(LIGHTTRACKER_PLUS_1_0)
@@ -364,10 +365,10 @@ namespace LoRa_Utils {
         ESP_LOGD(TAG,"Send data: %s", newPacket.c_str());*/
 
         if (Config.ptt.active) {
-            digitalWrite(Config.ptt.io_pin, Config.ptt.reverse ? LOW : HIGH);
-            delay(Config.ptt.preDelay);
+            compat_digitalWrite(Config.ptt.io_pin, Config.ptt.reverse ? COMPAT_LOW : COMPAT_HIGH);
+            compat_delay(Config.ptt.preDelay);
         }
-        if (Config.notification.ledTx) digitalWrite(Config.notification.ledTxPin, HIGH);
+        if (Config.notification.ledTx) compat_digitalWrite(Config.notification.ledTxPin, COMPAT_HIGH);
         if (Config.notification.buzzerActive && Config.notification.txBeep) NOTIFICATION_Utils::beaconTxBeep();
 
         // Acquire SPI mutex — SD card shares the same SPI bus
@@ -381,10 +382,10 @@ namespace LoRa_Utils {
             ESP_LOGE(TAG, "Tx failed, code %d", state);
         }
         
-        if (Config.notification.ledTx) digitalWrite(Config.notification.ledTxPin, LOW);
+        if (Config.notification.ledTx) compat_digitalWrite(Config.notification.ledTxPin, COMPAT_LOW);
         if (Config.ptt.active) {
-            delay(Config.ptt.postDelay);
-            digitalWrite(Config.ptt.io_pin, Config.ptt.reverse ? HIGH : LOW);
+            compat_delay(Config.ptt.postDelay);
+            compat_digitalWrite(Config.ptt.io_pin, Config.ptt.reverse ? COMPAT_HIGH : COMPAT_LOW);
         }
     }
 
