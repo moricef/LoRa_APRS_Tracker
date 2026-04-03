@@ -27,7 +27,6 @@ static const char *TAG = "WX";
 #include "configuration.h"
 #include "wx_utils.h"
 #include "display.h"
-#include "../compat/arduino_compat.h"
 
 #define SEALEVELPRESSURE_HPA (1013.25)
 #define CORRECTION_FACTOR (8.2296)      // for meters
@@ -146,7 +145,7 @@ namespace WX_Utils {
     }
 
     String readDataSensor(const uint8_t type) {
-        uint32_t lastReading = compat_millis() - sensorLastReading;
+        uint32_t lastReading = millis() - sensorLastReading;
         if (lastReading > 60 * 1000) {
             #ifdef LIGHTTRACKER_PLUS_1_0
                 sensors_event_t humidity, temp;
@@ -171,7 +170,7 @@ namespace WX_Utils {
                     case 3: // BME680
                         #if !defined(HELTEC_V3_GPS) && !defined(HELTEC_V3_TNC) && !defined(HELTEC_V3_2_GPS) && !defined(HELTEC_V3_2_TNC)
                             bme680.performReading();
-                            compat_delay(50);
+                            delay(50);
                             if (bme680.endReading()) {
                                 newTemp     = bme680.temperature;
                                 newPress    = (bme680.pressure / 100.0F);
@@ -180,11 +179,10 @@ namespace WX_Utils {
                             }
                         #endif
                         break;
-                        }
-                        #endif
-                        sensorLastReading = compat_millis();
-                        }
-
+                }
+            #endif
+            sensorLastReading = millis();
+        }
         
         String sensorTelemetry;
         if (isnan(newTemp) || isnan(newHum) || isnan(newPress) || (!wxModuleFound)) {

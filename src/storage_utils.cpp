@@ -26,7 +26,6 @@
 #include <esp_log.h>
 #include "board_pinout.h"
 #include "storage_utils.h"
-#include "../compat/arduino_compat.h"
 
 static const char *TAG = "Storage";
 
@@ -464,7 +463,7 @@ namespace STORAGE_Utils {
 
     static const char* STATS_FILE = "/LoRa_Tracker/stats.json";
     static bool statsSaveNeeded = false;
-    static uint32_t lastStatsSave = compat_millis();
+    static uint32_t lastStatsSave = 0;
 
     // ========== Raw Frames Logging ==========
 

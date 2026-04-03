@@ -28,7 +28,6 @@ static const char *TAG = "APRS_IS";
 #include "aprs_is_utils.h"
 #include "configuration.h"
 #include "wifi_utils.h"
-#include "../compat/arduino_compat.h"
 
 
 extern Configuration    Config;
@@ -61,12 +60,12 @@ namespace APRS_IS_Utils {
                 dnsResolved = true;
                 ESP_LOGI(TAG, "Resolved to %s",
                            cachedServerIP.toString().c_str());
-                           } else {
-                           ESP_LOGW(TAG, "DNS failed for %s",
+            } else {
+                ESP_LOGW(TAG, "DNS failed for %s",
                            Config.aprs_is.server.c_str());
-                           lastConnectionTry = compat_millis();
-                           return;
-                           }
+                lastConnectionTry = millis();
+                return;
+            }
         }
 
         ESP_LOGI(TAG, "Connecting to %s:%d",
@@ -96,8 +95,8 @@ namespace APRS_IS_Utils {
             // Wait for server response to validate passcode.
             // Some servers send the banner (#aprsc) first, then logresp — allow up to 10 s.
             bool logrexpReceived = false;
-            uint32_t startWait = compat_millis();
-            while (compat_millis() - startWait < 10000) {
+            uint32_t startWait = millis();
+            while (millis() - startWait < 10000) {
                 esp_task_wdt_reset();  // Reset watchdog during server response wait
                 if (aprsIsClient.available()) {
                     String response = aprsIsClient.readStringUntil('\n');
@@ -126,10 +125,10 @@ namespace APRS_IS_Utils {
                 aprsIsClient.stop();
                 aprsIsConnected = false;
                 passcodeValid = false;
-                }
-                }
-                lastConnectionTry = compat_millis();
-                }
+            }
+        }
+        lastConnectionTry = millis();
+    }
 
     void upload(const String& packet) {
         if (!aprsIsConnected || !aprsIsClient.connected()) {
@@ -184,7 +183,7 @@ namespace APRS_IS_Utils {
         }
 
         // Try to reconnect every 30 seconds if not connected
-        if (!aprsIsConnected && (compat_millis() - lastConnectionTry > 30000)) {
+        if (!aprsIsConnected && (millis() - lastConnectionTry > 30000)) {
             connect();
         }
     }

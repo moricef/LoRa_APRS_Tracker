@@ -21,7 +21,6 @@
 #include "keyboard_utils.h"
 #include "board_pinout.h"
 #include "button_utils.h"
-#include "../compat/arduino_compat.h"
 
 extern  int                     menuDisplay;
 extern  Configuration           Config;
@@ -38,8 +37,8 @@ typedef void (*DirectionFunc)();
         uint32_t    lastInterruptTime   = 0;
 
         bool checkLastJoystickInterrupTime() {
-            if ((compat_millis() - lastInterruptTime) > debounceDelay) {
-                lastInterruptTime = compat_millis();
+            if ((millis() - lastInterruptTime) > debounceDelay) {
+                lastInterruptTime = millis();
                 return true;
             } else {
                 return false;
@@ -75,11 +74,11 @@ typedef void (*DirectionFunc)();
 
         void setup() {
             if (!Config.simplifiedTrackerMode) {
-                compat_pinMode(JOYSTICK_CENTER, INPUT_PULLUP);
-                compat_pinMode(JOYSTICK_UP, INPUT_PULLUP);
-                compat_pinMode(JOYSTICK_DOWN, INPUT_PULLUP);
-                compat_pinMode(JOYSTICK_LEFT, INPUT_PULLUP);
-                compat_pinMode(JOYSTICK_RIGHT, INPUT_PULLUP);
+                pinMode(JOYSTICK_CENTER, INPUT_PULLUP);
+                pinMode(JOYSTICK_UP, INPUT_PULLUP);
+                pinMode(JOYSTICK_DOWN, INPUT_PULLUP);
+                pinMode(JOYSTICK_LEFT, INPUT_PULLUP);
+                pinMode(JOYSTICK_RIGHT, INPUT_PULLUP);
 
                 attachInterrupt(digitalPinToInterrupt(JOYSTICK_UP), joystickUp, FALLING);
                 attachInterrupt(digitalPinToInterrupt(JOYSTICK_DOWN), joystickDown, FALLING);

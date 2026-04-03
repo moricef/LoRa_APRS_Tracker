@@ -10,8 +10,6 @@ static const char *TAG = "GPX";
 
 extern gps_fix gpsFix;
 extern SemaphoreHandle_t spiMutex;
-#include "../compat/arduino_compat.h"
-
 
 namespace GPXWriter {
 
@@ -34,7 +32,7 @@ namespace GPXWriter {
                      gpsFix.dateTime.hours, gpsFix.dateTime.minutes);
         } else {
             snprintf(filename, sizeof(filename),
-                     "/LoRa_Tracker/gpx/track_%u.gpx", (unsigned)(compat_millis() / 1000));
+                     "/LoRa_Tracker/gpx/track_%u.gpx", (unsigned)(millis() / 1000));
         }
 
         if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {

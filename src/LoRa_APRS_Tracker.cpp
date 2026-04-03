@@ -80,7 +80,6 @@ static const char *TAG = "Main";
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #endif
-#include "../compat/arduino_compat.h"
 
 
 String      versionDate             = "2026-01-12";
@@ -110,13 +109,13 @@ int         loraIndexSize           = Config.loraTypes.size();
 LoraType    *currentLoRaType        = &Config.loraTypes[loraIndex];
 
 int         menuDisplay             = 100;
-uint32_t    menuTime                = compat_millis();
+uint32_t    menuTime                = millis();
 
 bool        statusUpdate            = true;
 bool        displayEcoMode          = Config.display.ecoMode;
 bool        displayState            = true;
-uint32_t    displayTime             = compat_millis();
-uint32_t    refreshDisplayTime      = compat_millis();
+uint32_t    displayTime             = millis();
+uint32_t    refreshDisplayTime      = millis();
 
 bool        sendUpdate              = true;
 
@@ -151,7 +150,7 @@ void setup() {
 
     // Silence GPIO 14 warning spam (pin used by PSRAM on ESP32-S3)
     // Arduino Core 3 warns if digitalRead() is called on unconfigured pins
-    compat_pinMode(14, INPUT);
+    pinMode(14, INPUT);
 
     // Boost CPU to 240MHz for fast init
     setCpuFrequencyMhz(240);
@@ -159,8 +158,8 @@ void setup() {
 
     // Turn off backlight immediately to avoid garbage display during init
     #if defined(USE_LVGL_UI) && defined(BOARD_BL_PIN)
-        compat_pinMode(BOARD_BL_PIN, OUTPUT);
-        compat_digitalWrite(BOARD_BL_PIN, LOW);
+        pinMode(BOARD_BL_PIN, OUTPUT);
+        digitalWrite(BOARD_BL_PIN, LOW);
     #endif
 
     POWER_Utils::setup();
@@ -225,7 +224,7 @@ void setup() {
 
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("Ready!");
-        compat_delay(500);
+        delay(500);
         LVGL_UI::setup();  // LVGL handles its own touch - also cleans up init screens
 
         // Check if first boot web-conf needed (NOCALL or no WiFi configured)
@@ -338,7 +337,7 @@ void loop() {
             String digipeatedPacket = APRSPacketLib::generateDigipeatedPacket(packet.text, currentBeacon->callsign, Config.path);
             if (digipeatedPacket != "X") {
                 ESP_LOGI(TAG, "Digipeating: %s", digipeatedPacket.c_str());
-                compat_delay(random(100, 500)); // Random delay to avoid collisions
+                delay(random(100, 500)); // Random delay to avoid collisions
                 LoRa_Utils::sendNewPacket(digipeatedPacket);
             } else {
                 ESP_LOGW(TAG, "Packet won't be repeated (Missing WIDEn-N)");
@@ -373,7 +372,7 @@ void loop() {
     STATION_Utils::checkListenedStationsByTimeAndDelete();
     STATION_Utils::cleanOldMapStations();
 
-    lastTx = compat_millis() - lastTxTime;
+    lastTx = millis() - lastTxTime;
     if (gpsIsActive) {
         GPS_Utils::getData();
         bool gps_time_update = GPS_Utils::hasNewFix() && gpsFix.valid.time;
@@ -409,18 +408,18 @@ void loop() {
             static uint32_t lastGpsQualityLogMs = 0;
             static uint32_t gpsQualitySkipCount = 0;
             gpsQualitySkipCount++;
-            uint32_t now = compat_millis();
+            uint32_t now = millis();
             if (now - lastGpsQualityLogMs >= 30000) {
                 ESP_LOGD(TAG, "GPS quality too low (sats=%d, HDOP=%.1f), skipping beacon (x%u)",
                          gpsFix.satellites, gpsHdop(), gpsQualitySkipCount);
                 lastGpsQualityLogMs = now;
                 gpsQualitySkipCount = 0;
             }
-            }
+        }
 
-            if (gps_time_update) SMARTBEACON_Utils::checkInterval(currentSpeed);
+        if (gps_time_update) SMARTBEACON_Utils::checkInterval(currentSpeed);
 
-            if (compat_millis() - refreshDisplayTime >= 1000 || gps_time_update) {
+        if (millis() - refreshDisplayTime >= 1000 || gps_time_update) {
             GPS_Utils::checkStartUpFrames();
             #ifndef USE_LVGL_UI
                 MENU_Utils::showOnScreen();
@@ -428,12 +427,12 @@ void loop() {
             refreshDisplayTime = millis();
         }
         SLEEP_Utils::checkIfGPSShouldSleep();
-        } else {
-        if (compat_millis() - lastGPSTime > txInterval) {
+    } else {
+        if (millis() - lastGPSTime > txInterval) {
             SLEEP_Utils::gpsWakeUp();
         }
         STATION_Utils::checkStandingUpdateTime();
-        if (compat_millis() - refreshDisplayTime >= 1000) {
+        if (millis() - refreshDisplayTime >= 1000) {
             #ifndef USE_LVGL_UI
                 MENU_Utils::showOnScreen();
             #endif
@@ -453,21 +452,21 @@ void loop() {
     // Periodic memory monitoring (every 60s serial, every 5 min SD log)
     static uint32_t lastMemLog = 0;
     static uint32_t lastHeartbeat = 0;
-    if (compat_millis() - lastMemLog >= 10000) {  // 10 seconds
-        lastMemLog = compat_millis();
+    if (millis() - lastMemLog >= 10000) {  // 10 seconds
+        lastMemLog = millis();
         ESP_LOGI(TAG, "DRAM: %u  PSRAM: %u  Largest DRAM: %u",
                       heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                       heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-                      }
-                      if (compat_millis() - lastHeartbeat >= 300000) {  // 5 minutes
-                      lastHeartbeat = compat_millis();
-                      SD_Logger::logf(SD_Logger::INFO, "LOOP", "Heartbeat - Free heap: %u KB", ESP.getFreeHeap() / 1024);
-                      }
+    }
+    if (millis() - lastHeartbeat >= 300000) {  // 5 minutes
+        lastHeartbeat = millis();
+        SD_Logger::logf(SD_Logger::INFO, "LOOP", "Heartbeat - Free heap: %u KB", ESP.getFreeHeap() / 1024);
+    }
 
-                      // Update RTC crash context every 5s — readable at next boot after PANIC/WDT
-                      static uint32_t lastCrashCtxUpdate = 0;
-                      if (compat_millis() - lastCrashCtxUpdate >= 5000) {
+    // Update RTC crash context every 5s — readable at next boot after PANIC/WDT
+    static uint32_t lastCrashCtxUpdate = 0;
+    if (millis() - lastCrashCtxUpdate >= 5000) {
         lastCrashCtxUpdate = millis();
         float lat = gpsFix.valid.location ? (float)gpsFix.latitude() : 0.0f;
         float lon = gpsFix.valid.location ? (float)gpsFix.longitude() : 0.0f;

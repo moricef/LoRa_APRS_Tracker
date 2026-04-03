@@ -26,7 +26,6 @@
 #include "lora_utils.h"
 #include "wx_utils.h"
 #include "display.h"
-#include "../compat/arduino_compat.h"
 
 
 extern Configuration    Config;
@@ -113,11 +112,11 @@ namespace TELEMETRY_Utils {
 
     void sendEquationsUnitsParameters() {
         sendEquationCoefficients();
-        compat_delay(3000);
+        delay(3000);
         sendUnitLabels();
-        compat_delay(3000);
+        delay(3000);
         sendParameterNames();
-        compat_delay(3000);
+        delay(3000);
         sendStartTelemetry = false;
     }
 

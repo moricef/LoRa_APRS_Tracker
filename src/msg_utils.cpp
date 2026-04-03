@@ -36,7 +36,6 @@
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #endif
-#include "../compat/arduino_compat.h"
 
 
 extern Beacon               *currentBeacon;
@@ -92,20 +91,20 @@ int         ackRequestNumber    = random(1,999);
 bool        ackRequestState     = false;
 String      ackCallsignRequest  = "";
 String      ackNumberRequest    = "";
-uint32_t    lastMsgRxTime       = compat_millis();
-uint32_t    lastRetryTime       = compat_millis();
+uint32_t    lastMsgRxTime       = millis();
+uint32_t    lastRetryTime       = millis();
 
 bool        messageLed          = false;
-uint32_t    messageLedTime      = compat_millis();
+uint32_t    messageLedTime      = millis();
 
 
 namespace MSG_Utils {
 
     // Clean old entries from deduplication buffer
     static void cleanRecentMessagesBuffer() {
-            uint32_t now = compat_millis();
-            while (!recentMessagesBuffer.empty() &&
-                   (now - recentMessagesBuffer[0].timestamp) > MSG_DEDUP_WINDOW_MS) {
+        uint32_t now = millis();
+        while (!recentMessagesBuffer.empty() &&
+               (now - recentMessagesBuffer[0].timestamp) > MSG_DEDUP_WINDOW_MS) {
             recentMessagesBuffer.erase(recentMessagesBuffer.begin());
         }
     }
@@ -125,7 +124,7 @@ namespace MSG_Utils {
         RecentMessage newMsg;
         newMsg.sender = sender;
         newMsg.content = content;
-        newMsg.timestamp = compat_millis();
+        newMsg.timestamp = millis();
         recentMessagesBuffer.push_back(newMsg);
 
         return false;
@@ -216,7 +215,7 @@ namespace MSG_Utils {
         ESP_LOGD(TAG, "Saving to: %s", filename.c_str());
 
         // Build message line: timestamp,direction,content
-        uint32_t timestamp = compat_millis() / 1000;  // Uptime in seconds
+        uint32_t timestamp = millis() / 1000;  // Uptime in seconds
         String line = String(timestamp) + "," + direction + "," + message;
 
         // Use "a" mode (append) which creates file if it doesn't exist
@@ -391,18 +390,18 @@ namespace MSG_Utils {
     }
 
     void ledNotification() {
-        uint32_t currentTime = compat_millis();
+        uint32_t currentTime = millis();
         uint32_t ledTimeDelta = currentTime - messageLedTime;
         if (messageLed) {
             if (ledTimeDelta > 5 * 1000) {
-                compat_digitalWrite(Config.notification.ledMessagePin, HIGH);
+                digitalWrite(Config.notification.ledMessagePin, HIGH);
                 messageLedTime = currentTime;
-                } else if (ledTimeDelta > 1 * 1000) {
-                compat_digitalWrite(Config.notification.ledMessagePin, LOW);
-                }
-                } else if (!messageLed && compat_digitalRead(Config.notification.ledMessagePin) == HIGH) {
-                compat_digitalWrite(Config.notification.ledMessagePin, LOW);
-                }
+            } else if (ledTimeDelta > 1 * 1000) {
+                digitalWrite(Config.notification.ledMessagePin, LOW);
+            }
+        } else if (!messageLed && digitalRead(Config.notification.ledMessagePin) == HIGH) {
+            digitalWrite(Config.notification.ledMessagePin, LOW);
+        }
     }
 
     void deleteFile(uint8_t typeOfFile) {
@@ -590,13 +589,12 @@ namespace MSG_Utils {
             displayShow("<<ACK Tx>>", "", "", 500);
         } else if (station.indexOf("CA2RXU-15") == 0 && textMessage.indexOf("wrl") == 0) {
             displayShow("<WEATHER>","", "--- Sending Query ---",  1000);
-            wxRequestTime = compat_millis();
+            wxRequestTime = millis();
             wxRequestStatus = true;
-            } else {
+        } else {
             displayShow((station == "WLNK-1") ? "WINLINK Tx" : " MSG Tx >", "", newPacket, 100);
-            }
-            LoRa_Utils::sendNewPacket(newPacket);
-
+        }
+        LoRa_Utils::sendNewPacket(newPacket);
 
         // Save outgoing message to conversation file (skip ACKs)
         if (textMessage.indexOf("ack") != 0) {
@@ -653,7 +651,7 @@ namespace MSG_Utils {
     }
 
     void processOutputBuffer() {
-        if (!outputMessagesBuffer.empty() && (compat_millis() - lastMsgRxTime) >= 6000 && (compat_millis() - lastTxTime) > 3000) {
+        if (!outputMessagesBuffer.empty() && (millis() - lastMsgRxTime) >= 6000 && (millis() - lastTxTime) > 3000) {
             String addressee = outputMessagesBuffer[0].substring(0, outputMessagesBuffer[0].indexOf(","));
             String message = outputMessagesBuffer[0].substring(outputMessagesBuffer[0].indexOf(",") + 1);
             if (message.indexOf("{") > 0) {     // message with ack Request
@@ -662,12 +660,12 @@ namespace MSG_Utils {
             } else {                            // message without ack Request
                 sendMessage(addressee, message);
                 outputMessagesBuffer.erase(outputMessagesBuffer.begin());
-                lastTxTime = compat_millis();
+                lastTxTime = millis();
             }
-            }
-            if (outputAckRequestBuffer.empty()) {
+        }
+        if (outputAckRequestBuffer.empty()) {
             ackRequestState = false;
-        } else if (!outputAckRequestBuffer.empty() && (compat_millis() - lastMsgRxTime) >= 4500 && (compat_millis() - lastTxTime) > 3000) {
+        } else if (!outputAckRequestBuffer.empty() && (millis() - lastMsgRxTime) >= 4500 && (millis() - lastTxTime) > 3000) {
             bool sendRetry = false;
             String triesLeft = outputAckRequestBuffer[0].substring(0 , outputAckRequestBuffer[0].indexOf(","));
             switch (triesLeft.toInt()) {
@@ -676,22 +674,22 @@ namespace MSG_Utils {
                     ackRequestState = true;
                     break;
                 case 5:
-                    if (compat_millis() - lastRetryTime > 30 * 1000) sendRetry = true;
+                    if (millis() - lastRetryTime > 30 * 1000) sendRetry = true;
                     break;
                 case 4:
-                    if (compat_millis() - lastRetryTime > 60 * 1000) sendRetry = true;
+                    if (millis() - lastRetryTime > 60 * 1000) sendRetry = true;
                     break;
                 case 3:
-                    if (compat_millis() - lastRetryTime > 120 * 1000) sendRetry = true;
+                    if (millis() - lastRetryTime > 120 * 1000) sendRetry = true;
                     break;
                 case 2:
-                    if (compat_millis() - lastRetryTime > 120 * 1000) sendRetry = true;
+                    if (millis() - lastRetryTime > 120 * 1000) sendRetry = true;
                     break;
                 case 1:
-                    if (compat_millis() - lastRetryTime > 120 * 1000) sendRetry = true;
+                    if (millis() - lastRetryTime > 120 * 1000) sendRetry = true;
                     break;
                 case 0:
-                    if (compat_millis() - lastRetryTime > 30 * 1000) {
+                    if (millis() - lastRetryTime > 30 * 1000) {
                         ackRequestNumber = false;
                         outputAckRequestBuffer.erase(outputAckRequestBuffer.begin());
                         if (winlinkStatus > 0 && winlinkStatus < 5) {   // if not complete Winlink Challenge Process it will reset Login process
@@ -706,8 +704,8 @@ namespace MSG_Utils {
                 String payload = rest.substring(rest.indexOf(",") + 1);
                 ackNumberRequest = payload.substring(payload.indexOf("{") + 1);                
                 sendMessage(ackCallsignRequest, payload);
-                lastTxTime = compat_millis();
-                lastRetryTime = compat_millis();
+                lastTxTime = millis();
+                lastRetryTime = millis();
                 outputAckRequestBuffer[0] = String(triesLeft.toInt() - 1) + "," + ackCallsignRequest + "," + payload;
             }
         }
@@ -722,7 +720,7 @@ namespace MSG_Utils {
     }
 
     void clean15SegBuffer() {
-        if (!packet15SegBuffer.empty() && (compat_millis() - packet15SegBuffer[0].receivedTime) >  15 * 1000) packet15SegBuffer.erase(packet15SegBuffer.begin());
+        if (!packet15SegBuffer.empty() && (millis() - packet15SegBuffer[0].receivedTime) >  15 * 1000) packet15SegBuffer.erase(packet15SegBuffer.begin());
     }
 
     bool check15SegBuffer(const String& station, const String& textMessage) {
@@ -732,13 +730,12 @@ namespace MSG_Utils {
             }
         }
         Packet15SegBuffer   packet;
-        packet.receivedTime = compat_millis();
+        packet.receivedTime = millis();
         packet.station      = station;
         packet.payload      = textMessage;
         packet15SegBuffer.push_back(packet);
         return true;
-        }
-
+    }
     
     void checkReceivedMessage(ReceivedLoRaPacket packet) {
         if(packet.text.isEmpty()) {
@@ -776,14 +773,14 @@ namespace MSG_Utils {
                         }
                         if (lastReceivedPacket.payload.indexOf("{") >= 0) {
                             MSG_Utils::addToOutputBuffer(0, lastReceivedPacket.sender, "ack" + lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("{") + 1));
-                            lastMsgRxTime = compat_millis();
+                            lastMsgRxTime = millis();
                             lastReceivedPacket.payload = lastReceivedPacket.payload.substring(0, lastReceivedPacket.payload.indexOf("{"));
                         }
 
                         if (Config.notification.buzzerActive && Config.notification.messageRxBeep) NOTIFICATION_Utils::messageBeep();
-
+                        
                         if (lastReceivedPacket.payload.indexOf("ping") == 0 || lastReceivedPacket.payload.indexOf("Ping") == 0 || lastReceivedPacket.payload.indexOf("PING") == 0) {
-                            lastMsgRxTime = compat_millis();
+                            lastMsgRxTime = millis();
                             MSG_Utils::addToOutputBuffer(0, lastReceivedPacket.sender, "pong, 73!");
                         }
 
@@ -819,45 +816,45 @@ namespace MSG_Utils {
 
                             displayShow("<WEATHER>", "From --> " + lastReceivedPacket.sender, place, summary, fifthLineWR, sixthLineWR);
                             menuDisplay = 300;
-                            menuTime = compat_millis();
-                            } else if (lastReceivedPacket.sender == "WLNK-1") {
+                            menuTime = millis();
+                        } else if (lastReceivedPacket.sender == "WLNK-1") {
                             if (winlinkStatus == 0 && !Config.simplifiedTrackerMode) {
-                                lastMsgRxTime = compat_millis();
+                                lastMsgRxTime = millis();
                                 if (lastReceivedPacket.payload.indexOf("ack") != 0) {
                                     saveNewMessage(0, lastReceivedPacket.sender, lastReceivedPacket.payload);
                                 }                                    
                             } else if (winlinkStatus == 1 && ackNumberRequest == lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("ack") + 3)) {
                                 ESP_LOGD(TAG, "---> Waiting Challenge");
-                                lastMsgRxTime = compat_millis();
+                                lastMsgRxTime = millis();
                                 winlinkStatus = 2;
                                 menuDisplay = 500;
                             } else if ((winlinkStatus >= 1 || winlinkStatus <= 3) &&lastReceivedPacket.payload.indexOf("Login [") == 0) {
                                 WINLINK_Utils::processWinlinkChallenge(lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("[")+1,lastReceivedPacket.payload.indexOf("]")));
                                 ESP_LOGI(TAG, "---> Challenge Received/Processed/Sent");
-                                lastMsgRxTime = compat_millis();
+                                lastMsgRxTime = millis();
                                 winlinkStatus = 3;
                                 menuDisplay = 501;
                             } else if (winlinkStatus == 3 && ackNumberRequest == lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("ack") + 3)) {
                                 ESP_LOGD(TAG, "---> Challenge Ack Received");
-                                lastMsgRxTime = compat_millis();
+                                lastMsgRxTime = millis();
                                 winlinkStatus = 4;
                                 menuDisplay = 502;
                             } else if (lastReceivedPacket.payload.indexOf("Login valid for") > 0) {
                                 ESP_LOGI(TAG, "---> Login Successful");
-                                lastMsgRxTime = compat_millis();
+                                lastMsgRxTime = millis();
                                 winlinkStatus = 5;
                                 displayShow(" WINLINK>", "", " LOGGED !!!!", 2000);
                                 cleanOutputAckRequestBuffer("WLNK-1");
                                 menuDisplay = 5000;
                             } else if (winlinkStatus == 5 && lastReceivedPacket.payload.indexOf("Log off successful") == 0 ) {
                                 ESP_LOGI(TAG, "---> Log Out");
-                                lastMsgRxTime = compat_millis();
+                                lastMsgRxTime = millis();
                                 displayShow(" WINLINK>", "", "    LOG OUT !!!", 2000);
                                 cleanOutputAckRequestBuffer("WLNK-1");
                                 lastChallengeTime = 0;
                                 winlinkStatus = 0;
                             } else if ((winlinkStatus == 5) && (lastReceivedPacket.payload.indexOf("Log off successful") == -1) && (lastReceivedPacket.payload.indexOf("Login valid") == -1) && (lastReceivedPacket.payload.indexOf("Login [") == -1) && (lastReceivedPacket.payload.indexOf("ack") == -1)) {
-                                lastMsgRxTime = compat_millis();
+                                lastMsgRxTime = millis();
                                 #ifdef USE_LVGL_UI
                                     LVGL_UI::showMessage("WLNK-1", lastReceivedPacket.payload.c_str());
                                 #else
@@ -867,7 +864,7 @@ namespace MSG_Utils {
                             } 
                         } else {
                             if (!Config.simplifiedTrackerMode) {
-                                lastMsgRxTime = compat_millis();
+                                lastMsgRxTime = millis();
 
                                 #ifdef USE_LVGL_UI
                                     LVGL_UI::showMessage(lastReceivedPacket.sender.c_str(), lastReceivedPacket.payload.c_str());

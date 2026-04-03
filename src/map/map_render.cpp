@@ -23,7 +23,6 @@
 #include "station_utils.h"
 #include "configuration.h"
 #include "ui_map_manager.h"  // For MAP_TILE_SIZE, MAP_SPRITE_SIZE, MAP_MARGIN_X/Y, MAP_STATIONS_MAX, SYMBOL_SIZE, mapStationsCount
-#include "../../compat/arduino_compat.h"
 
 using namespace MapState;
 
@@ -338,7 +337,7 @@ namespace MapRender {
     void draw_station_traces() {
         if (!map_canvas) return;
 
-        uint32_t now = compat_millis();
+        uint32_t now = millis();
         lv_draw_line_dsc_t line_dsc;
         lv_draw_line_dsc_init(&line_dsc);
         line_dsc.color = lv_color_hex(0x0055FF);

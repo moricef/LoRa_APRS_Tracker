@@ -23,7 +23,6 @@
 #include "button_utils.h"
 #include "power_utils.h"
 #include "display.h"
-#include "../compat/arduino_compat.h"
 
 #ifdef BUTTON_PIN
 
@@ -43,43 +42,43 @@
         #endif
 
         void singlePress1() {
-            menuTime = compat_millis();
+            menuTime = millis();
             KEYBOARD_Utils::downArrow();
         }
         #ifdef RPC_Electronics_1W_LoRa_GPS
             void singlePress2() {
-                menuTime = compat_millis();
+                menuTime = millis();
                 KEYBOARD_Utils::upArrow();
             }
             void singlePress3() {
-                menuTime = compat_millis();
+                menuTime = millis();
                 KEYBOARD_Utils::rightArrow();
             }
             void singlePress4() {
-                menuTime = compat_millis();
+                menuTime = millis();
                 KEYBOARD_Utils::leftArrow();
             }
         #endif
 
         void longPress1() {
-            menuTime = compat_millis();
+            menuTime = millis();
             KEYBOARD_Utils::rightArrow();
         }
 
         void doublePress1() {
             displayToggle(true);
-            menuTime = compat_millis();
+            menuTime = millis();
             if (menuDisplay == 0) {
                 menuDisplay = 1;
             } else if (menuDisplay > 0) {
                 menuDisplay = 0;
-                displayTime = compat_millis();
+                displayTime = millis();
             }
-            }
+        }
 
-            void multiPress1() {
+        void multiPress1() {
             displayToggle(true);
-            menuTime = compat_millis();
+            menuTime = millis();
             menuDisplay = 9000;
         }
 

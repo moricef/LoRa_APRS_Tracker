@@ -37,7 +37,6 @@ static const char *TAG = "Keyboard";
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #endif
-#include "../compat/arduino_compat.h"
 
 
 extern Configuration    Config;
@@ -81,7 +80,7 @@ extern std::vector<String>  outputMessagesBuffer;
 
 bool        keyboardConnected       = false;
 bool        keyDetected             = false;
-uint32_t    keyboardTime            = compat_millis();
+uint32_t    keyboardTime            = millis();
 
 String      messageCallsign         = "";
 String      messageText             = "";
@@ -190,7 +189,7 @@ namespace KEYBOARD_Utils {
                 if (!gpsIsActive) SLEEP_Utils::gpsWakeUp();
             } else {
                 displayToggle(true);
-                displayTime = compat_millis();
+                displayTime = millis();
                 displayState = true;
             }
         }
@@ -357,11 +356,10 @@ namespace KEYBOARD_Utils {
                 myBeaconsIndex++;
             }
             displayToggle(true);
-            displayTime = compat_millis();
+            displayTime = millis();
             statusUpdate  = true;
-            statusTime = compat_millis();
+            statusTime = millis();
             winlinkCommentState = false;
-
             
             String newCallsign = "-----> ";
             newCallsign += Config.beacons[myBeaconsIndex].callsign;
@@ -625,11 +623,11 @@ namespace KEYBOARD_Utils {
 
     void processPressedKey(char key) {
         keyDetected = true;
-        menuTime = compat_millis();
-
+        menuTime = millis();
+        
         // Reset LVGL eco mode activity timer and reassert backlight on keypress
         #ifdef USE_LVGL_UI
-            lastActivityTime = compat_millis();
+            lastActivityTime = millis();
             displaySetBrightness(screenBrightness);
             if (screenDimmed) {
                 screenDimmed = false;
@@ -640,7 +638,7 @@ namespace KEYBOARD_Utils {
         /*  181 -> up / 182 -> down / 180 <- back / 183 -> forward / 8 Delete / 13 Enter / 32 Space  / 27 Esc */
         if (!displayState) {
             displayToggle(true);
-            displayTime = compat_millis();   
+            displayTime = millis();   
             displayState = true;
         }
         if (menuDisplay == 0 && key == 13) {       // Main Menu
@@ -862,14 +860,14 @@ namespace KEYBOARD_Utils {
 
     void read() {
         if (keyboardConnected) {
-            uint32_t lastKey = compat_millis() - keyboardTime;
+            uint32_t lastKey = millis() - keyboardTime;
             if (lastKey > 30 * 1000) keyDetected = false;
             Wire.requestFrom(keyboardAddress, static_cast<uint8_t>(1));
             while (Wire.available()) {
                 char c = Wire.read();
                 if (c != 0) {
                     ESP_LOGD(TAG, "Key: %d (0x%02X) '%c'", c, c, (c >= 32 && c < 127) ? c : '?');
-                    keyboardTime = compat_millis();
+                    keyboardTime = millis();
                     processPressedKey(c);
                 }
             }

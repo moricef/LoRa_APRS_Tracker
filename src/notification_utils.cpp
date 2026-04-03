@@ -19,7 +19,6 @@
 #include "notification_utils.h"
 #include "configuration.h"
 #include "board_pinout.h"
-#include "../compat/arduino_compat.h"
 
 #ifdef HAS_I2S
     #pragma GCC diagnostic push
@@ -109,99 +108,99 @@ namespace NOTIFICATION_Utils {
         i2s_write(SPK_I2S_PORT, samples, numSamples * sizeof(int16_t), &bytesWritten, portMAX_DELAY);
 
         free(samples);
-        compat_delay(pauseDuration);
-        }
+        delay(pauseDuration);
+    }
 
-        void playTone(int frequency, uint8_t duration) {
+    void playTone(int frequency, uint8_t duration) {
         playToneI2S(frequency, duration);
     }
 #else
     void playTone(int frequency, uint8_t duration) {
-    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
         ledcAttach(Config.notification.buzzerPinTone, frequency, resolution);
         ledcWrite(Config.notification.buzzerPinTone, 128);
-        compat_delay(duration);
+        delay(duration);
         ledcWrite(Config.notification.buzzerPinTone, 0);
-    #else
+#else
         ledcSetup(channel, frequency, resolution);
         ledcAttachPin(Config.notification.buzzerPinTone, channel);
         ledcWrite(channel, 128);
-        compat_delay(duration);
+        delay(duration);
         ledcWrite(channel, 0);
-    #endif
-        compat_delay(pauseDuration);
+#endif
+        delay(pauseDuration);
     }
 #endif
 
     void beaconTxBeep() {
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, HIGH);
+            digitalWrite(Config.notification.buzzerPinVcc, HIGH);
         #endif
         playTone(1320,100);
         if (digipeaterActive) {
             playTone(1560,100);
         }
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, LOW);
+            digitalWrite(Config.notification.buzzerPinVcc, LOW);
         #endif
     }
 
     void messageBeep() {
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, HIGH);
+            digitalWrite(Config.notification.buzzerPinVcc, HIGH);
         #endif
         playTone(1100,100);
         playTone(1100,100);
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, LOW);
+            digitalWrite(Config.notification.buzzerPinVcc, LOW);
         #endif
     }
 
     void stationHeardBeep() {
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, HIGH);
+            digitalWrite(Config.notification.buzzerPinVcc, HIGH);
         #endif
         playTone(1200,100);
         playTone(600,100);
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, LOW);
+            digitalWrite(Config.notification.buzzerPinVcc, LOW);
         #endif
     }
 
     void shutDownBeep() {
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, HIGH);
+            digitalWrite(Config.notification.buzzerPinVcc, HIGH);
         #endif
         for (int i = 0; i < sizeof(shutDownSound) / sizeof(shutDownSound[0]); i++) {
             playTone(shutDownSound[i], shutDownSoundDuration[i]);
         }
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, LOW);
+            digitalWrite(Config.notification.buzzerPinVcc, LOW);
         #endif
     }
 
     void lowBatteryBeep() {
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, HIGH);
+            digitalWrite(Config.notification.buzzerPinVcc, HIGH);
         #endif
         playTone(1550,100);
         playTone(650,100);
         playTone(1550,100);
         playTone(650,100);
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, LOW);
+            digitalWrite(Config.notification.buzzerPinVcc, LOW);
         #endif
     }
 
     void start() {
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, HIGH);
+            digitalWrite(Config.notification.buzzerPinVcc, HIGH);
         #endif
         for (int i = 0; i < sizeof(startUpSound) / sizeof(startUpSound[0]); i++) {
             playTone(startUpSound[i], startUpSoundDuration[i]);
         }
         #ifndef HAS_I2S
-            compat_digitalWrite(Config.notification.buzzerPinVcc, LOW);
+            digitalWrite(Config.notification.buzzerPinVcc, LOW);
         #endif
     }
 
