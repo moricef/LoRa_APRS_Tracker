@@ -27,6 +27,7 @@
 #include "aprs_is_utils.h"
 #include "display.h"
 #include "lvgl_ui.h"
+#include "../compat/arduino_compat.h"
 #include <Network.h>  // Required for Arduino Core 3.x (NetworkClient, NetworkInterface)
 
 extern Configuration        Config;
@@ -84,7 +85,7 @@ namespace WIFI_Utils {
                 // Connection succeeded!
                 wifiConnecting = false;
                 onConnectionSuccess();
-            } else if ((millis() - wifiConnectStartTime) >= timeout) {
+            } else if ((compat_millis() - wifiConnectStartTime) >= timeout) {
                 // Timeout - try next network or give up
                 handleConnectionTimeout();
             }
@@ -93,23 +94,23 @@ namespace WIFI_Utils {
 
         // Eco mode: WiFi is off, waiting for periodic retry
         if (WiFiEcoMode && WiFiStationMode) {
-            uint32_t elapsed = millis() - lastWiFiRetry;
+            uint32_t elapsed = compat_millis() - lastWiFiRetry;
             if (elapsed >= WIFI_RETRY_INTERVAL) {
                 ESP_LOGI(TAG, "Eco mode: retrying after %u ms", elapsed);
                 WiFiEcoMode = false;
                 wifiIsReconnecting = true;
                 startStationMode();
-                lastWiFiRetry = millis();
-            }
-            return;
-        }
+                lastWiFiRetry = compat_millis();
+                }
+                return;
+                }
 
-        if (WiFiConnected) {
-            if (millis() - lastWiFiDebug >= 10000) {
+                if (WiFiConnected) {
+                if (compat_millis() - lastWiFiDebug >= 10000) {
                 ESP_LOGD(TAG, "status=%d RSSI=%d", WiFi.status(), WiFi.RSSI());
-                lastWiFiDebug = millis();
-            }
-            if ((WiFi.status() != WL_CONNECTED) && ((millis() - previousWiFiMillis) >= 30000)) {
+                lastWiFiDebug = compat_millis();
+                }
+                if ((WiFi.status() != WL_CONNECTED) && ((compat_millis() - previousWiFiMillis) >= 30000)) {
                 wifiRetryCount++;
                 ESP_LOGW(TAG, "Connection lost, reconnecting (attempt %d/%d)...", wifiRetryCount, WIFI_MAX_RETRIES);
                 WiFi.disconnect();
@@ -136,7 +137,7 @@ namespace WIFI_Utils {
 
         wifiCurrentNetworkIndex = networkIndex;
         wifiConnecting = true;
-        wifiConnectStartTime = millis();
+        wifiConnectStartTime = compat_millis();
 
         const WiFi_AP& network = Config.wifiAPs[networkIndex];
         uint32_t timeout = wifiIsReconnecting ? WIFI_RECONNECT_TIMEOUT : WIFI_CONNECT_TIMEOUT;
@@ -185,7 +186,7 @@ namespace WIFI_Utils {
             WiFiConnected = false;
             WiFiEcoMode = true;
             wifiRetryCount = 0;
-            lastWiFiRetry = millis();
+            lastWiFiRetry = compat_millis();
             ESP_LOGW(TAG, "Max retries reached, entering eco mode (retry in 30 min)");
             #ifdef USE_LVGL_UI
                 LVGL_UI::showWiFiEcoMode();
@@ -219,8 +220,8 @@ namespace WIFI_Utils {
                 noClientsTime = 0;
             } else {
                 if (noClientsTime == 0) {
-                    noClientsTime = millis();
-                } else if ((millis() - noClientsTime) > Config.wifiAutoAP.timeout * 60 * 1000) {
+                    noClientsTime = compat_millis();
+                } else if ((compat_millis() - noClientsTime) > Config.wifiAutoAP.timeout * 60 * 1000) {
                     ESP_LOGW(TAG, "WebConfiguration Stopped!");
                     displayShow("", "", "  STOPPING WiFi AP", "", "", "", 2000);
                     Config.wifiAutoAP.active = false;
@@ -235,19 +236,19 @@ namespace WIFI_Utils {
     bool tryConnectToNetwork(const WiFi_AP& network) {
         if (network.ssid == "") return false;
 
-        unsigned long start = millis();
+        unsigned long start = compat_millis();
         ESP_LOGI(TAG, "Connecting to '%s' (timeout %ds)...", network.ssid.c_str(), WIFI_CONNECT_TIMEOUT / 1000);
         WiFi.begin(network.ssid.c_str(), network.password.c_str());
 
         while (WiFi.status() != WL_CONNECTED) {
-            delay(500);
+            compat_delay(500);
             esp_task_wdt_reset();  // Reset watchdog during connection attempts
-            delay(500);
-            if ((millis() - start) > WIFI_CONNECT_TIMEOUT) {
+            compat_delay(500);
+            if ((compat_millis() - start) > WIFI_CONNECT_TIMEOUT) {
                 // Timeout - properly stop this connection attempt
-                ESP_LOGW(TAG, "Timeout after %u ms, status=%d", (unsigned)(millis() - start), WiFi.status());
+                ESP_LOGW(TAG, "Timeout after %u ms, status=%d", (unsigned)(compat_millis() - start), WiFi.status());
                 esp_wifi_disconnect();
-                delay(100);
+                compat_delay(100);
                 break;
             }
         }
@@ -269,10 +270,10 @@ namespace WIFI_Utils {
 
         // Force clean WiFi restart (needed after esp_wifi_stop in eco mode)
         WiFi.mode(WIFI_OFF);
-        delay(50);  // Reduced delay for faster boot
+        compat_delay(50);  // Reduced delay for faster boot
         WiFi.mode(WIFI_STA);
         WiFi.setHostname(hostName.c_str());
-        delay(50);  // Reduced delay for faster boot
+        compat_delay(50);  // Reduced delay for faster boot
 
         // Start non-blocking connection attempt
         wifiCurrentNetworkIndex = 0;
@@ -349,16 +350,17 @@ namespace WIFI_Utils {
 
         // Stop any existing WiFi connection
         WiFi.disconnect(true);
-        delay(100);
+        compat_delay(100);
 
         // Configure AP mode
         WiFi.mode(WIFI_MODE_NULL);
         WiFi.disconnect(true, true); // Stop WiFi and clear persistent NVS state
-        delay(100);
+        compat_delay(100);
         WiFi.mode(WIFI_AP);
-        delay(100);
+        compat_delay(100);
 
         ESP_LOGI(TAG, "AP Password is: '%s' (Length: %d)", Config.wifiAutoAP.password.c_str(), Config.wifiAutoAP.password.length());
+
 
         // Use password to restore security, but now with explicit IP config
         bool success = WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str()); 

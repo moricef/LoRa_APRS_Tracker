@@ -47,6 +47,7 @@ static const char *TAG = "LVGL";
 #include "ui_settings.h"     // Settings screens module
 #include "ui_dashboard.h"    // Dashboard screen module
 #include "ui_messaging.h"    // Messaging screens module
+#include "../compat/arduino_compat.h"
 
 SemaphoreHandle_t spiMutex = NULL;
 
@@ -175,7 +176,7 @@ static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     data->point.y = y;
 
     // Reset activity timer on touch
-    lastActivityTime = millis();
+    lastActivityTime = compat_millis();
 
     // Wake up screen if dimmed
     // Always reassert backlight on touch — guards against LEDC channel loss
@@ -196,12 +197,12 @@ static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
         ESP_LOGI(TAG, "Screen woken up by touch");
       }
       SD_Logger::logScreenState(false); // Log screen active
-    }
+      }
 
-    // Debug: print touch coordinates
-    if (millis() - lastTouchDebug > 500) {
+      // Debug: print touch coordinates
+      if (compat_millis() - lastTouchDebug > 500) {
       ESP_LOGD(TAG, "Touch x=%d y=%d (raw: %d,%d)", x, y, t.x, t.y);
-      lastTouchDebug = millis();
+      lastTouchDebug = compat_millis();
     }
   } else {
     data->state = LV_INDEV_STATE_REL;
@@ -255,11 +256,11 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     if (spiMutex == NULL) {
       spiMutex = xSemaphoreCreateRecursiveMutex();
     }
-// Turn off backlight during init to avoid garbage display
-#ifdef BOARD_BL_PIN
-    pinMode(BOARD_BL_PIN, OUTPUT);
-    digitalWrite(BOARD_BL_PIN, LOW);
-#endif
+    // Turn off backlight during init to avoid garbage display
+    #ifdef BOARD_BL_PIN
+    compat_pinMode(BOARD_BL_PIN, OUTPUT);
+    compat_digitalWrite(BOARD_BL_PIN, LOW);
+    #endif
 
     // Load saved brightness from storage
     STATION_Utils::loadIndex(2); // Screen Brightness value
@@ -394,7 +395,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     lv_refr_now(NULL);
 
     // Brief delay then switch to init screen
-    delay(2400);
+    compat_delay(2400);
 
     ESP_LOGD(TAG, "Splash done, showing init screen");
   }
@@ -442,7 +443,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     ESP_LOGI(TAG, "Initializing...");
 
     // Initialize tick counter
-    last_tick = millis();
+    last_tick = compat_millis();
 
     // Load saved settings from storage
     STATION_Utils::loadIndex(2); // Screen Brightness value
@@ -544,7 +545,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     ESP_LOGD(TAG, "Forced initial refresh");
 
     // Initialize activity timer for eco mode
-    lastActivityTime = millis();
+    lastActivityTime = compat_millis();
 
     ESP_LOGI(TAG, "UI Ready");
   }
@@ -554,7 +555,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
   void loop() {
     // Update LVGL tick
-    uint32_t now = millis();
+    uint32_t now = compat_millis();
     uint32_t elapsed = now - last_tick;
     lv_tick_inc(elapsed);
     last_tick = now;
@@ -580,7 +581,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     // Use fresh millis() value since lastActivityTime may have been updated
     // during lv_timer_handler()
     if (displayEcoMode && !screenDimmed) {
-      uint32_t currentTime = millis();
+      uint32_t currentTime = compat_millis();
       uint32_t ecoTimeoutMs =
           Config.display.timeout * 1000; // Config is in seconds
       if (currentTime - lastActivityTime >= ecoTimeoutMs) {

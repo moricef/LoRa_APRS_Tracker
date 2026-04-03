@@ -28,6 +28,7 @@
 #include "ble_utils.h"
 #include "gps_utils.h"
 #include "display.h"
+#include "../compat/arduino_compat.h"
 #if !defined(TTGO_T_Beam_S3_SUPREME_V3) && !defined(HELTEC_WIRELESS_TRACKER)
     #define I2C_SDA 21
     #define I2C_SCL 22
@@ -66,19 +67,19 @@ namespace POWER_Utils {
     #ifdef VEXT_CTRL
         void vext_ctrl_ON() {
             #if defined(HELTEC_V3_GPS) || defined(HELTEC_V3_TNC) || defined(HELTEC_WIRELESS_TRACKER) || defined(HELTEC_WSL_V3_GPS_DISPLAY)
-                digitalWrite(VEXT_CTRL, HIGH);
+                compat_digitalWrite(VEXT_CTRL, HIGH);
             #endif
             #if defined(HELTEC_V3_2_GPS) || defined(HELTEC_V3_2_TNC)
-                digitalWrite(VEXT_CTRL, LOW);
+                compat_digitalWrite(VEXT_CTRL, LOW);
             #endif
         }
 
         void vext_ctrl_OFF() {
             #if defined(HELTEC_V3_GPS) || defined(HELTEC_V3_TNC) || defined(HELTEC_WIRELESS_TRACKER) || defined(HELTEC_WSL_V3_GPS_DISPLAY)
-                digitalWrite(VEXT_CTRL, LOW);
+                compat_digitalWrite(VEXT_CTRL, LOW);
             #endif
             #if defined(HELTEC_V3_2_GPS) || defined(HELTEC_V3_2_TNC)
-                digitalWrite(VEXT_CTRL, HIGH);
+                compat_digitalWrite(VEXT_CTRL, HIGH);
             #endif
         }
     #endif
@@ -87,19 +88,19 @@ namespace POWER_Utils {
     #ifdef ADC_CTRL
         void adc_ctrl_ON() {
             #if defined(HELTEC_WIRELESS_TRACKER) || defined(HELTEC_V3_2_GPS) || defined(HELTEC_V3_2_TNC)
-                digitalWrite(ADC_CTRL, HIGH);
+                compat_digitalWrite(ADC_CTRL, HIGH);
             #endif
             #if defined(HELTEC_V3_GPS) || defined(HELTEC_V3_TNC) || defined(HELTEC_V2_GPS) || defined(HELTEC_V2_GPS_915) || defined(HELTEC_V2_TNC) || defined(HELTEC_WSL_V3_GPS_DISPLAY)
-                digitalWrite(ADC_CTRL, LOW);
+                compat_digitalWrite(ADC_CTRL, LOW);
             #endif
         }
 
         void adc_ctrl_OFF() {
             #if defined(HELTEC_WIRELESS_TRACKER) || defined(HELTEC_V3_2_GPS) || defined(HELTEC_V3_2_TNC)
-                digitalWrite(ADC_CTRL, LOW);
+                compat_digitalWrite(ADC_CTRL, LOW);
             #endif
             #if defined(HELTEC_V3_GPS) || defined(HELTEC_V3_TNC) || defined(HELTEC_V2_GPS) || defined(HELTEC_V2_GPS_915) || defined(HELTEC_V2_TNC) || defined(HELTEC_WSL_V3_GPS_DISPLAY)
-                digitalWrite(ADC_CTRL, HIGH);
+                compat_digitalWrite(ADC_CTRL, HIGH);
             #endif
         }
     #endif
@@ -232,8 +233,8 @@ namespace POWER_Utils {
             }
         #else
             if (Config.notification.buzzerActive && Config.notification.buzzerPinTone >= 0 && Config.notification.buzzerPinVcc >= 0) {
-                pinMode(Config.notification.buzzerPinTone, OUTPUT);
-                pinMode(Config.notification.buzzerPinVcc, OUTPUT);
+                compat_pinMode(Config.notification.buzzerPinTone, OUTPUT);
+                compat_pinMode(Config.notification.buzzerPinVcc, OUTPUT);
                 if (Config.notification.bootUpBeep) NOTIFICATION_Utils::start();
             } else if (Config.notification.buzzerActive && (Config.notification.buzzerPinTone < 0 || Config.notification.buzzerPinVcc < 0)) {
                 ESP_LOGW(TAG, "Buzzer Pins not defined");
@@ -242,29 +243,29 @@ namespace POWER_Utils {
         #endif
 
         if (Config.notification.ledTx && Config.notification.ledTxPin >= 0) {
-            pinMode(Config.notification.ledTxPin, OUTPUT);
+            compat_pinMode(Config.notification.ledTxPin, OUTPUT);
         } else if (Config.notification.ledTx && Config.notification.ledTxPin < 0) {
             ESP_LOGW(TAG, "Led Tx Pin not defined");
             while (1);
         }
 
         if (Config.notification.ledMessage && Config.notification.ledMessagePin >= 0) {
-            pinMode(Config.notification.ledMessagePin, OUTPUT);
+            compat_pinMode(Config.notification.ledMessagePin, OUTPUT);
         } else if (Config.notification.ledMessage && Config.notification.ledMessagePin < 0) {
             ESP_LOGW(TAG, "Led Message Pin not defined");
             while (1);
         }
 
         if (Config.notification.ledFlashlight && Config.notification.ledFlashlightPin >= 0) {
-            pinMode(Config.notification.ledFlashlightPin, OUTPUT);
+            compat_pinMode(Config.notification.ledFlashlightPin, OUTPUT);
         } else if (Config.notification.ledFlashlight && Config.notification.ledFlashlightPin < 0) {
             ESP_LOGW(TAG, "Led Flashlight Pin not defined");
             while (1);
         }
 
         if (Config.ptt.active && Config.ptt.io_pin >= 0) {
-            pinMode(Config.ptt.io_pin, OUTPUT);
-            digitalWrite(Config.ptt.io_pin, Config.ptt.reverse ? HIGH : LOW);
+            compat_pinMode(Config.ptt.io_pin, OUTPUT);
+            compat_digitalWrite(Config.ptt.io_pin, Config.ptt.reverse ? HIGH : LOW);
         } else if (Config.ptt.active && Config.ptt.io_pin < 0) {
             ESP_LOGW(TAG, "PTT Pin not defined");
             while (1);
@@ -379,16 +380,16 @@ namespace POWER_Utils {
         #endif
 
         #ifdef BATTERY_PIN
-            pinMode(BATTERY_PIN, INPUT);
+            compat_pinMode(BATTERY_PIN, INPUT);
         #endif
 
         #ifdef VEXT_CTRL
-            pinMode(VEXT_CTRL,OUTPUT);
+            compat_pinMode(VEXT_CTRL,OUTPUT);
             vext_ctrl_ON();
         #endif
-        
+
         #ifdef ADC_CTRL
-            pinMode(ADC_CTRL, OUTPUT);
+            compat_pinMode(ADC_CTRL, OUTPUT);
         #endif
 
         #ifdef HELTEC_WIRELESS_TRACKER
@@ -400,18 +401,18 @@ namespace POWER_Utils {
         #endif
 
         #if defined(TTGO_T_DECK_GPS) || defined(TTGO_T_DECK_PLUS)
-            pinMode(BOARD_POWERON, OUTPUT);
-            digitalWrite(BOARD_POWERON, HIGH);
+            compat_pinMode(BOARD_POWERON, OUTPUT);
+            compat_digitalWrite(BOARD_POWERON, HIGH);
 
-            pinMode(BOARD_SDCARD_CS, OUTPUT);
-            pinMode(RADIO_CS_PIN, OUTPUT);
-            pinMode(TFT_CS, OUTPUT);
+            compat_pinMode(BOARD_SDCARD_CS, OUTPUT);
+            compat_pinMode(RADIO_CS_PIN, OUTPUT);
+            compat_pinMode(TFT_CS, OUTPUT);
 
-            digitalWrite(BOARD_SDCARD_CS, HIGH);
-            digitalWrite(RADIO_CS_PIN, HIGH);
-            digitalWrite(TFT_CS, HIGH);
+            compat_digitalWrite(BOARD_SDCARD_CS, HIGH);
+            compat_digitalWrite(RADIO_CS_PIN, HIGH);
+            compat_digitalWrite(TFT_CS, HIGH);
 
-            delay(500);
+            compat_delay(500);
             Wire.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
         #endif
     }
@@ -429,7 +430,7 @@ namespace POWER_Utils {
         esp_task_wdt_delete(NULL);
         ESP_LOGI(TAG, "Watchdog disabled for shutdown");
 
-        delay(3000);
+        compat_delay(3000);
         ESP_LOGW(TAG, "SHUTDOWN !!!");
         #if defined(HAS_AXP192) || defined(HAS_AXP2101)
             if (Config.notification.shutDownBeep) NOTIFICATION_Utils::shutDownBeep();
@@ -451,14 +452,14 @@ namespace POWER_Utils {
             #endif
 
             #if defined(TTGO_T_DECK_GPS) || defined(TTGO_T_DECK_PLUS)
-                digitalWrite(BOARD_POWERON, LOW);
+                compat_digitalWrite(BOARD_POWERON, LOW);
             #endif
 
             LoRa_Utils::sleepRadio();
 
             long DEEP_SLEEP_TIME_SEC = 1296000; // 15 days
             esp_sleep_enable_timer_wakeup(1000000ULL * DEEP_SLEEP_TIME_SEC);
-            delay(500);
+            compat_delay(500);
             esp_deep_sleep_start();
         #endif
     }

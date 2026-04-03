@@ -11,6 +11,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <esp_attr.h>   // RTC_NOINIT_ATTR
+#include "../compat/arduino_compat.h"
 
 static const char *TAG = "SD_Log";
 
@@ -55,7 +56,7 @@ namespace SD_Logger {
 
     // Format timestamp: [MM-DD HH:MM:SS] with GPS, [+HHH:MM:SS.mmm] without
     static void formatTimestamp(char* buf, size_t size) {
-        uint32_t now = millis();
+        uint32_t now = compat_millis();
         if (gpsTimeSet) {
             uint32_t elapsed   = (now - millisAtGpsFix) / 1000;
             uint32_t totalSec  = gpsSecondsOfDay + elapsed;
@@ -158,7 +159,7 @@ namespace SD_Logger {
         gpsSecondsOfDay = (uint32_t)hour * 3600 + minute * 60 + second;
         gpsDay          = day;
         gpsMonth        = month;
-        millisAtGpsFix  = millis();
+        millisAtGpsFix  = compat_millis();
         gpsTimeSet      = true;
     }
 
@@ -319,7 +320,7 @@ namespace SD_Logger {
         _crashCtx.magic = CRASH_CTX_MAGIC;
         strncpy(_crashCtx.module, module, sizeof(_crashCtx.module) - 1);
         _crashCtx.module[sizeof(_crashCtx.module) - 1] = '\0';
-        _crashCtx.uptimeMs  = millis();
+        _crashCtx.uptimeMs  = compat_millis();
         _crashCtx.lat       = lat;
         _crashCtx.lon       = lon;
         _crashCtx.freeHeap  = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);

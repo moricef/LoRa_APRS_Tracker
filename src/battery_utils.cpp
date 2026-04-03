@@ -22,6 +22,7 @@
 #include "board_pinout.h"
 #include "power_utils.h"
 #include "display.h"
+#include "../compat/arduino_compat.h"
 
 
 #ifdef ADC_CTRL
@@ -91,11 +92,11 @@ namespace BATTERY_Utils {
         #else
             #ifdef BATTERY_PIN
                 int sampleSum = 0;
-                analogRead(BATTERY_PIN);    // Dummy Read
-                delay(1);
+                compat_analogRead(BATTERY_PIN);    // Dummy Read
+                compat_delay(1);
                 for (int i = 0; i < averageReadings; i++) {
-                    sampleSum += analogRead(BATTERY_PIN);
-                    delay(3);
+                    sampleSum += compat_analogRead(BATTERY_PIN);
+                    compat_delay(3);
                 }
                 int adc_value = sampleSum/averageReadings;
                 double voltage = (adc_value * 3.3 ) / 4095.0;
@@ -136,30 +137,30 @@ namespace BATTERY_Utils {
 
     void monitor() {
         #if defined(HAS_AXP192) || defined(HAS_AXP2101)
-            if (batteryMeasurmentTime == 0 || (millis() - batteryMeasurmentTime) > 1 * 1000){
+            if (batteryMeasurmentTime == 0 || (compat_millis() - batteryMeasurmentTime) > 1 * 1000){
                 obtainBatteryInfo();
                 POWER_Utils::handleChargingLed();
-                batteryMeasurmentTime = millis();
+                batteryMeasurmentTime = compat_millis();
             }
         #elif defined(BATTERY_PIN)
-            if (batteryMeasurmentTime == 0 || (millis() - batteryMeasurmentTime) > 30 * 1000){ //At least 30 seconds have to pass between measurements
+            if (batteryMeasurmentTime == 0 || (compat_millis() - batteryMeasurmentTime) > 30 * 1000){ //At least 30 seconds have to pass between measurements
                 #ifdef ADC_CTRL
                     switch(measuringState){
                         case 0:     // Initial Measurement
                             POWER_Utils::adc_ctrl_ON();
-                            adcCtrlTime = millis();
-                            delay(50);
+                            adcCtrlTime = compat_millis();
+                            compat_delay(50);
                             obtainBatteryInfo();
                             POWER_Utils::adc_ctrl_OFF();
                             measuringState = 1;
                             break;
                         case 1:     //ADC_CTRL_ON State
                             POWER_Utils::adc_ctrl_ON();
-                            adcCtrlTime = millis();
+                            adcCtrlTime = compat_millis();
                             measuringState = 2;
                             break;
                         case 2:     // Measurement State
-                            if((millis() - adcCtrlTime) > 50){ //At least 50ms have to pass after ADC_Ctrl Mosfet is turned on for voltage to stabilize
+                            if((compat_millis() - adcCtrlTime) > 50){ //At least 50ms have to pass after ADC_Ctrl Mosfet is turned on for voltage to stabilize
                                 obtainBatteryInfo();
                                 POWER_Utils::adc_ctrl_OFF();
                                 measuringState = 1;
@@ -168,15 +169,15 @@ namespace BATTERY_Utils {
                                     displayShow("!BATTERY!", "", "LOW BATTERY VOLTAGE!",5000);
                                     POWER_Utils::shutdown();
                                 }
-                            }
-                            break;
-                    }
-                #else
-                    obtainBatteryInfo();
-                #endif
-                batteryMeasurmentTime = millis();
-            }
-        #endif
-    }
+                                }
+                                break;
+                                }
+                                #else
+                                obtainBatteryInfo();
+                                #endif
+                                batteryMeasurmentTime = compat_millis();
+                                }
+                                #endif
+                                }
 
 }

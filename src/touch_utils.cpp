@@ -21,6 +21,7 @@
 #include "board_pinout.h"
 #include "button_utils.h"
 #include "touch_utils.h"
+#include "../compat/arduino_compat.h"
 
 static const char *TAG = "Touch";
 
@@ -93,15 +94,15 @@ static const char *TAG = "Touch";
         }
 
         void loop() {
-            if (touch.read() && (millis() - lastTouchTime > touchDebounce)) {
+            if (touch.read() && (compat_millis() - lastTouchTime > touchDebounce)) {
                 TP_Point touchPoint = touch.getPoint(0);
                 uint16_t xValueTouched = map(touchPoint.y, xCalibratedMin, xCalibratedMax, 0, xValueMax);   // x and y values are inverted because
                 uint16_t yValueTouched = map(touchPoint.x, yCalibratedMin, yCalibratedMax, 0, yValueMax);   // TFT screen is rotated!!!!
-                lastTouchTime = millis();
+                lastTouchTime = compat_millis();
                 //Serial.print(" X="); Serial.print(xValueTouched); Serial.print("  Y="); Serial.println(yValueTouched);
                 checkLiveButtons(xValueTouched, yValueTouched);
             }
-            if (millis() - lastTouchTime > 1000) lastCalledAction = nullptr;    // reset touchButton when staying in same menu (like Tx/Send)
+            if (compat_millis() - lastTouchTime > 1000) lastCalledAction = nullptr;    // reset touchButton when staying in same menu (like Tx/Send)
         }
 
         void setup() {

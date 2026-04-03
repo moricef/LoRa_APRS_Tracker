@@ -63,7 +63,7 @@ namespace BLUETOOTH_Utils {
             ESP_LOGE(TAG, "Starting Bluetooth failed!");
             displayShow("ERROR", "Starting Bluetooth failed!", "");
             while(true) {
-                delay(1000);
+                compat_delay(1000);
             }
         }
         ESP_LOGI(TAG, "Bluetooth Classic init done!");
@@ -98,28 +98,28 @@ namespace BLUETOOTH_Utils {
                 if (nmeaGPS.available()) {
                     gpsFix = nmeaGPS.read();
                 }
-            } else {
-                serialReceived += c;
-            }
-        }
-        // Test if we have to send frame
-        isNmea = serialReceived.indexOf("$G") != -1 || serialReceived.indexOf("$B") != -1;
-        if (isNmea) useKiss = false;
-        if (isNmea || serialReceived.isEmpty()) return;
-        if (KISS_Utils::validateKISSFrame(serialReceived)) {
-            bool dataFrame;
-            String decodeKiss = KISS_Utils::decodeKISS(serialReceived, dataFrame);
-            serialReceived.clear();
-            serialReceived += decodeKiss;
-            ESP_LOGD(TAG, "It's a kiss frame. dataFrame: %d", dataFrame);
-            useKiss = true;
-        } else {
-            useKiss = false;
-        }
-        if (KISS_Utils::validateTNC2Frame(serialReceived)) {
-            shouldSendToLoRa = true;
-            ESP_LOGD(TAG, "Data received should be transmitted to RF => %s", serialReceived.c_str());
-        }
+                else {
+                    serialReceived += c;
+                    }
+                }
+                // Test if we have to send frame
+                isNmea = serialReceived.indexOf("$G") != -1 || serialReceived.indexOf("$B") != -1;
+                if (isNmea) useKiss = false;
+                if (isNmea || serialReceived.isEmpty()) return;
+                if (KISS_Utils::validateKISSFrame(serialReceived)) {
+                    bool dataFrame;
+                    String decodeKiss = KISS_Utils::decodeKISS(serialReceived, dataFrame);
+                    serialReceived.clear();
+                    serialReceived += decodeKiss;
+                    ESP_LOGD(TAG, "It's a kiss frame. dataFrame: %d", dataFrame);
+                    useKiss = true;
+                } else {
+                    useKiss = false;
+                }
+                if (KISS_Utils::validateTNC2Frame(serialReceived)) {
+                    shouldSendToLoRa = true;
+                    ESP_LOGD(TAG, "Data received should be transmitted to RF => %s", serialReceived.c_str());
+                }
     }
 
     void sendToLoRa() {

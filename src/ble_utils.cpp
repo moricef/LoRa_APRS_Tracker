@@ -32,6 +32,7 @@
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #endif
+#include "../compat/arduino_compat.h"
 
 #define BLE_CHUNK_SIZE  512
 #define MAX_KISS_BUFFER 1024
@@ -151,20 +152,20 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
             for (int i = 0; i < receivedData.length(); i++) receivedString += receivedData[i];
             BLEToLoRaPacket = receivedString;
             shouldSendBLEtoLoRa = true;
-        }
-    }
-};
+            }
+            }
+            };
 
-namespace BLE_Utils {
+            namespace BLE_Utils {
 
-    void stop() {
-        if (NimBLEDevice::isInitialized()) {
+            void stop() {
+            if (NimBLEDevice::isInitialized()) {
             BLEDevice::deinit(true);  // true = full cleanup (NimBLE 2.x)
-        }
-        pServer = nullptr;
-        pCharacteristicTx = nullptr;
-        pCharacteristicRx = nullptr;
-    }
+            }
+            pServer = nullptr;
+            pCharacteristicTx = nullptr;
+            pCharacteristicRx = nullptr;
+            }
 
     void setup() {
         bleSleeping = false;

@@ -46,6 +46,7 @@ static const char *TAG = "Station";
 #include "ui_map_manager.h"
 #include "gpx_writer.h"
 #endif
+#include "../compat/arduino_compat.h"
 
 extern Configuration        Config;
 extern Beacon               *currentBeacon;
@@ -243,7 +244,7 @@ namespace STATION_Utils {
                     // Add old position to trace
                     mapStations[i].trace[mapStations[i].traceHead].lat = mapStations[i].latitude;
                     mapStations[i].trace[mapStations[i].traceHead].lon = mapStations[i].longitude;
-                    mapStations[i].trace[mapStations[i].traceHead].time = millis();
+                    mapStations[i].trace[mapStations[i].traceHead].time = compat_millis();
                     mapStations[i].traceHead = (mapStations[i].traceHead + 1) % TRACE_MAX_POINTS;
                     if (mapStations[i].traceCount < TRACE_MAX_POINTS) {
                         mapStations[i].traceCount++;
@@ -254,7 +255,7 @@ namespace STATION_Utils {
                 mapStations[i].symbol    = symbol;
                 mapStations[i].overlay   = overlay;
                 mapStations[i].rssi      = rssi;
-                mapStations[i].lastTime  = millis();
+                mapStations[i].lastTime  = compat_millis();
                 return;
             }
         }
@@ -272,7 +273,7 @@ namespace STATION_Utils {
                 mapStations[i].symbol    = symbol;
                 mapStations[i].overlay   = overlay;
                 mapStations[i].rssi      = rssi;
-                mapStations[i].lastTime   = millis();
+                mapStations[i].lastTime   = compat_millis();
                 mapStations[i].valid      = true;
                 mapStations[i].traceCount = 0;
                 mapStations[i].traceHead  = 0;
@@ -292,7 +293,7 @@ namespace STATION_Utils {
         mapStations[oldestIndex].symbol    = symbol;
         mapStations[oldestIndex].overlay   = overlay;
         mapStations[oldestIndex].rssi       = rssi;
-        mapStations[oldestIndex].lastTime   = millis();
+        mapStations[oldestIndex].lastTime   = compat_millis();
         mapStations[oldestIndex].valid      = true;
         mapStations[oldestIndex].traceCount = 0;
         mapStations[oldestIndex].traceHead  = 0;
@@ -302,7 +303,7 @@ namespace STATION_Utils {
     void cleanOldMapStations() {
         uint32_t timeout = Config.rememberStationTime * 60 * 1000;
         for (int i = 0; i < MAP_STATIONS_MAX; i++) {
-            if (mapStations[i].valid && (millis() - mapStations[i].lastTime > timeout)) {
+            if (mapStations[i].valid && (compat_millis() - mapStations[i].lastTime > timeout)) {
                 mapStations[i].valid      = false;
                 mapStations[i].callsign   = "";
                 mapStations[i].traceCount = 0;
@@ -336,7 +337,7 @@ namespace STATION_Utils {
 
     void deleteListenedStationsByTime() {
         for (int a = 0; a < nearbyStationsSize; a++) {                       // clean nearbyStations[] after time
-            if (nearbyStations[a].callsign != "" && (millis() - nearbyStations[a].lastTime > Config.rememberStationTime * 60 * 1000)) {
+            if (nearbyStations[a].callsign != "" && (compat_millis() - nearbyStations[a].lastTime > Config.rememberStationTime * 60 * 1000)) {
                 nearbyStations[a].callsign    = "";
                 nearbyStations[a].distance    = 0.0;
                 nearbyStations[a].course      = 0;
@@ -350,25 +351,25 @@ namespace STATION_Utils {
                     nearStation temp    = nearbyStations[c];
                     nearbyStations[c]     = nearbyStations[c + 1];
                     nearbyStations[c + 1] = temp;
-                }
-            }
-        }
-        lastDeleteListenedStation = millis();
-    }
+                    }
+                    }
+                    }
+                    lastDeleteListenedStation = compat_millis();
+                    }
 
-    void checkListenedStationsByTimeAndDelete() {
-        if (millis() - lastDeleteListenedStation > Config.rememberStationTime * 60 * 1000) deleteListenedStationsByTime();
-    }
+                    void checkListenedStationsByTimeAndDelete() {
+                    if (compat_millis() - lastDeleteListenedStation > Config.rememberStationTime * 60 * 1000) deleteListenedStationsByTime();
+                    }
 
-    void orderListenedStationsByDistance(const String& callsign, float distance, float course) {   
-        bool shouldSortbyDistance = false;
-        bool callsignInNearStations = false;
+                    void orderListenedStationsByDistance(const String& callsign, float distance, float course) {   
+                    bool shouldSortbyDistance = false;
+                    bool callsignInNearStations = false;
 
-        for (int a = 0; a < nearbyStationsSize; a++) {                       // check if callsign is in nearbyStations[]
-            if (nearbyStations[a].callsign == callsign) {
-                callsignInNearStations  = true;
-                nearbyStations[a].lastTime = millis();        // update listened millis()
-                if (nearbyStations[a].distance != distance) { // update distance if needed
+                    for (int a = 0; a < nearbyStationsSize; a++) {                       // check if callsign is in nearbyStations[]
+                    if (nearbyStations[a].callsign == callsign) {
+                    callsignInNearStations  = true;
+                    nearbyStations[a].lastTime = compat_millis();        // update listened millis()
+                    if (nearbyStations[a].distance != distance) { // update distance if needed
                     nearbyStations[a].distance    = distance;
                     shouldSortbyDistance        = true;
                 }
@@ -383,7 +384,7 @@ namespace STATION_Utils {
                     nearbyStations[b].callsign    = callsign;
                     nearbyStations[b].distance    = distance;
                     nearbyStations[b].course      = int(course);
-                    nearbyStations[b].lastTime    = millis();
+                    nearbyStations[b].lastTime    = compat_millis();
                     break;
                 }
             }
@@ -395,7 +396,7 @@ namespace STATION_Utils {
                         nearbyStations[c].callsign    = callsign;
                         nearbyStations[c].distance    = distance;
                         nearbyStations[c].course      = int(course);
-                        nearbyStations[c].lastTime    = millis();
+                        nearbyStations[c].lastTime    = compat_millis();
                         break;
                     }
                 }
@@ -524,10 +525,10 @@ namespace STATION_Utils {
                 GPXWriter::addPoint(lastTxLat, lastTxLng,
                                     gpsFix.alt.whole, gpsHdop(), gpsFix.speed_kph());
             #endif
-        }
-        lastTxTime  = millis();
-        sendUpdate  = false;
-        if (currentBeacon->gpsEcoMode) gpsShouldSleep = true;
+            }
+            lastTxTime  = compat_millis();
+            sendUpdate  = false;
+            if (currentBeacon->gpsEcoMode) gpsShouldSleep = true;
     }
 
     void saveIndex(uint8_t type, uint8_t index) {

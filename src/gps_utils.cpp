@@ -30,6 +30,7 @@
 #include "gps_utils.h"
 #include "gps_math.h"
 #include "display.h"
+#include "../compat/arduino_compat.h"
 #ifdef GPS_BAUDRATE
     #define GPS_BAUD    GPS_BAUDRATE
 #else
@@ -72,14 +73,14 @@ namespace GPS_Utils {
             return;
         }
         #ifdef LIGHTTRACKER_PLUS_1_0
-            pinMode(GPS_VCC, OUTPUT);
-            digitalWrite(GPS_VCC, LOW);
-            delay(200);
+            compat_pinMode(GPS_VCC, OUTPUT);
+            compat_digitalWrite(GPS_VCC, LOW);
+            compat_delay(200);
         #endif
         #if defined(F4GOH_1W_LoRa_Tracker) || defined(F4GOH_1W_LoRa_Tracker_LLCC68)
-            pinMode(GPS_VCC, OUTPUT);
-            digitalWrite(GPS_VCC, HIGH);
-            delay(200);
+            compat_pinMode(GPS_VCC, OUTPUT);
+            compat_digitalWrite(GPS_VCC, HIGH);
+            compat_delay(200);
         #endif
         
         gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_TX, GPS_RX);
@@ -126,7 +127,7 @@ namespace GPS_Utils {
     void calculateDistanceTraveled() {
         // Guard against being called twice per GPS cycle (e.g. from two call sites in the main loop).
         static uint32_t lastCalcMs = 0;
-        uint32_t now = millis();
+        uint32_t now = compat_millis();
         if (now - lastCalcMs < 500) return;   // same GPS epoch → skip duplicate call
         lastCalcMs = now;
 
@@ -181,7 +182,7 @@ namespace GPS_Utils {
 
     void checkStartUpFrames() {
         if (disableGPS) return;
-        if ((millis() > 10000 && nmeaGPS.statistics.chars < 10)) {
+        if ((compat_millis() > 10000 && nmeaGPS.statistics.chars < 10)) {
             ESP_LOGE(TAG, "No GPS frames detected! Try to reset the GPS Chip with this "
                         "firmware: https://github.com/richonguzman/TTGO_T_BEAM_GPS_RESET");
             displayShow("ERROR", "No GPS frames!", "Reset the GPS Chip", 2000);

@@ -27,6 +27,7 @@ static const char *TAG = "Display";
 #include "board_pinout.h"
 #include "display.h"
 #include "TimeLib.h"
+#include "../compat/arduino_compat.h"
 
 
 #ifdef HAS_TFT
@@ -253,7 +254,7 @@ void displaySetBrightness(uint8_t value) {
 }
 
 void displaySetup() {
-    delay(500);
+    compat_delay(500);
     STATION_Utils::loadIndex(2);    // Screen Brightness value
     #ifdef HAS_TFT
         tft.init();
@@ -275,10 +276,10 @@ void displaySetup() {
         #endif
     #else
         #ifdef OLED_DISPLAY_HAS_RST_PIN
-            pinMode(OLED_RST, OUTPUT);
-            digitalWrite(OLED_RST, LOW);
-            delay(20);
-            digitalWrite(OLED_RST, HIGH);
+            compat_pinMode(OLED_RST, OUTPUT);
+            compat_digitalWrite(OLED_RST, LOW);
+            compat_delay(20);
+            compat_digitalWrite(OLED_RST, HIGH);
         #endif
 
         Wire.begin(OLED_SDA, OLED_SCL);
@@ -405,12 +406,12 @@ void displayShow(const String& header, const String& line1, const String& line2,
             display.setContrast(screenBrightness);
         #endif
         display.display();
-    #endif
-    delay(wait);
-}
+        #endif
+        compat_delay(wait);
+        }
 
-void drawSymbol(int symbolIndex, bool bluetoothActive) {
-    const uint8_t *bitMap = symbolsAPRS[symbolIndex];
+        void drawSymbol(int symbolIndex, bool bluetoothActive) {
+        const uint8_t *bitMap = symbolsAPRS[symbolIndex];
     #ifdef HAS_TFT
         if (bluetoothActive) bitMap = bluetoothSymbol;
         #if defined(HELTEC_WIRELESS_TRACKER)
@@ -565,8 +566,8 @@ void displayShow(const String& header, const String& line1, const String& line2,
             }
         }
         display.display();
-    #endif
-    delay(wait);
+        #endif
+        compat_delay(wait);
 }
 
 void startupScreen(uint8_t index, const String& version) {

@@ -23,6 +23,7 @@
 #include "web_utils.h"
 #include "display.h"
 #include "utils.h"
+#include "../compat/arduino_compat.h"
 
 static const char *TAG = "WebServer";
 

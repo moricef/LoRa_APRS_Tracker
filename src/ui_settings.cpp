@@ -31,6 +31,7 @@ static const char *TAG = "UISettings";
 #include "storage_utils.h"
 #include "wifi_utils.h"
 #include "display.h"
+#include "../compat/arduino_compat.h"
 
 // External variables from main code
 extern Configuration Config;
@@ -681,7 +682,8 @@ static void eco_switch_changed(lv_event_t *e) {
     STATION_Utils::saveIndex(3, displayEcoMode ? 1 : 0);
 
     if (displayEcoMode) {
-        lastActivityTime = millis();
+        // Reset activity timer on touch
+        lastActivityTime = compat_millis();
         // Enable timeout slider and restore normal colors
         if (timeout_slider) {
             lv_obj_clear_state(timeout_slider, LV_STATE_DISABLED);
