@@ -374,7 +374,7 @@ namespace MapEngine {
 
         if (mapRenderTaskHandle) {
             esp_task_wdt_delete(mapRenderTaskHandle);
-            vTaskDeleteWithCaps(mapRenderTaskHandle);
+            vTaskDelete(mapRenderTaskHandle);  // Temporarily using standard vTaskDelete
             mapRenderTaskHandle = nullptr;
         }
         if (mapRenderQueue) {
@@ -435,15 +435,15 @@ namespace MapEngine {
         if (!wlScreenY) wlScreenY = (int*)heap_caps_malloc(WLABEL_MAX_PTS * sizeof(int), MALLOC_CAP_SPIRAM);
         if (!wlArcLen)  wlArcLen  = (float*)heap_caps_malloc(WLABEL_MAX_PTS * sizeof(float), MALLOC_CAP_SPIRAM);
 
-        xTaskCreatePinnedToCoreWithCaps(
+        xTaskCreatePinnedToCore(
             mapRenderTask,
             "MapRender",
             16384,  // Increased for feature index + sort + AEL
             NULL,
             1, // Low priority
             &mapRenderTaskHandle,
-            0,  // Core 0
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT  // Stack in PSRAM (saves 16 KB DRAM)
+            0  // Core 0
+            // Temporarily using standard xTaskCreatePinnedToCore (stack in DRAM)
         );
     }
 

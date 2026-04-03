@@ -179,18 +179,18 @@ static void tilePreloadTaskFunc(void* param) {
                 ESP_LOGD(TAG, "Preloading tile %d/%d/%d", req.zoom, req.tileX, req.tileY);
                 MapTiles::preloadTileToCache(req.tileX, req.tileY, req.zoom);
             }
-        }
-    }
+            }
+            }
 
-    ESP_LOGI(TAG, "Tile preload task stopped");
-    vTaskDeleteWithCaps(NULL);  // Matches xTaskCreatePinnedToCoreWithCaps (frees PSRAM stack)
-}
+            ESP_LOGI(TAG, "Tile preload task stopped");
+            vTaskDelete(NULL);  // Temporarily using standard vTaskDelete (PSRAM stack not freed)
+            }
 
-// =============================================================================
-// MapTiles namespace — public API
-// =============================================================================
+            // =============================================================================
+            // MapTiles namespace — public API
+            // =============================================================================
 
-namespace MapTiles {
+            namespace MapTiles {
 
     // -------------------------------------------------------------------------
     // Symbol cache
@@ -448,10 +448,9 @@ namespace MapTiles {
         }
 
         preloadTaskRunning = true;
-        xTaskCreatePinnedToCoreWithCaps(tilePreloadTaskFunc, "TilePreload", 4096,
-                                NULL, 1, &tilePreloadTask, 1,
-                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);  // Stack in PSRAM (saves 4 KB DRAM)
-    }
+        xTaskCreatePinnedToCore(tilePreloadTaskFunc, "TilePreload", 4096,
+                                NULL, 1, &tilePreloadTask, 1);  // Temporarily using standard xTaskCreatePinnedToCore (stack in DRAM)
+        }
 
     void stopTilePreloadTask() {
         if (tilePreloadTask == nullptr) return;
