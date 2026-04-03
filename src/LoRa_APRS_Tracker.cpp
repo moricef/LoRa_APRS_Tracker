@@ -241,16 +241,15 @@ void setup() {
     #endif
     ESP_LOGI(TAG, "Heap: %u KB total, %u KB free", ESP.getHeapSize()/1024, ESP.getFreeHeap()/1024);
 
-    // Reconfigure watchdog timeout (Arduino Core 3 already initialized TWDT)
+    // Configure watchdog timeout (ESP-IDF 5.x API)
     esp_task_wdt_config_t wdt_config = {
         .timeout_ms = 30000,
-        .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+        .idle_core_mask = 0,
         .trigger_panic = true
     };
     esp_task_wdt_reconfigure(&wdt_config);
-    // Ensure loopTask is subscribed (ignore ESP_ERR_INVALID_STATE if already added)
     esp_err_t wdt_err = esp_task_wdt_add(NULL);
-    ESP_LOGI(TAG, "Watchdog reconfigured (30s), add=%s", esp_err_to_name(wdt_err));
+    ESP_LOGI(TAG, "Watchdog configured (30s), add=%s", esp_err_to_name(wdt_err));
 
     ESP_LOGI(TAG, "Setup Done!");
 

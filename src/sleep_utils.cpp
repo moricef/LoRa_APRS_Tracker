@@ -21,8 +21,7 @@
 #include "sleep_utils.h"
 #include "power_utils.h"
 
-static const char *TAG = "Sleep";
-
+[[maybe_unused]] static const char *TAG = "Sleep";
 
 extern uint32_t         lastGPSTime;
 extern bool             gpsIsActive;

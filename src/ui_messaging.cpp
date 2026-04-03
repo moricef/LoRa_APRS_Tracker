@@ -1205,7 +1205,7 @@ static void populate_stats(lv_obj_t *cont) {
                 lv_table_set_cell_value(stats_table, row, 0, s.callsign.c_str());
 
                 // Packets
-                snprintf(buf, sizeof(buf), "%lu", s.count);
+                snprintf(buf, sizeof(buf), "%u", (unsigned)s.count);
                 lv_table_set_cell_value(stats_table, row, 1, buf);
 
                 // RSSI (average)

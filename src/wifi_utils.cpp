@@ -27,7 +27,7 @@
 #include "aprs_is_utils.h"
 #include "display.h"
 #include "lvgl_ui.h"
-#include <Network.h>  // Force PlatformIO to link Network library
+#include <Network.h>  // Required for Arduino Core 3.x (NetworkClient, NetworkInterface)
 
 extern Configuration        Config;
 
@@ -245,7 +245,7 @@ namespace WIFI_Utils {
             delay(500);
             if ((millis() - start) > WIFI_CONNECT_TIMEOUT) {
                 // Timeout - properly stop this connection attempt
-                ESP_LOGW(TAG, "Timeout after %lu ms, status=%d", millis() - start, WiFi.status());
+                ESP_LOGW(TAG, "Timeout after %u ms, status=%d", (unsigned)(millis() - start), WiFi.status());
                 esp_wifi_disconnect();
                 delay(100);
                 break;

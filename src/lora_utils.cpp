@@ -27,7 +27,7 @@
 #include "display.h"
 #include "station_utils.h"
 #include "storage_utils.h"
-#include "compat/arduino_compat.h"
+#include "../compat/arduino_compat.h"
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #endif
@@ -230,18 +230,18 @@ namespace LoRa_Utils {
             // Board-specific frequency validation
             if (currentLoRaType->frequency < LORA_FREQ_MIN || currentLoRaType->frequency > LORA_FREQ_MAX) {
                 ESP_LOGE(TAG, "Frequency %ld Hz out of range (%ld-%ld)",
-                    currentLoRaType->frequency, (long)LORA_FREQ_MIN, (long)LORA_FREQ_MAX);
+                    (long)currentLoRaType->frequency, (long)LORA_FREQ_MIN, (long)LORA_FREQ_MAX);
                 return;
             }
         #else
             // Generic frequency validation
             if (currentLoRaType->frequency < 100000000 || currentLoRaType->frequency > 1000000000) {
-                ESP_LOGE(TAG, "Invalid frequency value: %ld", currentLoRaType->frequency);
+                ESP_LOGE(TAG, "Invalid frequency value: %ld", (long)currentLoRaType->frequency);
                 return;
             }
         #endif
         if (currentLoRaType->signalBandwidth < 1000 || currentLoRaType->signalBandwidth > 1000000) {
-            ESP_LOGE(TAG, "Invalid bandwidth value: %ld", currentLoRaType->signalBandwidth);
+            ESP_LOGE(TAG, "Invalid bandwidth value: %ld", (long)currentLoRaType->signalBandwidth);
             return;
         }
 

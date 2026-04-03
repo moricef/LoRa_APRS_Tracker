@@ -69,7 +69,7 @@ namespace SD_Logger {
             uint32_t hh  = sec / 3600;
             uint8_t  mm  = (sec / 60) % 60;
             uint8_t  ss  = sec % 60;
-            snprintf(buf, size, "[+%03lu:%02u:%02u.%03lu]", hh, mm, ss, ms);
+            snprintf(buf, size, "[+%03u:%02u:%02u.%03u]", (unsigned)hh, mm, ss, (unsigned)ms);
         }
     }
 

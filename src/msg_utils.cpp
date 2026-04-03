@@ -262,7 +262,7 @@ namespace MSG_Utils {
                     String callsign = filename.substring(0, filename.length() - 4);
                     time_t lastWrite = entry.getLastWrite();
                     conversationsWithTime.push_back(std::make_pair(callsign, lastWrite));
-                    ESP_LOGD(TAG, "Found conversation: %s (time: %ld)", callsign.c_str(), lastWrite);
+                    ESP_LOGD(TAG, "Found conversation: %s (time: %lld)", callsign.c_str(), (long long)lastWrite);
                 }
             }
             entry.close();

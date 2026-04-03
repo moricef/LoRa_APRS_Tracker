@@ -26,7 +26,7 @@ static const char *TAG = "Utils";
 #include "lora_utils.h"
 #include "display.h"
 #include "utils.h"
-#include "compat/arduino_compat.h"
+#include "../compat/arduino_compat.h"
 
 extern Beacon                   *currentBeacon;
 extern Configuration            Config;

@@ -32,7 +32,7 @@ namespace GPXWriter {
                      gpsFix.dateTime.hours, gpsFix.dateTime.minutes);
         } else {
             snprintf(filename, sizeof(filename),
-                     "/LoRa_Tracker/gpx/track_%lu.gpx", millis() / 1000);
+                     "/LoRa_Tracker/gpx/track_%u.gpx", (unsigned)(millis() / 1000));
         }
 
         if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
