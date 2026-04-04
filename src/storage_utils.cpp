@@ -338,9 +338,9 @@ namespace STORAGE_Utils {
         JsonArray array = doc.as<JsonArray>();
         for (JsonObject obj : array) {
             Contact c;
-            c.callsign = obj["callsign"].as<String>();
-            c.name = obj["name"].as<String>();
-            c.comment = obj["comment"].as<String>();
+            c.callsign = obj["callsign"] | "";
+            c.name = obj["name"] | "";
+            c.comment = obj["comment"] | "";
             if (c.callsign.length() > 0) {
                 contactsCache.push_back(c);
             }
