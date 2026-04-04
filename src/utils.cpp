@@ -26,6 +26,7 @@ static const char *TAG = "Utils";
 #include "lora_utils.h"
 #include "display.h"
 #include "utils.h"
+#include "../compat/arduino_compat.h"
 
 extern Beacon                   *currentBeacon;
 extern Configuration            Config;
@@ -41,7 +42,7 @@ extern bool                     flashlight;
 
 extern bool                     statusUpdate;
 
-uint32_t    statusTime          = millis();
+uint32_t    statusTime          = compat_millis();
 uint8_t     wxModuleAddress     = 0x00;
 uint8_t     keyboardAddress     = 0x00;
 uint8_t     touchModuleAddress  = 0x00;
@@ -117,7 +118,7 @@ namespace Utils {
                 ESP_LOGI(TAG, "Status is empty or undefined, blocking transmission");
                 statusUpdate = false;
             } else {
-                uint32_t currentTime = millis();
+                uint32_t currentTime = compat_millis();
                 uint32_t statusTx = currentTime - statusTime;
                 lastTx = currentTime - lastTxTime;
                 if (statusTx > 10 * 60 * 1000 && lastTx > 10 * 1000) {
@@ -131,7 +132,7 @@ namespace Utils {
 
     void checkDisplayEcoMode() {
         if (displayState && displayEcoMode && menuDisplay == 0) {
-            uint32_t currentTime = millis();
+            uint32_t currentTime = compat_millis();
             uint32_t lastDisplayTime = currentTime - displayTime;
             if (currentTime > 10 * 1000 && lastDisplayTime >= Config.display.timeout * 1000) {
                 displayToggle(false);
@@ -146,9 +147,9 @@ namespace Utils {
     }
 
     void checkFlashlight() {
-        bool desiredState       = flashlight ? HIGH : LOW;
+        bool desiredState       = flashlight ? COMPAT_HIGH : COMPAT_LOW;
         uint8_t flashlightPin   = Config.notification.ledFlashlightPin;
-        if (desiredState != digitalRead(flashlightPin)) digitalWrite(flashlightPin, desiredState);
+        if (desiredState != compat_digitalRead(flashlightPin)) compat_digitalWrite(flashlightPin, desiredState);
     }
 
     void i2cScannerForPeripherals() {
@@ -173,7 +174,7 @@ namespace Utils {
         }
 
         #if defined(TTGO_T_DECK_GPS) || defined(TTGO_T_DECK_PLUS)
-            delay(500);
+            compat_delay(500);
             const uint8_t keyboardAddr = 0x55;
             for (int i = 0; i < 10; ++i) {
                 Wire.beginTransmission(keyboardAddr);
@@ -182,10 +183,10 @@ namespace Utils {
                     keyboardAddress = keyboardAddr;
                     ESP_LOGI(TAG, "T-Deck Keyboard Connected to I2C");
                     break;
-                }
-                delay(50);
-            }
-        #else
+                    }
+                    compat_delay(50);
+                    }
+                    #else
             for (addr = 1; addr < 0x7F; addr++) {
                 Wire.beginTransmission(addr);
                 err = Wire.endTransmission();

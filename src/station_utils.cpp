@@ -27,7 +27,7 @@ static const char *TAG = "Station";
 #include <NMEAGPS.h>
 #include "gps_utils.h"
 #ifndef UNIT_TEST
-#include <SPIFFS.h>
+#include <LittleFS.h>
 #endif
 #include "telemetry_utils.h"
 #include "station_utils.h"
@@ -541,7 +541,7 @@ namespace STATION_Utils {
             default: return; // Invalid type, exit function
         }
 
-        File fileIndex = SPIFFS.open(filePath, "w");
+        File fileIndex = LittleFS.open(filePath, "w");
         if (!fileIndex) return;
 
         String dataToSave = String(index);
@@ -555,9 +555,9 @@ namespace STATION_Utils {
                 case 4: logMessage = "ECO Timeout"; break;
                 default: return; // Invalid type, exit function
             }
-            ESP_LOGD(TAG, "%s = %d saved to SPIFFS", logMessage.c_str(), index);
-        }
-        fileIndex.close();
+            ESP_LOGD(TAG, "%s = %d saved to LittleFS", logMessage.c_str(), index);
+            }
+            fileIndex.close();
     }
 
     void loadIndex(uint8_t type) {
@@ -571,7 +571,7 @@ namespace STATION_Utils {
             default: return; // Invalid type, exit function
         }
 
-        if (!SPIFFS.exists(filePath)) {
+        if (!LittleFS.exists(filePath)) {
             switch (type) {
                 case 0: myBeaconsIndex = 0; break;
                 case 1: loraIndex = 0; break;
@@ -587,8 +587,8 @@ namespace STATION_Utils {
                 default: return; // Invalid type, exit function
             }
             return;
-        } else {
-            File fileIndex = SPIFFS.open(filePath, "r");
+            } else {
+            File fileIndex = LittleFS.open(filePath, "r");
             while (fileIndex.available()) {
                 String firstLine = fileIndex.readStringUntil('\n');
                 int index = firstLine.toInt();
@@ -611,9 +611,9 @@ namespace STATION_Utils {
                     }
                     logMessage = "ECO Timeout:";
                 }
-                ESP_LOGD(TAG, "%s %d (from SPIFFS)", logMessage.c_str(), index);
-            }
-            fileIndex.close();
+                ESP_LOGD(TAG, "%s %d (from LittleFS)", logMessage.c_str(), index);
+                }
+                fileIndex.close();
         }
     }
 

@@ -311,7 +311,7 @@ namespace MapRender {
                           map_center_lat, map_center_lon, map_current_zoom, navModeActive, centerTileX, centerTileY, &myX, &myY);
             if (myX >= 0 && myX < MAP_SPRITE_SIZE && myY >= 0 && myY < MAP_SPRITE_SIZE) {
                 Beacon* currentBeacon = &Config.beacons[myBeaconsIndex];
-                char fullSymbol[4];
+                char fullSymbol[32];
                 snprintf(fullSymbol, sizeof(fullSymbol), "%s%s",
                          currentBeacon->overlay.c_str(), currentBeacon->symbol.c_str());
                 drawStationOnCanvas(myX, myY, currentBeacon->callsign.c_str(), fullSymbol, -1);

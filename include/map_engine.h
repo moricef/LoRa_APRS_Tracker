@@ -15,6 +15,10 @@
 #include <vector>
 #include "nav_types.h"
 
+// Forward declarations for image decoders (actual headers in .cpp files)
+class PNG;
+class JPEGDEC;
+
 // Tile cache size (for raster tiles)
 #define RASTER_TILE_CACHE_SIZE 16
 
@@ -98,6 +102,11 @@ namespace MapEngine {
 
     bool ensurePSRAMAvailable(size_t needed);
     void copySpriteToCanvasWithClip(lv_obj_t* canvas, LGFX_Sprite* sprite, int offsetX, int offsetY);
+
+    // --- Shared image decoders (PSRAM-allocated, single instance each) ---
+    extern PNG*      sharedPNG;
+    extern JPEGDEC*  sharedJPEG;
+    void initDecoders();
 
     // --- NAV POOL API ---
     void initNavPool();

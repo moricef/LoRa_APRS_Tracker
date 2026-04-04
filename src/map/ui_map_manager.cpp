@@ -17,16 +17,16 @@
 #ifdef USE_LVGL_UI
 
 #include <Arduino.h>
-#include <FS.h>
 #include <lvgl.h>
 #include <LovyanGFX.hpp>
 #include <NMEAGPS.h>
-#include <SD.h>
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
 #include "map_engine.h"
+#include "map_internal.h"
 #include "ui_map_manager.h"
 #include "map_state.h"
 #include "map_tiles.h"
@@ -228,18 +228,18 @@ void redraw_map_canvas() {
                     // Try NPK2 pack file first
                     snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
                              navRegions[r].c_str(), map_current_zoom);
-                    isNavMode = SD.exists(navCheckPath);
+                    isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                     if (!isNavMode) {
                         // Try split pack (Z{z}_0.nav)
                         snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d_0.nav",
                                  navRegions[r].c_str(), map_current_zoom);
-                        isNavMode = SD.exists(navCheckPath);
+                        isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                     }
                     if (!isNavMode) {
                         // Fallback: legacy individual tile
                         snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
                                  navRegions[r].c_str(), map_current_zoom, renderTileX, renderTileY);
-                        isNavMode = SD.exists(navCheckPath);
+                        isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                     }
                 }
                 xSemaphoreGive(spiMutex);
@@ -467,24 +467,30 @@ void create_map_screen() {
     // Canvas buffer = front sprite buffer (zero-copy)
     const size_t spriteBytes = MAP_SPRITE_SIZE * MAP_SPRITE_SIZE * 2;
     if (!backViewportSprite) {
-        backViewportSprite = new LGFX_Sprite(&tft);
-        backViewportSprite->setPsram(true);
-        if (backViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
-            ESP_LOGE(TAG, "Failed to create back viewport sprite");
-            delete backViewportSprite;
-            backViewportSprite = nullptr;
+        backViewportSprite = psram_new<LGFX_Sprite>(&tft);
+        if (backViewportSprite) {
+            backViewportSprite->setPsram(true);
+            if (backViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
+                ESP_LOGE(TAG, "Failed to create back viewport sprite");
+                psram_delete(backViewportSprite);
+                backViewportSprite = nullptr;
+            }
         }
     }
     if (!frontViewportSprite) {
-        frontViewportSprite = new LGFX_Sprite(&tft);
-        frontViewportSprite->setPsram(true);
-        if (frontViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
-            ESP_LOGE(TAG, "Failed to create front viewport sprite");
-            delete frontViewportSprite;
-            frontViewportSprite = nullptr;
+        frontViewportSprite = psram_new<LGFX_Sprite>(&tft);
+        if (frontViewportSprite) {
+            frontViewportSprite->setPsram(true);
+            if (frontViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
+                ESP_LOGE(TAG, "Failed to create front viewport sprite");
+                psram_delete(frontViewportSprite);
+                frontViewportSprite = nullptr;
+            }
         }
     }
 
+    // Allocate PNG/JPEG decoders in PSRAM (single shared instances)
+    MapEngine::initDecoders();
     // Initialize the static tile cache pool now that critical sprites are allocated
     // Only if we are not in persistent NAV mode (to avoid reallocating 2MB of raster tiles)
     if (!navModeActive) {
@@ -538,18 +544,18 @@ void create_map_screen() {
                         // Try NPK2 pack file first
                         snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
                                  navRegions[r].c_str(), map_current_zoom);
-                        isNavMode = SD.exists(navCheckPath);
+                        isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                         if (!isNavMode) {
                             // Try split pack (Z{z}_0.nav)
                             snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d_0.nav",
                                      navRegions[r].c_str(), map_current_zoom);
-                            isNavMode = SD.exists(navCheckPath);
+                            isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                         }
                         if (!isNavMode) {
                             // Fallback: legacy individual tile
                             snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
                                      navRegions[r].c_str(), map_current_zoom, centerTileX, centerTileY);
-                            isNavMode = SD.exists(navCheckPath);
+                            isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                         }
                     }
                     xSemaphoreGive(spiMutex);
@@ -569,8 +575,8 @@ void create_map_screen() {
                 MapTiles::switchZoomTable(nav_zooms, nav_zoom_count);
 
                 // NAV viewport rendering
-                // Temporarily unsubscribe loopTask from WDT — rendering can take 10-30s
-                esp_task_wdt_delete(xTaskGetCurrentTaskHandle());
+                // renderNavViewport() calls esp_task_wdt_reset() frequently enough
+                // (every 32 scanlines, every 64 features) to stay within 30s timeout
 
                 // Build region pointer array for renderNavViewport
                 const char* regionPtrs[NAV_MAX_REGIONS];
@@ -590,7 +596,6 @@ void create_map_screen() {
                     ESP_LOGW(TAG, "No viewport sprites available for NAV rendering");
                 }
 
-                esp_task_wdt_add(xTaskGetCurrentTaskHandle());
                 esp_task_wdt_reset();
             } else {
                 if (navModeActive) {

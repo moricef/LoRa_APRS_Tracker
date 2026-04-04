@@ -148,6 +148,10 @@ extern bool gpsIsActive;
 void setup() {
     Serial.begin(115200);
 
+    // Silence GPIO 14 warning spam (pin used by PSRAM on ESP32-S3)
+    // Arduino Core 3 warns if digitalRead() is called on unconfigured pins
+    pinMode(14, INPUT);
+
     // Boost CPU to 240MHz for fast init
     setCpuFrequencyMhz(240);
     ESP_LOGI(TAG, "CPU frequency: %d MHz", getCpuFrequencyMhz());
@@ -175,12 +179,12 @@ void setup() {
         startupScreen(loraIndex, versionDate);
     #endif
 
-    // Storage + Config first: SPIFFS must be ready before WiFi/BLE read Config
+    // Storage + Config first: LittleFS must be ready before WiFi/BLE read Config
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("Storage...");
     #endif
-    STORAGE_Utils::setup();        // Formats SPIFFS on first boot
-    Config.init();                 // Now SPIFFS is ready, load or create config
+    STORAGE_Utils::setup();        // Formats LittleFS on first boot
+    Config.init();                 // Now LittleFS is ready, load or create config
     STORAGE_Utils::loadStats();
 
     // WiFi/BLE: no auto-start at boot — manual activation only via Settings
@@ -237,10 +241,15 @@ void setup() {
     #endif
     ESP_LOGI(TAG, "Heap: %u KB total, %u KB free", ESP.getHeapSize()/1024, ESP.getFreeHeap()/1024);
 
-    // Initialize watchdog timer (30 seconds timeout)
-    esp_task_wdt_init(30, true);  // 30 seconds, panic on timeout
-    esp_task_wdt_add(NULL);       // Add current task to watchdog
-    ESP_LOGI(TAG, "Watchdog initialized (30s timeout)");
+    // Configure watchdog timeout (ESP-IDF 5.x API)
+    esp_task_wdt_config_t wdt_config = {
+        .timeout_ms = 30000,
+        .idle_core_mask = 0,
+        .trigger_panic = true
+    };
+    esp_task_wdt_reconfigure(&wdt_config);
+    esp_err_t wdt_err = esp_task_wdt_add(NULL);
+    ESP_LOGI(TAG, "Watchdog configured (30s), add=%s", esp_err_to_name(wdt_err));
 
     ESP_LOGI(TAG, "Setup Done!");
 

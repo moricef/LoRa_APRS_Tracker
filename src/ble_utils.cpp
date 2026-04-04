@@ -71,18 +71,11 @@ bool        bleSleeping         = false;    // BLE is currently stopped (for WiF
 bool        bleWakeRequested    = false;    // Deferred wake flag (set from LVGL, processed in main loop)
 
 class MyServerCallbacks : public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* pServer) {
-        bluetoothConnected = true;
-        bleConnectedDeviceName = "";
-        bleNeedToReadName = true;
 
-        ESP_LOGI(TAG, "%s", "BLE Client Connected");
-    }
 
-    void onConnect(NimBLEServer* pServer, ble_gap_conn_desc* desc) {
+    void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
         bluetoothConnected = true;
-        // Get connected device MAC address from connection descriptor
-        bleConnectedPeerAddr = NimBLEAddress(desc->peer_ota_addr);
+        bleConnectedPeerAddr = connInfo.getAddress();
         bleConnectedDeviceAddr = bleConnectedPeerAddr.toString().c_str();
         bleConnectedDeviceName = "";  // Will be read later
         bleNeedToReadName = true;  // Signal to read name in loop
@@ -90,16 +83,9 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
         ESP_LOGI(TAG, "BLE Client Connected: %s", bleConnectedDeviceAddr.c_str());
     }
 
-    void onDisconnect(NimBLEServer* pServer) {
-        bluetoothConnected = false;
-        bleConnectedDeviceAddr = "";
-        bleConnectedDeviceName = "";
-        bleNeedToReadName = false;
-        ESP_LOGI(TAG, "%s", "BLE client Disconnected");
-        pServer->startAdvertising();
-    }
 
-    void onDisconnect(NimBLEServer* pServer, ble_gap_conn_desc* desc, int reason) {
+
+    void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
         bluetoothConnected = false;
         bleConnectedDeviceAddr = "";
         bleConnectedDeviceName = "";
@@ -110,7 +96,7 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
 };
 
 class MyCallbacks : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic *pCharacteristic) {
+    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& connInfo) override {
         if (Config.bluetooth.useKISS) {   // KISS (AX.25)
             std::string receivedData = pCharacteristic->getValue();
 
@@ -172,8 +158,8 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
 namespace BLE_Utils {
 
     void stop() {
-        if (BLEDevice::getInitialized()) {
-            BLEDevice::deinit();
+        if (NimBLEDevice::isInitialized()) {
+            BLEDevice::deinit(true);  // true = full cleanup (NimBLE 2.x)
         }
         pServer = nullptr;
         pCharacteristicTx = nullptr;
@@ -203,12 +189,8 @@ namespace BLE_Utils {
 
             BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
             pAdvertising->addServiceUUID(useKISS ? SERVICE_UUID_0 : SERVICE_UUID_1);
-
-            pServer->getAdvertising()->setScanResponse(true);
-            pServer->getAdvertising()->setMinPreferred(0x06);
-            pServer->getAdvertising()->setMaxPreferred(0x0C);
             pAdvertising->start();
-            ESP_LOGD(TAG, "%s", "Waiting for BLE central to connect...");
+            ESP_LOGD(TAG, "Waiting for BLE central to connect...");
         } else {
             ESP_LOGE(TAG, "Failed to create BLE service");
         }

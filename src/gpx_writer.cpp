@@ -2,9 +2,10 @@
 
 #include <esp_log.h>
 #include "gpx_writer.h"
-#include <SD.h>
+#include "storage_utils.h"
 #include <NMEAGPS.h>
 #include <freertos/semphr.h>
+#include <sys/stat.h>
 
 static const char *TAG = "GPX";
 
@@ -32,7 +33,7 @@ namespace GPXWriter {
                      gpsFix.dateTime.hours, gpsFix.dateTime.minutes);
         } else {
             snprintf(filename, sizeof(filename),
-                     "/LoRa_Tracker/gpx/track_%lu.gpx", millis() / 1000);
+                     "/LoRa_Tracker/gpx/track_%u.gpx", (unsigned)(millis() / 1000));
         }
 
         if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
@@ -41,28 +42,30 @@ namespace GPXWriter {
         }
 
         // Ensure directory exists
-        if (!SD.exists("/LoRa_Tracker/gpx")) {
-            SD.mkdir("/LoRa_Tracker/gpx");
+        String gpxDir = STORAGE_Utils::sdPath("/LoRa_Tracker/gpx");
+        struct stat st;
+        if (stat(gpxDir.c_str(), &st) != 0) {
+            ::mkdir(gpxDir.c_str(), 0775);
         }
 
-        File file = SD.open(filename, FILE_WRITE);
+        String fullPath = STORAGE_Utils::sdPath(filename);
+        FILE* file = fopen(fullPath.c_str(), "w");
         if (!file) {
             xSemaphoreGiveRecursive(spiMutex);
             ESP_LOGE(TAG, "Failed to create file: %s", filename);
             return false;
         }
 
-        // Write GPX header
-        file.println("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-        file.println("<gpx version=\"1.1\" creator=\"LoRa_APRS_Tracker\"");
-        file.println("  xmlns=\"http://www.topografix.com/GPX/1/1\">");
-        file.println("  <trk>");
-        file.println("    <name>LoRa APRS Track</name>");
-        file.println("    <trkseg>");
-        file.close();
+        fprintf(file, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        fprintf(file, "<gpx version=\"1.1\" creator=\"LoRa_APRS_Tracker\"\n");
+        fprintf(file, "  xmlns=\"http://www.topografix.com/GPX/1/1\">\n");
+        fprintf(file, "  <trk>\n");
+        fprintf(file, "    <name>LoRa APRS Track</name>\n");
+        fprintf(file, "    <trkseg>\n");
+        fclose(file);
         xSemaphoreGiveRecursive(spiMutex);
 
-        strncpy(currentFilePath, filename, sizeof(currentFilePath));
+        strncpy(currentFilePath, fullPath.c_str(), sizeof(currentFilePath));
         recording = true;
         ESP_LOGI(TAG, "Recording started: %s", filename);
         return true;
@@ -72,12 +75,12 @@ namespace GPXWriter {
         if (!recording) return;
 
         if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            File file = SD.open(currentFilePath, FILE_APPEND);
+            FILE* file = fopen(currentFilePath, "a");
             if (file) {
-                file.println("    </trkseg>");
-                file.println("  </trk>");
-                file.println("</gpx>");
-                file.close();
+                fprintf(file, "    </trkseg>\n");
+                fprintf(file, "  </trk>\n");
+                fprintf(file, "</gpx>\n");
+                fclose(file);
             }
             xSemaphoreGiveRecursive(spiMutex);
         }
@@ -103,16 +106,16 @@ namespace GPXWriter {
             return;
         }
 
-        File file = SD.open(currentFilePath, FILE_APPEND);
+        FILE* file = fopen(currentFilePath, "a");
         if (file) {
-            file.printf("      <trkpt lat=\"%.6f\" lon=\"%.6f\">\n", lat, lon);
-            file.printf("        <ele>%.1f</ele>\n", alt);
+            fprintf(file, "      <trkpt lat=\"%.6f\" lon=\"%.6f\">\n", lat, lon);
+            fprintf(file, "        <ele>%.1f</ele>\n", alt);
             if (timestamp[0])
-                file.printf("        <time>%s</time>\n", timestamp);
-            file.printf("        <hdop>%.1f</hdop>\n", hdop);
-            file.printf("        <speed>%.1f</speed>\n", speed);
-            file.println("      </trkpt>");
-            file.close();
+                fprintf(file, "        <time>%s</time>\n", timestamp);
+            fprintf(file, "        <hdop>%.1f</hdop>\n", hdop);
+            fprintf(file, "        <speed>%.1f</speed>\n", speed);
+            fprintf(file, "      </trkpt>\n");
+            fclose(file);
         }
         xSemaphoreGiveRecursive(spiMutex);
     }

@@ -56,6 +56,7 @@ extern const size_t favicon_data_len = favicon_data_end - favicon_data;
 namespace WEB_Utils {
 
     AsyncWebServer server(80);
+    static bool serverStarted = false;
 
     void handleNotFound(AsyncWebServerRequest *request) {
         AsyncWebServerResponse *response = request->beginResponse(404, "text/plain", "Not found");
@@ -81,7 +82,7 @@ namespace WEB_Utils {
     }
 
     void handleReadConfiguration(AsyncWebServerRequest *request) {
-        File file = SPIFFS.open("/tracker_conf.json");
+        File file = LittleFS.open("/tracker_conf.json");
         if (!file) {
             request->send(404, "text/plain", "Config file not found");
             return;
@@ -335,9 +336,16 @@ namespace WEB_Utils {
         request->send(response);
     }
 
+    void stop() {
+        if (serverStarted) {
+            server.end();
+            serverStarted = false;
+            ESP_LOGI(TAG, "Server stopped");
+        }
+    }
+
     void setup() {
         static bool routesRegistered = false;
-        static bool serverStarted = false;
 
         if (!routesRegistered) {
             server.on("/", HTTP_GET, handleHome);

@@ -95,6 +95,7 @@ namespace MapState {
     // UI state (input écrit, glue lit)
     // -------------------------------------------------------------------------
     extern bool mapFullscreen;
+    extern bool blePausedForMap;  // BLE was paused to enter map
 
     // -------------------------------------------------------------------------
     // APRS symbol cache (créé par map_tiles, lu par map_render)

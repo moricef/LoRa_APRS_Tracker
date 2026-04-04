@@ -18,6 +18,7 @@
 
 #ifndef BLUETOOTH_UTILS_H
 #define BLUETOOTH_UTILS_H
+#if !defined(TTGO_T_DECK_PLUS)
 
 #include <BluetoothSerial.h>
 
@@ -29,6 +30,8 @@ namespace BLUETOOTH_Utils {
     void sendToLoRa();
     void sendToPhone(const String& packet);
   
+
 }
 
+#endif // !defined(TTGO_T_DECK_PLUS)
 #endif

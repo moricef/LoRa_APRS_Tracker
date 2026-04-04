@@ -19,12 +19,15 @@
 #include <esp_log.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <esp_netif.h>
 #include <esp_task_wdt.h>
 #include "configuration.h"
 #include "wifi_utils.h"
 #include "web_utils.h"
+#include "aprs_is_utils.h"
 #include "display.h"
 #include "lvgl_ui.h"
+#include <Network.h>  // Required for Arduino Core 3.x (NetworkClient, NetworkInterface)
 
 extern Configuration        Config;
 
@@ -204,8 +207,10 @@ namespace WIFI_Utils {
         ESP_LOGW(TAG, "WebConfiguration Started!");
 
         WiFi.mode(WIFI_MODE_NULL);
+        WiFi.disconnect(true, true); // Stop WiFi and clear persistent NVS state
         WiFi.mode(WIFI_AP);
-        WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password);
+
+        WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str());
 
         WEB_Utils::setup();
 
@@ -240,7 +245,7 @@ namespace WIFI_Utils {
             delay(500);
             if ((millis() - start) > WIFI_CONNECT_TIMEOUT) {
                 // Timeout - properly stop this connection attempt
-                ESP_LOGW(TAG, "Timeout after %lu ms, status=%d", millis() - start, WiFi.status());
+                ESP_LOGW(TAG, "Timeout after %u ms, status=%d", (unsigned)(millis() - start), WiFi.status());
                 esp_wifi_disconnect();
                 delay(100);
                 break;
@@ -307,8 +312,26 @@ namespace WIFI_Utils {
 
     void stop() {
         ESP_LOGI(TAG, "Stopping WiFi for BLE coexistence");
+        APRS_IS_Utils::disconnect();
+        WEB_Utils::stop();
         WiFi.disconnect(true);
         esp_wifi_stop();
+        esp_wifi_deinit();  // Full DRAM release (esp_wifi_stop alone keeps ~38 KB allocated)
+        // Destroy ALL network interfaces to free LwIP/netif DRAM allocations.
+        // Without this, netifs sit in the middle of the heap and fragment it
+        // (71 KB free but only 31 KB largest block → BLE advertising fails).
+        // WiFi.mode(WIFI_STA) will recreate netifs on next WiFi start.
+        esp_netif_t* netif = esp_netif_next(NULL);
+        while (netif) {
+            esp_netif_t* next = esp_netif_next(netif);
+            const char* key = esp_netif_get_ifkey(netif);
+            ESP_LOGI(TAG, "Destroying netif: %s", key ? key : "unknown");
+            esp_netif_destroy(netif);
+            netif = next;
+        }
+        ESP_LOGI(TAG, "After full cleanup - DRAM: %u, largest: %u",
+                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
         WiFiConnected = false;
         wifiConnecting = false;
         WiFiEcoMode = false;
@@ -330,11 +353,15 @@ namespace WIFI_Utils {
 
         // Configure AP mode
         WiFi.mode(WIFI_MODE_NULL);
+        WiFi.disconnect(true, true); // Stop WiFi and clear persistent NVS state
         delay(100);
         WiFi.mode(WIFI_AP);
         delay(100);
 
-        bool success = WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password);
+        ESP_LOGI(TAG, "AP Password is: '%s' (Length: %d)", Config.wifiAutoAP.password.c_str(), Config.wifiAutoAP.password.length());
+
+        // Use password to restore security, but now with explicit IP config
+        bool success = WiFi.softAP(apName.c_str(), Config.wifiAutoAP.password.c_str()); 
         if (success) {
             ESP_LOGI(TAG, "AP Started - IP: %s", WiFi.softAPIP().toString().c_str());
             WEB_Utils::setup();
