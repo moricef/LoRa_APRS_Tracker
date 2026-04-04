@@ -62,7 +62,7 @@ static bool symbolCacheInitialized = false;
 // PNG decoder state (file-scope, used only by pngSymbolCallback)
 static bool pngFileOpened = false;
 static uint8_t* symbolCombinedBuffer = nullptr;  // Target buffer for PNG decode
-static PNG symbolPNG;                             // PNG decoder instance
+// PNG decoder instance is shared via MapEngine::sharedPNG (PSRAM-allocated)
 
 // Tile preload task state
 struct TileRequest {
@@ -145,9 +145,9 @@ static int pngSymbolCallback(PNGDRAW* pDraw) {
             memset(alphaRow, 255, SYMBOL_SIZE);
         }
 #if LV_COLOR_16_SWAP
-        symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_BIG_ENDIAN, 0x00000000);
+        MapEngine::sharedPNG->getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_BIG_ENDIAN, 0x00000000);
 #else
-        symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
+        MapEngine::sharedPNG->getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
 #endif
     }
     return 1;
@@ -225,11 +225,11 @@ static void tilePreloadTaskFunc(void* param) {
 
         symbolCombinedBuffer = combined;
 
-        int rc = symbolPNG.open(path.c_str(), pngOpenFile, pngCloseFile,
+        int rc = MapEngine::sharedPNG->open(path.c_str(), pngOpenFile, pngCloseFile,
                                 pngReadFile, pngSeekFile, pngSymbolCallback);
         if (rc == PNG_SUCCESS && pngFileOpened) {
-            symbolPNG.decode(nullptr, 0);
-            symbolPNG.close();
+            MapEngine::sharedPNG->decode(nullptr, 0);
+            MapEngine::sharedPNG->close();
         } else {
             if (rc != PNG_SUCCESS)
                 ESP_LOGE(TAG, "PNG open failed rc=%d for %s", rc, path.c_str());

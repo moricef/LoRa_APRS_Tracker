@@ -486,6 +486,8 @@ void create_map_screen() {
         }
     }
 
+    // Allocate PNG/JPEG decoders in PSRAM (single shared instances)
+    MapEngine::initDecoders();
     // Initialize the static tile cache pool now that critical sprites are allocated
     MapEngine::initTileCache(&tft);
     // Point canvas buffer directly at front sprite (no separate allocation)

@@ -194,8 +194,20 @@ namespace MapEngine {
     }
 
     // --- RASTER DECODING ENGINE ---
-    static PNG png;
-    static JPEGDEC jpeg;
+    // Decoder instances are PSRAM-allocated (see initDecoders())
+    PNG*     sharedPNG  = nullptr;
+    JPEGDEC* sharedJPEG = nullptr;
+
+    void initDecoders() {
+        if (!sharedPNG) {
+            sharedPNG = psram_new<PNG>();
+            ESP_LOGI(TAG_ENGINE, "PNG decoder allocated in PSRAM (%u bytes)", (unsigned)sizeof(PNG));
+        }
+        if (!sharedJPEG) {
+            sharedJPEG = psram_new<JPEGDEC>();
+            ESP_LOGI(TAG_ENGINE, "JPEG decoder allocated in PSRAM (%u bytes)", (unsigned)sizeof(JPEGDEC));
+        }
+    }
 
     // Generic file callbacks for raster decoders (POSIX FILE*)
     static void* rasterOpenFile(const char* filename, int32_t* size) {
@@ -248,7 +260,7 @@ namespace MapEngine {
         uint16_t* pfb = (uint16_t*)targetSprite_->getBuffer();
         if(pfb) {
             uint16_t* pLine = pfb + (pDraw->y * MAP_TILE_SIZE);
-            png.getLineAsRGB565(pDraw, pLine, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+            sharedPNG->getLineAsRGB565(pDraw, pLine, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
         }
         return 1;
     }
@@ -258,10 +270,10 @@ namespace MapEngine {
         targetSprite_ = &map;
         bool success = false;
         if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            if (jpeg.open(path, rasterOpenFile, rasterCloseFile, rasterReadFileJPEG, rasterSeekFileJPEG, jpegDrawCallback) == 1) {
-                jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
-                if (jpeg.decode(0, 0, 0) == 1) success = true;
-                jpeg.close();
+            if (sharedJPEG->open(path, rasterOpenFile, rasterCloseFile, rasterReadFileJPEG, rasterSeekFileJPEG, jpegDrawCallback) == 1) {
+                sharedJPEG->setPixelType(RGB565_LITTLE_ENDIAN);
+                if (sharedJPEG->decode(0, 0, 0) == 1) success = true;
+                sharedJPEG->close();
             }
             xSemaphoreGiveRecursive(spiMutex);
         }
@@ -273,9 +285,9 @@ namespace MapEngine {
         targetSprite_ = &map;
         bool success = false;
         if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            if (png.open(path, rasterOpenFile, rasterCloseFile, rasterReadFilePNG, rasterSeekFilePNG, pngDrawCallback) == 1) {
-                if (png.decode(nullptr, 0) == 1) success = true;
-                png.close();
+            if (sharedPNG->open(path, rasterOpenFile, rasterCloseFile, rasterReadFilePNG, rasterSeekFilePNG, pngDrawCallback) == 1) {
+                if (sharedPNG->decode(nullptr, 0) == 1) success = true;
+                sharedPNG->close();
             }
             xSemaphoreGiveRecursive(spiMutex);
         }
