@@ -28,12 +28,12 @@ namespace GPXWriter {
         char filename[64];
         if (gpsFix.valid.date && gpsFix.valid.time) {
             snprintf(filename, sizeof(filename),
-                     "/LoRa_Tracker/gpx/track_%04d-%02d-%02d_%02d%02d.gpx",
+                     "/LoRaTracker/gpx/track_%04d-%02d-%02d_%02d%02d.gpx",
                      2000 + gpsFix.dateTime.year, gpsFix.dateTime.month, gpsFix.dateTime.date,
                      gpsFix.dateTime.hours, gpsFix.dateTime.minutes);
         } else {
             snprintf(filename, sizeof(filename),
-                     "/LoRa_Tracker/gpx/track_%u.gpx", (unsigned)(millis() / 1000));
+                     "/LoRaTracker/gpx/track_%u.gpx", (unsigned)(millis() / 1000));
         }
 
         if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
@@ -42,7 +42,7 @@ namespace GPXWriter {
         }
 
         // Ensure directory exists
-        String gpxDir = STORAGE_Utils::sdPath("/LoRa_Tracker/gpx");
+        String gpxDir = STORAGE_Utils::sdPath("/LoRaTracker/gpx");
         struct stat st;
         if (stat(gpxDir.c_str(), &st) != 0) {
             ::mkdir(gpxDir.c_str(), 0775);

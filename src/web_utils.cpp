@@ -28,29 +28,29 @@ static const char *TAG = "WebServer";
 
 extern Configuration               Config;
 
-extern const char web_index_html[] asm("_binary_data_embed_index_html_gz_start");
-extern const char web_index_html_end[] asm("_binary_data_embed_index_html_gz_end");
+extern const char web_index_html[] asm("_binary_index_html_gz_start");
+extern const char web_index_html_end[] asm("_binary_index_html_gz_end");
 extern const size_t web_index_html_len = web_index_html_end - web_index_html;
 
-extern const char web_style_css[] asm("_binary_data_embed_style_css_gz_start");
-extern const char web_style_css_end[] asm("_binary_data_embed_style_css_gz_end");
+extern const char web_style_css[] asm("_binary_style_css_gz_start");
+extern const char web_style_css_end[] asm("_binary_style_css_gz_end");
 extern const size_t web_style_css_len = web_style_css_end - web_style_css;
 
-extern const char web_script_js[] asm("_binary_data_embed_script_js_gz_start");
-extern const char web_script_js_end[] asm("_binary_data_embed_script_js_gz_end");
+extern const char web_script_js[] asm("_binary_script_js_gz_start");
+extern const char web_script_js_end[] asm("_binary_script_js_gz_end");
 extern const size_t web_script_js_len = web_script_js_end - web_script_js;
 
-extern const char web_bootstrap_css[] asm("_binary_data_embed_bootstrap_css_gz_start");
-extern const char web_bootstrap_css_end[] asm("_binary_data_embed_bootstrap_css_gz_end");
+extern const char web_bootstrap_css[] asm("_binary_bootstrap_css_gz_start");
+extern const char web_bootstrap_css_end[] asm("_binary_bootstrap_css_gz_end");
 extern const size_t web_bootstrap_css_len = web_bootstrap_css_end - web_bootstrap_css;
 
-extern const char web_bootstrap_js[] asm("_binary_data_embed_bootstrap_js_gz_start");
-extern const char web_bootstrap_js_end[] asm("_binary_data_embed_bootstrap_js_gz_end");
+extern const char web_bootstrap_js[] asm("_binary_bootstrap_js_gz_start");
+extern const char web_bootstrap_js_end[] asm("_binary_bootstrap_js_gz_end");
 extern const size_t web_bootstrap_js_len = web_bootstrap_js_end - web_bootstrap_js;
 
 // Declare external symbols for the embedded image data
-extern const unsigned char favicon_data[] asm("_binary_data_embed_favicon_png_gz_start");
-extern const unsigned char favicon_data_end[] asm("_binary_data_embed_favicon_png_gz_end");
+extern const unsigned char favicon_data[] asm("_binary_favicon_png_gz_start");
+extern const unsigned char favicon_data_end[] asm("_binary_favicon_png_gz_end");
 extern const size_t favicon_data_len = favicon_data_end - favicon_data;
 
 namespace WEB_Utils {
