@@ -6,7 +6,6 @@
 #include "map_internal.h"
 #include "storage_utils.h"
 #include "OpenSansBold6pt7b.h"
-#include <SD.h>
 #include <algorithm>
 #include <new>
 

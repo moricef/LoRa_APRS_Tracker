@@ -1303,12 +1303,10 @@ static void btn_send_msg_clicked(lv_event_t *e) {
 
         // Save sent message
         if (xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
-            File msgFile = STORAGE_Utils::openFile("/aprsMessages.txt", FILE_APPEND);
+            FILE* msgFile = STORAGE_Utils::openFile("/aprsMessages.txt", "a");
             if (msgFile) {
-                char sentMsgBuf[256]; // Use static buffer to avoid String allocations
-                snprintf(sentMsgBuf, sizeof(sentMsgBuf), "%s,>%s", to, msg);
-                msgFile.println(sentMsgBuf);
-                msgFile.close();
+                fprintf(msgFile, "%s,>%s\n", to, msg);
+                fclose(msgFile);
                 MSG_Utils::loadNumMessages();
             }
             xSemaphoreGiveRecursive(spiMutex);

@@ -14,7 +14,7 @@
 #include <climits>
 #include <esp_task_wdt.h>
 #include <esp_heap_caps.h>
-#include <SD.h>
+#include <cstdio>
 #include <new>
 
 // Allocate a C++ object in PSRAM (placement new).
@@ -65,7 +65,7 @@ namespace MapEngine {
 
     // --- NPK slot (needed by renderNavViewport) ---
     struct NpkSlot {
-        File file;
+        FILE* file;
         UIMapManager::Npk2Header header;
         UIMapManager::Npk2YEntry* yTable;
         char region[64];

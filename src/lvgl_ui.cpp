@@ -9,7 +9,6 @@ static const char *TAG = "LVGL";
 
 #include <APRSPacketLib.h>
 #include <Arduino.h>
-#include <FS.h>
 #include "LGFX_TDeck.h"
 #include <NMEAGPS.h>
 #include "gps_utils.h"
@@ -34,7 +33,6 @@ static const char *TAG = "LVGL";
 #include "storage_utils.h"
 #include "utils.h"
 #include "wifi_utils.h"
-#include <SD.h> // Added because used for sent messages
 #include <TouchLib.h>
 #include <Wire.h>
 #include <algorithm> // For std::sort

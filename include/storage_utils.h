@@ -20,8 +20,10 @@
 #define STORAGE_UTILS_H_
 
 #include <Arduino.h>
-#include <FS.h>
+#include <cstdio>
 #include <vector>
+#include <sys/stat.h>
+#include <dirent.h>
 
 // Contact structure
 struct Contact {
@@ -69,28 +71,31 @@ struct DashboardRxEntry {
     uint32_t timestamp;     // millis() when received
 };
 
+// SD card VFS mount point (Arduino SD.h mounts here)
+#define SD_MOUNT_POINT "/sd"
+
 namespace STORAGE_Utils {
 
     void    setup();
     bool    isSDAvailable();
 
-    // Path getters
-    String  getRootPath();      // /LoRa_Tracker
-    String  getMessagesPath();  // /LoRa_Tracker/Messages
-    String  getInboxPath();     // /LoRa_Tracker/Messages/inbox
-    String  getOutboxPath();    // /LoRa_Tracker/Messages/outbox
-    String  getContactsPath();  // /LoRa_Tracker/Contacts
-    String  getMapsPath();      // /LoRa_Tracker/Maps
+    // Build full VFS path from a logical path
+    // "/LoRa_Tracker/foo" → "/sd/LoRa_Tracker/foo"
+    String  sdPath(const String& path);
 
-    // File operations
+    // Path getters (return full VFS paths)
+    String  getRootPath();      // /sd/LoRa_Tracker
+    String  getMessagesPath();  // /sd/LoRa_Tracker/Messages
+    String  getInboxPath();     // /sd/LoRa_Tracker/Messages/inbox
+    String  getOutboxPath();    // /sd/LoRa_Tracker/Messages/outbox
+    String  getContactsPath();  // /sd/LoRa_Tracker/Contacts
+    String  getMapsPath();      // /sd/LoRa_Tracker/Maps
+
+    // File operations (POSIX C — no Arduino SD.h dependency)
     bool    fileExists(const String& path);
-    File    openFile(const String& path, const char* mode);
-    // Chunked DMA read: reads 'size' bytes from an open SD File into 'dest'
-    // using a 32 KB DMA-aligned internal buffer. Reduces SPI transaction overhead
-    // for large files (map tiles). Falls back to file.read() if DMA buffer unavailable.
-    size_t  readChunked(File& file, uint8_t* dest, size_t size);
+    FILE*   openFile(const String& path, const char* mode);
     bool    removeFile(const String& path);
-    bool    mkdir(const String& path);
+    bool    sdMkdir(const String& path);
 
     // Directory listing (SD only)
     std::vector<String> listFiles(const String& dirPath);

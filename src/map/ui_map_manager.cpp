@@ -17,11 +17,10 @@
 #ifdef USE_LVGL_UI
 
 #include <Arduino.h>
-#include <FS.h>
 #include <lvgl.h>
 #include <LovyanGFX.hpp>
 #include <NMEAGPS.h>
-#include <SD.h>
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -229,18 +228,18 @@ void redraw_map_canvas() {
                     // Try NPK2 pack file first
                     snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
                              navRegions[r].c_str(), map_current_zoom);
-                    isNavMode = SD.exists(navCheckPath);
+                    isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                     if (!isNavMode) {
                         // Try split pack (Z{z}_0.nav)
                         snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d_0.nav",
                                  navRegions[r].c_str(), map_current_zoom);
-                        isNavMode = SD.exists(navCheckPath);
+                        isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                     }
                     if (!isNavMode) {
                         // Fallback: legacy individual tile
                         snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
                                  navRegions[r].c_str(), map_current_zoom, renderTileX, renderTileY);
-                        isNavMode = SD.exists(navCheckPath);
+                        isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                     }
                 }
                 xSemaphoreGive(spiMutex);
@@ -537,18 +536,18 @@ void create_map_screen() {
                         // Try NPK2 pack file first
                         snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
                                  navRegions[r].c_str(), map_current_zoom);
-                        isNavMode = SD.exists(navCheckPath);
+                        isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                         if (!isNavMode) {
                             // Try split pack (Z{z}_0.nav)
                             snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d_0.nav",
                                      navRegions[r].c_str(), map_current_zoom);
-                            isNavMode = SD.exists(navCheckPath);
+                            isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                         }
                         if (!isNavMode) {
                             // Fallback: legacy individual tile
                             snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
                                      navRegions[r].c_str(), map_current_zoom, centerTileX, centerTileY);
-                            isNavMode = SD.exists(navCheckPath);
+                            isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                         }
                     }
                     xSemaphoreGive(spiMutex);
