@@ -24,10 +24,11 @@ continuent de l'utiliser via le composant. Migration progressive, chaque étape 
 | 0 | Compat ESP-IDF 5.x (WDT, WiFi AP, formats) | — | `b34ff806`→`a1492eb3` |
 | 1 | SD.h → POSIX VFS (12 fichiers) | +64 KB | `a639ed23` |
 | 2 | PNG/JPEG décodeurs → PSRAM | +109 KB | `e6479b88` |
-| 3 | `framework = espidf, arduino` + stub component + LFN | +0 KB (accès sdkconfig) | `(à venir)` |
+| 3 | `framework = espidf, arduino` + LFN + stack 32KB | -24 KB (stack) | `d0fb8a22`→`9247e3f6` |
 | — | BLE pause for map, PSRAM queues/stacks | — | divers |
 
-**DRAM libre** : 42 KB → 217 KB au boot, ~106 KB stable en usage.
+**DRAM libre** : 42 KB → 170 KB au boot, ~110 KB après WiFi+APRS-IS.
+**DRAM après WiFi+APRS-IS** : 109 KB libre, largest block 34 KB.
 
 ## Ce qui reste
 
@@ -53,7 +54,10 @@ Le pivot central. Tout le reste en découle.
 **Statistiques build** :
 - RAM : 101 176 B (30.9%)
 - Flash : 2 493 709 B (79.3%)
-- DRAM libre au boot : ~217 KB
+- DRAM libre au boot : ~170 KB (stack loopTask 32KB)
+- DRAM après WiFi+APRS-IS : ~109 KB, largest block 34 KB
+- DRAM après BLE (WiFi off) : ~101 KB, largest block 31 KB
+- PSRAM : 7969 KB libre au boot
 
 ### Phase 4 — sdkconfig tuning (débloqué par phase 3)
 
@@ -118,8 +122,12 @@ L'ESP32-S3 n'est pas supporté. Options :
 3. **Les libs pioarduino en mode `framework=arduino` sont précompilées** — sdkconfig inaccessible
 4. **Avec `framework=espidf`**, les libs ESP-IDF sont compilées depuis les sources → sdkconfig modifiable
 5. **Vérifier la faisabilité 3× avant de proposer une étape**
-6. **Gérer les composants ESP‑IDF indésirables** via stub component local + `EXCLUDE_COMPONENTS` dans CMakeLists.txt, pas seulement `custom_component_remove` de PlatformIO.
+6. **Gérer les composants ESP‑IDF indésirables** via `custom_component_remove` (format `vendor/component`) dans platformio.ini + `EXCLUDE_COMPONENTS` dans CMakeLists.txt racine.
 7. **Respecter les chemins VFS** : en mode `framework = espidf`, tous les accès SD doivent être préfixés par `SD_MOUNT_POINT`. Les utilitaires de storage abstraient cette différence.
+8. **FatFS LFN désactivé par défaut en IDF** : `CONFIG_FATFS_LFN_HEAP=y` obligatoire pour les noms >8.3 caractères.
+9. **`board_build.arduino.loop_stack_size` ignoré en dual framework** : utiliser `CONFIG_ARDUINO_LOOP_STACK_SIZE` dans `sdkconfig.defaults`.
+10. **Supprimer `sdkconfig.{env}` après toute modif de `sdkconfig.defaults`** : le cache n'est pas regénéré automatiquement.
+11. **Stack 32KB nécessaire** : les couches VFS IDF ajoutent de la profondeur d'appel. Le chemin `readFile() → writeFile()` avec DynamicJsonDocument imbriqués dépasse 16KB.
 
 ## Solutions validées
 
