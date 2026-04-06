@@ -77,8 +77,12 @@ namespace STORAGE_Utils {
                                CONTACTS_DIR, MAPS_DIR, SYMBOLS_DIR };
         for (const char* d : dirs) {
             if (!vfs_exists(d)) {
-                ::mkdir(d, 0775);
-                ESP_LOGI(TAG, "Created %s", d);
+                int ret = ::mkdir(d, 0775);
+                if (ret == 0) {
+                    ESP_LOGI(TAG, "Created %s", d);
+                } else {
+                    ESP_LOGE(TAG, "Failed to create %s (errno=%d)", d, errno);
+                }
             }
         }
     }
@@ -117,7 +121,6 @@ namespace STORAGE_Utils {
 
                     ESP_LOGI(TAG, "SD card mounted (%s, %lluMB)",
                         typeStr, SD.cardSize() / (1024 * 1024));
-
 
                     // Create directory structure
                     createDirectoryStructure();

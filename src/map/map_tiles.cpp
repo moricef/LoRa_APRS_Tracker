@@ -542,7 +542,7 @@ static void tilePreloadTaskFunc(void* param) {
                     }
                     closedir(mapsDir);
                 } else {
-                    ESP_LOGE(TAG, "Cannot open /LoRa_Tracker/Maps");
+                    ESP_LOGE(TAG, "Cannot open %s/LoRa_Tracker/Maps", SD_MOUNT_POINT);
                 }
             }
             xSemaphoreGive(spiMutex);
