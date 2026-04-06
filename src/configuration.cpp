@@ -173,9 +173,10 @@ bool Configuration::readFile() {
 
     if (configFile) {
         bool needsRewrite = false;
-        DynamicJsonDocument data(8192);
+        {
+            DynamicJsonDocument data(8192);
 
-        DeserializationError error = deserializeJson(data, configFile);
+            DeserializationError error = deserializeJson(data, configFile);
         if (error) {
             ESP_LOGW(TAG, "Failed to read file, using default configuration");
         }
@@ -348,6 +349,8 @@ bool Configuration::readFile() {
         sendAltitude                    = data["other"]["sendAltitude"] | true;
         disableGPS                      = data["other"]["disableGPS"] | false;
         email                           = data["other"]["email"] | "";
+
+        } // End of DynamicJsonDocument scope
 
         configFile.close();
 

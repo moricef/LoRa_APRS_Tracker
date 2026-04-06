@@ -146,6 +146,7 @@ APRSPacket                          lastReceivedPacket;
 extern bool gpsIsActive;
 
 void setup() {
+    esp_task_wdt_add(NULL);
     Serial.begin(115200);
 
     // Silence GPIO 14 warning spam (pin used by PSRAM on ESP32-S3)
@@ -261,6 +262,7 @@ void setup() {
 }
 
 void loop() {
+    esp_task_wdt_reset();
     currentBeacon = &Config.beacons[myBeaconsIndex];
     if (statusUpdate) {
         if (APRSPacketLib::checkNocall(currentBeacon->callsign)) {

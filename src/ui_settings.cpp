@@ -2083,6 +2083,7 @@ void UISettings::showBootWebConfig() {
             lv_tick_inc(now - last_tick);
             last_tick = now;
             lv_timer_handler();
+            esp_task_wdt_reset();
             yield();
             delay(10);
         }
