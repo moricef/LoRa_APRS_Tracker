@@ -79,8 +79,6 @@ static const char *TAG = "Main";
 #endif
 #ifdef USE_LVGL_UI
 #include "trace_sd.h"
-#endif
-#ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #endif
 
@@ -202,9 +200,6 @@ void setup() {
 
     #ifdef USE_LVGL_UI
     TraceSD::clearPreviousTrace();
-    #endif
-
-    #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("GPS...");
     #endif
     GPS_Utils::setup();
