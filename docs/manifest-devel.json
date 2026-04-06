@@ -1,6 +1,6 @@
 {
   "name": "LoRa APRS Tracker - T-Deck Plus 433MHz (Development)",
-  "version": "2.10.0+dev (2026-03-31)",
+  "version": "2.11.0+dev (2026-04-06)",
   "new_install_prompt_erase": true,
   "builds": [
     {
