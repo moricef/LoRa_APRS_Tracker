@@ -1120,7 +1120,7 @@ namespace MapEngine {
         // 3. Try single file first: Z{z}.nav
         char packPath[128];
         struct stat _st;
-        snprintf(packPath, sizeof(packPath), SD_MOUNT_POINT "/LoRaTracker/VectMaps/%s/Z%d.nav", region, zoom);
+        snprintf(packPath, sizeof(packPath), SD_MOUNT_POINT "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
 
         bool singleExists = false;
         if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
@@ -1134,7 +1134,7 @@ namespace MapEngine {
 
         // 4. Single file absent → scan splits: Z{z}_0.nav, Z{z}_1.nav, ...
         for (uint8_t si = 0; si < 16; si++) {
-            snprintf(packPath, sizeof(packPath), SD_MOUNT_POINT "/LoRaTracker/VectMaps/%s/Z%d_%d.nav", region, zoom, si);
+            snprintf(packPath, sizeof(packPath), SD_MOUNT_POINT "/LoRa_Tracker/VectMaps/%s/Z%d_%d.nav", region, zoom, si);
 
             bool splitExists = false;
             if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
@@ -1519,11 +1519,11 @@ namespace MapEngine {
 
         // Try 14pt first (better readability on 480×320), fallback to 12pt
         char fontFullPath[128];
-        const char* fontRel = "/LoRaTracker/fonts/OpenSans-Bold-14.vlw";
+        const char* fontRel = "/LoRa_Tracker/fonts/OpenSans-Bold-14.vlw";
         snprintf(fontFullPath, sizeof(fontFullPath), SD_MOUNT_POINT "%s", fontRel);
         struct stat fontSt;
         if (stat(fontFullPath, &fontSt) != 0) {
-            fontRel = "/LoRaTracker/fonts/OpenSans-Bold-12.vlw";
+            fontRel = "/LoRa_Tracker/fonts/OpenSans-Bold-12.vlw";
             snprintf(fontFullPath, sizeof(fontFullPath), SD_MOUNT_POINT "%s", fontRel);
         }
         if (stat(fontFullPath, &fontSt) != 0) {
@@ -1778,11 +1778,11 @@ namespace MapEngine {
                 if (spiMutex && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                     if (STORAGE_Utils::isSDAvailable()) {
                         struct stat _pst;
-                        snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRaTracker/Maps/%s/%d/%d/%d.png",
+                        snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
                                  region, zoom, tileX, tileY);
                         if (stat(path, &_pst) == 0) { found = true; }
                         else {
-                            snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRaTracker/Maps/%s/%d/%d/%d.jpg",
+                            snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg",
                                      region, zoom, tileX, tileY);
                             if (stat(path, &_pst) == 0) { found = true; }
                         }

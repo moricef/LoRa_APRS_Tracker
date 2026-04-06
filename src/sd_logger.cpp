@@ -33,7 +33,7 @@ struct CrashContext {
 
 RTC_NOINIT_ATTR static CrashContext _crashCtx;
 
-#define SD_LOG_FILE SD_MOUNT_POINT "/LoRaTracker/system.log"
+#define SD_LOG_FILE SD_MOUNT_POINT "/LoRa_Tracker/system.log"
 #define SD_LOG_MAX_SIZE 102400  // 100KB
 #define SD_LOG_MAX_LINES 1000
 
@@ -283,8 +283,8 @@ namespace SD_Logger {
 
         struct stat st;
         if (stat(SD_LOG_FILE, &st) == 0) {
-            ::remove(SD_MOUNT_POINT "/LoRaTracker/system.log.old");
-            ::rename(SD_LOG_FILE, SD_MOUNT_POINT "/LoRaTracker/system.log.old");
+            ::remove(SD_MOUNT_POINT "/LoRa_Tracker/system.log.old");
+            ::rename(SD_LOG_FILE, SD_MOUNT_POINT "/LoRa_Tracker/system.log.old");
         }
 
         if (sdLogMutex) xSemaphoreGive(sdLogMutex);
@@ -301,7 +301,7 @@ namespace SD_Logger {
 
         if (sdLogMutex && xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             ::remove(SD_LOG_FILE);
-            ::remove(SD_MOUNT_POINT "/LoRaTracker/system.log.old");
+            ::remove(SD_MOUNT_POINT "/LoRa_Tracker/system.log.old");
             xSemaphoreGive(sdLogMutex);
             log(INFO, "SD_LOG", "Logs cleared");
         }

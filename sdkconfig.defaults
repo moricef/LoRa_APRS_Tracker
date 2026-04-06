@@ -24,5 +24,9 @@ CONFIG_ASYNC_TCP_RUNNING_CORE=0
 # Flash size 16MB (N16R8 module)
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 
+# FatFS - Long File Name support (required for SD card paths > 8.3)
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+
 # Logging colors
 CONFIG_LOG_COLORS=y

@@ -242,7 +242,7 @@ namespace MSG_Utils {
             return callsigns;
         }
 
-        String convDirPath = STORAGE_Utils::sdPath("/LoRaTracker/Messages/conversations");
+        String convDirPath = STORAGE_Utils::sdPath("/LoRa_Tracker/Messages/conversations");
         DIR* dir = opendir(convDirPath.c_str());
         if (!dir) {
             ESP_LOGW(TAG, "Failed to open /conversations directory");
@@ -407,7 +407,7 @@ namespace MSG_Utils {
             // Also delete all conversation files
             if (STORAGE_Utils::fileExists("/conversations")) {
                 std::vector<String> files = STORAGE_Utils::listFiles(
-                    STORAGE_Utils::sdPath("/LoRaTracker/Messages/conversations"));
+                    STORAGE_Utils::sdPath("/LoRa_Tracker/Messages/conversations"));
                 for (const String& name : files) {
                     String path = "/conversations/" + name;
                     STORAGE_Utils::removeFile(path.c_str());

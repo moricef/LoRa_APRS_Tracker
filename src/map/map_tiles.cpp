@@ -205,7 +205,7 @@ static void tilePreloadTaskFunc(void* param) {
         String tableName = (table == '/') ? "primary" : "alternate";
         char hexCode[3];
         snprintf(hexCode, sizeof(hexCode), "%02X", (uint8_t)symbol);
-        String path = String(SD_MOUNT_POINT "/LoRaTracker/Symbols/") + tableName + "/" + hexCode + ".png";
+        String path = String(SD_MOUNT_POINT "/LoRa_Tracker/Symbols/") + tableName + "/" + hexCode + ".png";
 
         if (!STORAGE_Utils::isSDAvailable()) {
             ESP_LOGE(TAG, "SD not available for symbol load");
@@ -337,11 +337,11 @@ static void tilePreloadTaskFunc(void* param) {
         if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 const char* region = map_current_region.c_str();
-                snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRaTracker/Maps/%s/%d/%d/%d.png",
+                snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
                          region, zoom, tileX, tileY);
                 if (stat(path, &_pst) == 0) { strcpy(found_path, path); found = true; }
                 else {
-                    snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRaTracker/Maps/%s/%d/%d/%d.jpg",
+                    snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg",
                              region, zoom, tileX, tileY);
                     if (stat(path, &_pst) == 0) { strcpy(found_path, path); found = true; }
                 }
@@ -392,11 +392,11 @@ static void tilePreloadTaskFunc(void* param) {
         if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 const char* region = map_current_region.c_str();
-                snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRaTracker/Maps/%s/%d/%d/%d.png",
+                snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
                          region, zoom, tileX, tileY);
                 if (stat(path, &_pst) == 0) { strcpy(found_path, path); found = true; }
                 else {
-                    snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRaTracker/Maps/%s/%d/%d/%d.jpg",
+                    snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg",
                              region, zoom, tileX, tileY);
                     if (stat(path, &_pst) == 0) { strcpy(found_path, path); found = true; }
                 }
@@ -467,7 +467,7 @@ static void tilePreloadTaskFunc(void* param) {
 
         const int zoom = 6;
         char path[128];
-        snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRaTracker/Maps/%s/%d",
+        snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d",
                  map_current_region.c_str(), zoom);
 
         int xMin = INT_MAX, xMax = INT_MIN;
@@ -530,7 +530,7 @@ static void tilePreloadTaskFunc(void* param) {
         if (spiMutex != NULL &&
             xSemaphoreTake(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
-                DIR* mapsDir = opendir(SD_MOUNT_POINT "/LoRaTracker/Maps");
+                DIR* mapsDir = opendir(SD_MOUNT_POINT "/LoRa_Tracker/Maps");
                 if (mapsDir) {
                     struct dirent* entry;
                     while ((entry = readdir(mapsDir)) != nullptr) {
@@ -542,7 +542,7 @@ static void tilePreloadTaskFunc(void* param) {
                     }
                     closedir(mapsDir);
                 } else {
-                    ESP_LOGE(TAG, "Cannot open %s/LoRaTracker/Maps", SD_MOUNT_POINT);
+                    ESP_LOGE(TAG, "Cannot open %s/LoRa_Tracker/Maps", SD_MOUNT_POINT);
                 }
             }
             xSemaphoreGive(spiMutex);
@@ -556,7 +556,7 @@ static void tilePreloadTaskFunc(void* param) {
 
     bool regionContainsTile(const char* region, int zoom, int tileX, int tileY) {
         char path[128];
-        snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRaTracker/VectMaps/%s/Z%d.nav", region, zoom);
+        snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
         FILE* f = fopen(path, "rb");
         if (!f) return false;
 
@@ -586,7 +586,7 @@ static void tilePreloadTaskFunc(void* param) {
         if (spiMutex != NULL &&
             xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
-                DIR* vectDir = opendir(SD_MOUNT_POINT "/LoRaTracker/VectMaps");
+                DIR* vectDir = opendir(SD_MOUNT_POINT "/LoRa_Tracker/VectMaps");
                 if (vectDir) {
                     struct dirent* entry;
                     while ((entry = readdir(vectDir)) != nullptr && navRegionCount < NAV_MAX_REGIONS) {

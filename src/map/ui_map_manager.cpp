@@ -226,18 +226,18 @@ void redraw_map_canvas() {
             } else if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
                 for (int r = 0; r < navRegionCount && !isNavMode; r++) {
                     // Try NPK2 pack file first
-                    snprintf(navCheckPath, sizeof(navCheckPath), "/LoRaTracker/VectMaps/%s/Z%d.nav",
+                    snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
                              navRegions[r].c_str(), map_current_zoom);
                     isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                     if (!isNavMode) {
                         // Try split pack (Z{z}_0.nav)
-                        snprintf(navCheckPath, sizeof(navCheckPath), "/LoRaTracker/VectMaps/%s/Z%d_0.nav",
+                        snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d_0.nav",
                                  navRegions[r].c_str(), map_current_zoom);
                         isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                     }
                     if (!isNavMode) {
                         // Fallback: legacy individual tile
-                        snprintf(navCheckPath, sizeof(navCheckPath), "/LoRaTracker/VectMaps/%s/%d/%d/%d.nav",
+                        snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
                                  navRegions[r].c_str(), map_current_zoom, renderTileX, renderTileY);
                         isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                     }
@@ -542,18 +542,18 @@ void create_map_screen() {
                 } else if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
                     for (int r = 0; r < navRegionCount && !isNavMode; r++) {
                         // Try NPK2 pack file first
-                        snprintf(navCheckPath, sizeof(navCheckPath), "/LoRaTracker/VectMaps/%s/Z%d.nav",
+                        snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
                                  navRegions[r].c_str(), map_current_zoom);
                         isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                         if (!isNavMode) {
                             // Try split pack (Z{z}_0.nav)
-                            snprintf(navCheckPath, sizeof(navCheckPath), "/LoRaTracker/VectMaps/%s/Z%d_0.nav",
+                            snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d_0.nav",
                                      navRegions[r].c_str(), map_current_zoom);
                             isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                         }
                         if (!isNavMode) {
                             // Fallback: legacy individual tile
-                            snprintf(navCheckPath, sizeof(navCheckPath), "/LoRaTracker/VectMaps/%s/%d/%d/%d.nav",
+                            snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/%d/%d/%d.nav",
                                      navRegions[r].c_str(), map_current_zoom, centerTileX, centerTileY);
                             isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                         }
@@ -623,7 +623,7 @@ void create_map_screen() {
             label_dsc.color = lv_color_hex(0xaaaaaa);
             label_dsc.font = &lv_font_montserrat_14;
             lv_canvas_draw_text(map_canvas, 40, MAP_SPRITE_SIZE / 2 - 30, 240, &label_dsc,
-                "No offline tiles available.\nDownload OSM tiles and copy to:\nSD:/LoRaTracker/Maps/REGION/z/x/y.png");
+                "No offline tiles available.\nDownload OSM tiles and copy to:\nSD:/LoRa_Tracker/Maps/REGION/z/x/y.png");
         }
 
         // Draw GPS traces for mobile stations (on canvas, under station icons)

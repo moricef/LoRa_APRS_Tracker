@@ -41,15 +41,14 @@ static std::vector<Contact> contactsCache;
 static bool contactsLoaded = false;
 
 // Root directory for all tracker data on SD card (VFS paths)
-// Note: no underscore in folder name - FAT VFS has issues with mkdir on names containing '_'
-static const char* ROOT_DIR      = SD_MOUNT_POINT "/LoRaTracker";
-static const char* MESSAGES_DIR  = SD_MOUNT_POINT "/LoRaTracker/Messages";
-static const char* INBOX_DIR     = SD_MOUNT_POINT "/LoRaTracker/Messages/inbox";
-static const char* OUTBOX_DIR    = SD_MOUNT_POINT "/LoRaTracker/Messages/outbox";
-static const char* CONTACTS_DIR  = SD_MOUNT_POINT "/LoRaTracker/Contacts";
-static const char* CONTACTS_FILE = SD_MOUNT_POINT "/LoRaTracker/Contacts/contacts.json";
-static const char* MAPS_DIR      = SD_MOUNT_POINT "/LoRaTracker/Maps";
-static const char* SYMBOLS_DIR   = SD_MOUNT_POINT "/LoRaTracker/Symbols";
+static const char* ROOT_DIR      = SD_MOUNT_POINT "/LoRa_Tracker";
+static const char* MESSAGES_DIR  = SD_MOUNT_POINT "/LoRa_Tracker/Messages";
+static const char* INBOX_DIR     = SD_MOUNT_POINT "/LoRa_Tracker/Messages/inbox";
+static const char* OUTBOX_DIR    = SD_MOUNT_POINT "/LoRa_Tracker/Messages/outbox";
+static const char* CONTACTS_DIR  = SD_MOUNT_POINT "/LoRa_Tracker/Contacts";
+static const char* CONTACTS_FILE = SD_MOUNT_POINT "/LoRa_Tracker/Contacts/contacts.json";
+static const char* MAPS_DIR      = SD_MOUNT_POINT "/LoRa_Tracker/Maps";
+static const char* SYMBOLS_DIR   = SD_MOUNT_POINT "/LoRa_Tracker/Symbols";
 
 // Helper: check if a VFS path exists
 static bool vfs_exists(const char* path) {
@@ -172,7 +171,7 @@ namespace STORAGE_Utils {
             if (path.startsWith(SD_MOUNT_POINT)) {
                 return vfs_exists(path.c_str());
             }
-            if (path.startsWith("/LoRaTracker")) {
+            if (path.startsWith("/LoRa_Tracker")) {
                 return vfs_exists(sdPath(path).c_str());
             }
             String full = String(MESSAGES_DIR) + path;
@@ -186,7 +185,7 @@ namespace STORAGE_Utils {
         if (sdAvailable) {
             if (path.startsWith(SD_MOUNT_POINT)) {
                 fullPath = path;
-            } else if (path.startsWith("/LoRaTracker")) {
+            } else if (path.startsWith("/LoRa_Tracker")) {
                 fullPath = sdPath(path);
             } else {
                 fullPath = String(MESSAGES_DIR) + path;
@@ -205,7 +204,7 @@ namespace STORAGE_Utils {
             String fullPath;
             if (path.startsWith(SD_MOUNT_POINT)) {
                 fullPath = path;
-            } else if (path.startsWith("/LoRaTracker")) {
+            } else if (path.startsWith("/LoRa_Tracker")) {
                 fullPath = sdPath(path);
             } else {
                 fullPath = String(MESSAGES_DIR) + path;
@@ -220,7 +219,7 @@ namespace STORAGE_Utils {
             String fullPath;
             if (path.startsWith(SD_MOUNT_POINT)) {
                 fullPath = path;
-            } else if (path.startsWith("/LoRaTracker")) {
+            } else if (path.startsWith("/LoRa_Tracker")) {
                 fullPath = sdPath(path);
             } else {
                 fullPath = String(MESSAGES_DIR) + path;
@@ -468,14 +467,14 @@ namespace STORAGE_Utils {
 
     // ========== Stats Persistence ==========
 
-    static const char* STATS_FILE = SD_MOUNT_POINT "/LoRaTracker/stats.json";
+    static const char* STATS_FILE = SD_MOUNT_POINT "/LoRa_Tracker/stats.json";
     static bool statsSaveNeeded = false;
     static uint32_t lastStatsSave = 0;
 
     // ========== Raw Frames Logging ==========
 
-    static const char* FRAMES_FILE = SD_MOUNT_POINT "/LoRaTracker/frames.log";
-    static const char* FRAMES_OLD_FILE = SD_MOUNT_POINT "/LoRaTracker/frames.old";
+    static const char* FRAMES_FILE = SD_MOUNT_POINT "/LoRa_Tracker/frames.log";
+    static const char* FRAMES_OLD_FILE = SD_MOUNT_POINT "/LoRa_Tracker/frames.old";
     static const uint32_t MAX_FRAMES_SIZE = 100 * 1024;  // 100 KB
 
     void checkFramesLogRotation() {
