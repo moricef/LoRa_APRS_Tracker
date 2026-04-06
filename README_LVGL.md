@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.10.0-blue)
+![Version](https://img.shields.io/badge/version-2.11.0-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus**
@@ -15,6 +15,11 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 | **Dashboard** | **Vector Map** | **Messaging** |
 
 ---
+## What's New in v2.11.x
+- **ESP-IDF 5.5.2 dual framework** - Migration to `framework = espidf, arduino` unlocking full sdkconfig access for ESP-IDF tuning (PSRAM, NimBLE, FatFS, stack sizes)
+- **Own trace SD persistence** - GPS trace persisted to SD card (binary 12 bytes/record, one file per day). Pan/zoom renders from SD+RAM viewport for full trace history
+- **SmartBeacon trace compaction** - Replaced recursive Douglas-Peucker with SmartBeacon-like criteria for trace point filtering
+
 ## What's New in v2.10.x
 - **NPK3 (Hilbert) format support** - New vector map pack format using Hilbert curve index for faster tile lookups. Auto-detected alongside NPK2, fully backward compatible
 - **Static Hilbert index buffer** - 1.2 MB PSRAM buffer allocated once at boot (no fragmentation). Z9-Z13 indexes cached in PSRAM, Z14+ use SD binary search fallback
