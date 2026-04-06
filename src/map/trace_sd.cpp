@@ -31,14 +31,41 @@ static void updateFilePath() {
 
 namespace TraceSD {
 
-    void init() {
+    // Called once at boot (from setup) — clears all previous session traces
+    void clearPreviousTrace() {
         if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
             return;
         }
         if (!SD.exists("/LoRa_Tracker/trace")) {
             SD.mkdir("/LoRa_Tracker/trace");
+            xSemaphoreGiveRecursive(spiMutex);
+            return;
+        }
+        File dir = SD.open("/LoRa_Tracker/trace");
+        if (dir && dir.isDirectory()) {
+            File entry;
+            while ((entry = dir.openNextFile())) {
+                String name = String("/LoRa_Tracker/trace/") + entry.name();
+                entry.close();
+                SD.remove(name);
+                ESP_LOGI(TAG, "Cleared old trace: %s", name.c_str());
+            }
+            dir.close();
         }
         xSemaphoreGiveRecursive(spiMutex);
+    }
+
+    // Called each time map opens
+    void init() {
+        if (!initialized) {
+            if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+                return;
+            }
+            if (!SD.exists("/LoRa_Tracker/trace")) {
+                SD.mkdir("/LoRa_Tracker/trace");
+            }
+            xSemaphoreGiveRecursive(spiMutex);
+        }
 
         updateFilePath();
         initialized = true;

@@ -12,7 +12,10 @@
 #include <freertos/task.h>
 #include <esp_attr.h>   // RTC_NOINIT_ATTR
 
+extern SemaphoreHandle_t spiMutex;
+
 static const char *TAG = "SD_Log";
+
 
 // ---------------------------------------------------------------------------
 // Crash context — stored in RTC memory (survives panic/WDT reset, lost on
@@ -102,18 +105,27 @@ namespace SD_Logger {
             if (buf[0] == 'W' || buf[0] == 'E') {
                 inSdHook = true;
                 if (sdLogMutex && xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-                    FILE* f = fopen(SD_LOG_FILE, "a");
-                    if (f) {
-                        char ts[20];
-                        formatTimestamp(ts, sizeof(ts));
-                        fprintf(f, "%s %s", ts, buf);
-                        fclose(f);
+                    bool spiTaken = false;
+                    if (spiMutex != NULL) {
+                        spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(100)) == pdTRUE);
+                    }
+                    if (spiTaken || spiMutex == NULL) {
+                        FILE* f = fopen(SD_LOG_FILE, "a");
+                        if (f) {
+                            char ts[20];
+                            formatTimestamp(ts, sizeof(ts));
+                            fprintf(f, "%s %s", ts, buf);
+                            fclose(f);
+                        }
+                        if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
                     }
                     xSemaphoreGive(sdLogMutex);
                 }
                 inSdHook = false;
             }
+
         }
+
         va_end(args_copy);
         return ret;
     }
@@ -191,14 +203,26 @@ namespace SD_Logger {
             return;
         }
 
-        FILE* logFile = fopen(SD_LOG_FILE, "a");
+        bool spiTaken = false;
+        if (spiMutex != NULL) {
+            spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+        }
+
+        FILE* logFile = nullptr;
+        if (spiTaken || spiMutex == NULL) {
+            logFile = fopen(SD_LOG_FILE, "a");
+        }
+
         if (!logFile) {
             ESP_LOGE(TAG, "Failed to open log file");
+            if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
             if (sdLogMutex) xSemaphoreGive(sdLogMutex);
             return;
         }
 
         const char* levelStr;
+
+
         switch (level) {
             case INFO:     levelStr = "INFO "; break;
             case WARN:     levelStr = "WARN "; break;
@@ -214,9 +238,11 @@ namespace SD_Logger {
         long currentSize = ftell(logFile);
         fclose(logFile);
 
+        if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
         if (sdLogMutex) xSemaphoreGive(sdLogMutex);
 
         if (currentSize > SD_LOG_MAX_SIZE) {
+
             rotateLogs();
         }
     }
@@ -281,15 +307,20 @@ namespace SD_Logger {
             return;
         }
 
+        bool spiTaken = false;
+        if (spiMutex != NULL) spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+
         struct stat st;
         if (stat(SD_LOG_FILE, &st) == 0) {
             ::remove(SD_MOUNT_POINT "/LoRa_Tracker/system.log.old");
             ::rename(SD_LOG_FILE, SD_MOUNT_POINT "/LoRa_Tracker/system.log.old");
         }
 
+        if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
         if (sdLogMutex) xSemaphoreGive(sdLogMutex);
 
         ESP_LOGI(TAG, "Log rotation complete");
+
     }
 
     String getLogFilePath() {
@@ -300,12 +331,18 @@ namespace SD_Logger {
         if (!initialized || !STORAGE_Utils::isSDAvailable()) return;
 
         if (sdLogMutex && xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            bool spiTaken = false;
+            if (spiMutex != NULL) spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+
             ::remove(SD_LOG_FILE);
             ::remove(SD_MOUNT_POINT "/LoRa_Tracker/system.log.old");
+
+            if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
             xSemaphoreGive(sdLogMutex);
             log(INFO, "SD_LOG", "Logs cleared");
         }
     }
+
 
     void updateCrashContext(const char* module, float lat, float lon) {
         _crashCtx.magic = CRASH_CTX_MAGIC;

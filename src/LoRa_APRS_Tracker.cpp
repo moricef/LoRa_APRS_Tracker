@@ -78,6 +78,9 @@ static const char *TAG = "Main";
 #include "touch_utils.h"
 #endif
 #ifdef USE_LVGL_UI
+#include "trace_sd.h"
+#endif
+#ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #endif
 
@@ -196,6 +199,10 @@ void setup() {
     // Initialize SD logger for debugging reboots
     SD_Logger::init();
     SD_Logger::logBootInfo();
+
+    #ifdef USE_LVGL_UI
+    TraceSD::clearPreviousTrace();
+    #endif
 
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("GPS...");

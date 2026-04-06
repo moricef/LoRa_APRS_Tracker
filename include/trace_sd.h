@@ -23,7 +23,10 @@ static_assert(sizeof(TraceRecord) == 12, "TraceRecord must be 12 bytes");
 
 namespace TraceSD {
 
-    // Initialize (call after SD mounted). Creates directory if needed.
+    // Clear previous session trace (call once at boot after SD mounted)
+    void clearPreviousTrace();
+
+    // Initialize (call each time map opens)
     void init();
 
     // Append one point to today's trace file

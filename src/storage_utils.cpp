@@ -31,8 +31,13 @@
 #include <cerrno>
 #include "board_pinout.h"
 #include "storage_utils.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
+extern SemaphoreHandle_t spiMutex;
 
 static const char *TAG = "Storage";
+
 
 static bool sdAvailable = false;
 
@@ -52,16 +57,27 @@ static const char* SYMBOLS_DIR   = SD_MOUNT_POINT "/LoRa_Tracker/Symbols";
 
 // Helper: check if a VFS path exists
 static bool vfs_exists(const char* path) {
-    struct stat st;
-    return (stat(path, &st) == 0);
-}
+        struct stat st;
+        bool exists = false;
+        bool spiTaken = false;
+        if (spiMutex != NULL) spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+        exists = (stat(path, &st) == 0);
+        if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
+        return exists;
+    }
 
-// Helper: get file size via stat
-static long vfs_filesize(const char* path) {
-    struct stat st;
-    if (stat(path, &st) == 0) return st.st_size;
-    return -1;
-}
+    static long vfs_filesize(const char* path) {
+        struct stat st;
+        long size = 0;
+        bool spiTaken = false;
+        if (spiMutex != NULL) spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+        if (stat(path, &st) == 0) {
+            size = st.st_size;
+        }
+        if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
+        return size;
+    }
+
 
 namespace STORAGE_Utils {
 
@@ -77,13 +93,17 @@ namespace STORAGE_Utils {
                                CONTACTS_DIR, MAPS_DIR, SYMBOLS_DIR };
         for (const char* d : dirs) {
             if (!vfs_exists(d)) {
+                bool spiTaken = false;
+                if (spiMutex != NULL) spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
                 int ret = ::mkdir(d, 0775);
+                if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
                 if (ret == 0) {
                     ESP_LOGI(TAG, "Created %s", d);
                 } else {
                     ESP_LOGE(TAG, "Failed to create %s (errno=%d)", d, errno);
                 }
             }
+
         }
     }
 
@@ -309,24 +329,38 @@ namespace STORAGE_Utils {
             return contactsCache;
         }
 
+        bool spiTaken = false;
+        if (spiMutex != NULL) {
+            spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+        }
+
         long fsize = vfs_filesize(CONTACTS_FILE);
         if (fsize <= 0) {
             ESP_LOGW(TAG, "No contacts file, starting fresh");
             contactsLoaded = true;
+            if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
             return contactsCache;
         }
 
         FILE* f = fopen(CONTACTS_FILE, "r");
         if (!f) {
             contactsLoaded = true;
+            if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
             return contactsCache;
         }
 
         char* buf = (char*)malloc(fsize + 1);
-        if (!buf) { fclose(f); contactsLoaded = true; return contactsCache; }
+        if (!buf) {
+            fclose(f);
+            contactsLoaded = true;
+            if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
+            return contactsCache;
+        }
         size_t rd = fread(buf, 1, fsize, f);
         fclose(f);
         buf[rd] = '\0';
+
+        if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
 
         DynamicJsonDocument doc(4096);
         DeserializationError error = deserializeJson(doc, buf);
@@ -370,9 +404,15 @@ namespace STORAGE_Utils {
             obj["comment"] = c.comment;
         }
 
+        bool spiTaken = false;
+        if (spiMutex != NULL) {
+            spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+        }
+
         FILE* f = fopen(CONTACTS_FILE, "w");
         if (!f) {
             ESP_LOGE(TAG, "Failed to open contacts file for writing");
+            if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
             return false;
         }
 
@@ -380,6 +420,8 @@ namespace STORAGE_Utils {
         size_t len = serializeJsonPretty(doc, buf, sizeof(buf));
         fwrite(buf, 1, len, f);
         fclose(f);
+
+        if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
 
         contactsCache = contacts;
         contactsLoaded = true;
@@ -524,14 +566,19 @@ namespace STORAGE_Utils {
         if (framesCacheCount < FRAMES_CACHE_SIZE) framesCacheCount++;
         framesDirty = true;  // Mark for UI refresh
 
-        // 4. Write to SD card
+        // 4. Write to SD card (protected by spiMutex — shared SPI bus)
         if (sdAvailable) {
-            checkFramesLogRotation();
-            FILE* f = fopen(FRAMES_FILE, "a");
-            if (f) {
-                fprintf(f, "%s\n", logLine.c_str());
-                fclose(f);
+            bool spiTaken = false;
+            if (spiMutex != NULL) spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE);
+            if (spiTaken || spiMutex == NULL) {
+                checkFramesLogRotation();
+                FILE* f = fopen(FRAMES_FILE, "a");
+                if (f) {
+                    fprintf(f, "%s\n", logLine.c_str());
+                    fclose(f);
+                }
             }
+            if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
         }
         return true;
     }
@@ -561,8 +608,12 @@ const std::vector<String>& getLastFrames(int count) {
             return;
         }
 
+        bool spiTaken = false;
+        if (spiMutex != NULL) spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+
         FILE* f = fopen(FRAMES_FILE, "r");
         if (!f) {
+            if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
             ESP_LOGW(TAG, "No frames file, starting fresh");
             return;
         }
@@ -579,6 +630,7 @@ const std::vector<String>& getLastFrames(int count) {
             }
         }
         fclose(f);
+        if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
 
         int totalLines = allLines.size();
         int startIdx = (totalLines > 20) ? (totalLines - 20) : 0;
@@ -859,13 +911,20 @@ const std::vector<String>& getLastFrames(int count) {
             return;
         }
 
+        bool spiTaken = false;
+        if (spiMutex != NULL) spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+
         FILE* f = fopen(STATS_FILE, "r");
-        if (!f) return;
+        if (!f) {
+            if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
+            return;
+        }
 
         char* buf = (char*)malloc(fsize + 1);
-        if (!buf) { fclose(f); return; }
+        if (!buf) { fclose(f); if (spiTaken) xSemaphoreGiveRecursive(spiMutex); return; }
         size_t rd = fread(buf, 1, fsize, f);
         fclose(f);
+        if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
         buf[rd] = '\0';
 
         DynamicJsonDocument doc(4096);
@@ -955,9 +1014,18 @@ const std::vector<String>& getLastFrames(int count) {
             obj["direct"] = s.lastIsDirect;
         }
 
+        bool spiTaken = false;
+        if (spiMutex != NULL) spiTaken = (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+
+        if (!spiTaken && spiMutex != NULL) {
+            ESP_LOGW(TAG, "Failed to get SPI mutex for stats save");
+            return false;
+        }
+
         FILE* f = fopen(STATS_FILE, "w");
         if (!f) {
             ESP_LOGE(TAG, "Failed to open stats file for writing");
+            if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
             return false;
         }
 
@@ -965,6 +1033,8 @@ const std::vector<String>& getLastFrames(int count) {
         size_t len = serializeJson(doc, buf, sizeof(buf));
         fwrite(buf, 1, len, f);
         fclose(f);
+
+        if (spiTaken) xSemaphoreGiveRecursive(spiMutex);
 
         ESP_LOGI(TAG, "Saved stats (%d stations)", stationStats.size());
         return true;
