@@ -228,7 +228,7 @@ bool Configuration::readFile() {
             !data["bluetooth"].containsKey("useBLE") ||
             !data["bluetooth"].containsKey("useKISS")) needsRewrite = true;
         bluetooth.active                = data["bluetooth"]["active"] | false;
-        bluetooth.deviceName            = data["bluetooth"]["deviceName"] | "LoRa_Tracker";
+        bluetooth.deviceName            = data["bluetooth"]["deviceName"] | "LoRaTracker";
         #ifdef HAS_BT_CLASSIC
             bluetooth.useBLE            = data["bluetooth"]["useBLE"] | false;
             bluetooth.useKISS           = data["bluetooth"]["useKISS"] | false;
@@ -437,7 +437,7 @@ void Configuration::setDefaultValues() {
     gpsConfig.strict3DFix           = false;
 
     bluetooth.active                = false;
-    bluetooth.deviceName            = "LoRa_Tracker";
+    bluetooth.deviceName            = "LoRaTracker";
     #ifdef HAS_BT_CLASSIC
         bluetooth.useBLE            = false;
         bluetooth.useKISS           = false;

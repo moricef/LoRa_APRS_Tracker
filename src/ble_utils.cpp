@@ -188,9 +188,21 @@ namespace BLE_Utils {
             pService->start();
 
             BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
-            pAdvertising->addServiceUUID(useKISS ? SERVICE_UUID_0 : SERVICE_UUID_1);
+            pAdvertising->reset();          // Clear stale state from previous init cycle
+
+            // Split advertising payload to avoid "Data length exceeded"
+            // Put long UUID in primary payload, put name in scan response
+            NimBLEAdvertisementData advData;
+            advData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+            advData.setCompleteServices(NimBLEUUID(useKISS ? SERVICE_UUID_0 : SERVICE_UUID_1));
+            pAdvertising->setAdvertisementData(advData);
+
+            NimBLEAdvertisementData scanResponseData;
+            scanResponseData.setName(BLEid.c_str());
+            pAdvertising->setScanResponseData(scanResponseData);
+
             pAdvertising->start();
-            ESP_LOGD(TAG, "Waiting for BLE central to connect...");
+            ESP_LOGI(TAG, "BLE advertising as \"%s\"", BLEid.c_str());
         } else {
             ESP_LOGE(TAG, "Failed to create BLE service");
         }
