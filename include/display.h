@@ -29,6 +29,7 @@
 #define TFT_SCLK        40
 
 #include <Arduino.h>
+#include "board_pinout.h"
 
 #ifdef HAS_TFT
     #if defined(CROWPANEL_ADVANCE_35)

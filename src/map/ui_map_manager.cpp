@@ -16,6 +16,7 @@
 
 #ifdef USE_LVGL_UI
 
+#include "display.h"
 #include <Arduino.h>
 #include <lvgl.h>
 #include <LovyanGFX.hpp>

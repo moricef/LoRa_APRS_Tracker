@@ -22,7 +22,7 @@ class Configuration;
 // External data sources from lvgl_ui.cpp and other global variables
 extern gps_fix gpsFix;
 extern Configuration Config;
-extern LGFX_TDeck tft;
+// extern LGFX_TDeck tft;
 extern uint8_t myBeaconsIndex;
 extern int mapStationsCount;
 extern SemaphoreHandle_t spiMutex; // Declared extern for SPI bus mutex access

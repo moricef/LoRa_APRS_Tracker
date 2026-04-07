@@ -8,6 +8,7 @@
 static const char *TAG = "LVGL";
 
 #include <APRSPacketLib.h>
+#include "display.h"
 #include <Arduino.h>
 #include "LGFX_TDeck.h"
 #include <NMEAGPS.h>
