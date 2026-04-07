@@ -209,11 +209,17 @@ void setup() {
     #endif
     currentLoRaType = &Config.loraTypes[loraIndex];
     LoRa_Utils::setup();
-    Utils::i2cScannerForPeripherals();
+    ESP_LOGI(TAG, "LoRa setup bypassed/done");
+
+    // Utils::i2cScannerForPeripherals(); // TEMPORARILY DISABLED
+    ESP_LOGI(TAG, "I2C Scanner bypassed");
+
     WX_Utils::setup();
+    ESP_LOGI(TAG, "WX setup done");
 
     #ifdef BUTTON_PIN
         BUTTON_Utils::setup();
+        ESP_LOGI(TAG, "Button setup done");
     #endif
     #ifdef HAS_JOYSTICK
         JOYSTICK_Utils::setup();
