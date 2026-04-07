@@ -18,7 +18,7 @@
 
 #ifndef BLUETOOTH_UTILS_H
 #define BLUETOOTH_UTILS_H
-#if !defined(TTGO_T_DECK_PLUS)
+#ifdef HAS_BT_CLASSIC
 
 #include <BluetoothSerial.h>
 
@@ -33,5 +33,5 @@ namespace BLUETOOTH_Utils {
 
 }
 
-#endif // !defined(TTGO_T_DECK_PLUS)
+#endif // HAS_BT_CLASSIC
 #endif

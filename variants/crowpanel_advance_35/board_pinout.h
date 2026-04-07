@@ -24,7 +24,7 @@
     #define RADIO_SCLK_PIN      10
     #define RADIO_MISO_PIN      9
     #define RADIO_MOSI_PIN      3
-    #define RADIO_CS_PIN        0U  // 0U prevents ambiguity with null pointer
+    #define RADIO_CS_PIN        (uint32_t)0
     #define RADIO_RST_PIN       2   // Shared with TFT_RST
     #define RADIO_DIO1_PIN      1
     #define RADIO_BUSY_PIN      46
