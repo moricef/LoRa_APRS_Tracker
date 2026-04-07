@@ -313,7 +313,7 @@ namespace LoRa_Utils {
             #endif
         } else {
             ESP_LOGE(TAG, "Starting LoRa failed! State: %d", state);
-            while (true);
+            // while (true); // Commented to allow boot without LoRa module
         }
         #if defined(HAS_SX1262) || defined(HAS_SX1268) || defined(HAS_LLCC68)
             radio.setDio1Action(setFlag);
@@ -354,7 +354,7 @@ namespace LoRa_Utils {
             ESP_LOGI(TAG, "LoRa init done!");
         } else {
             ESP_LOGE(TAG, "Starting LoRa failed! State: %d", state);
-            while (true);
+            // while (true); // Commented to allow boot without LoRa module
         }        
     }
 

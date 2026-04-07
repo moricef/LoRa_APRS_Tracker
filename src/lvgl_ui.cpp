@@ -97,8 +97,13 @@ extern int mapStationsCount; // Station counter for the map
                              // information bar
 
 // Display dimensions
+#if defined(CROWPANEL_ADVANCE_35)
+#define SCREEN_WIDTH 480
+#define SCREEN_HEIGHT 320
+#else
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
+#endif
 
 // LVGL buffer size (use partial buffer to save memory, full buffer in PSRAM)
 #define LVGL_BUF_SIZE (SCREEN_WIDTH * SCREEN_HEIGHT)
@@ -270,7 +275,11 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
     // Init TFT
     tft.init();
+    #if defined(CROWPANEL_ADVANCE_35)
+    tft.setRotation(3); // Adjust for Crowpanel orientation
+    #else
     tft.setRotation(1);
+    #endif
     tft.fillScreen(TFT_BLACK); // Clear to black before showing anything
 
 // Now turn on backlight with saved brightness
@@ -461,7 +470,11 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
       // Re-init TFT for LVGL
       tft.init();
+      #if defined(CROWPANEL_ADVANCE_35)
+      tft.setRotation(3); // Adjust for Crowpanel orientation
+      #else
       tft.setRotation(1); // Landscape, keyboard at bottom
+      #endif
 
       // Initialize LVGL
       lv_init();
