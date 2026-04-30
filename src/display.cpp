@@ -253,7 +253,9 @@ bool        symbolAvailable         = true;
 #endif
 
 void displaySetBrightness(uint8_t value) {
+    #ifdef HAS_TFT
     tft.setBrightness(value);
+    #endif
 }
 
 void displaySetup() {
@@ -320,7 +322,9 @@ void displayToggle(bool toggle) {
     if (toggle) {
         displaySetBrightness(screenBrightness);
     } else {
+        #ifdef HAS_TFT
         tft.setBrightness(0);
+        #endif
     }
 }
 

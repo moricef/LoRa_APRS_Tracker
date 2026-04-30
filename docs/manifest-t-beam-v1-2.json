@@ -1,0 +1,15 @@
+{
+  "name": "LoRa APRS Tracker - T-Beam V1.2 433MHz (Stable)",
+  "version": "2.9.3 (2026-04-30)",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "firmware/stable/ttgo-t-beam-v1-2/bootloader.bin", "offset": 4096 },
+        { "path": "firmware/stable/ttgo-t-beam-v1-2/partitions.bin", "offset": 32768 },
+        { "path": "firmware/stable/ttgo-t-beam-v1-2/firmware.bin", "offset": 65536 }
+      ]
+    }
+  ]
+}

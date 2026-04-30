@@ -422,7 +422,11 @@ namespace LoRa_Utils {
         if (state == RADIOLIB_ERR_NONE) {
             loraInitOk = true;
 
+            #ifdef HAS_SX1262
             radio.startReceive(RADIOLIB_SX126X_RX_TIMEOUT_NONE);
+            #else
+            radio.startReceive();
+            #endif
 
             #if defined(LIGHTTRACKER_PLUS_1_0) || defined(CROWPANEL_ADVANCE_35)
             loraSpiEnd();  // Restore SD GPIO mapping — LoRa setup done
@@ -479,7 +483,11 @@ namespace LoRa_Utils {
     void wakeRadio() {
         if (spiMutex) xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY);
         loraSpiBegin();
+        #ifdef HAS_SX1262
         radio.startReceive(RADIOLIB_SX126X_RX_TIMEOUT_NONE);
+        #else
+        radio.startReceive();
+        #endif
         loraSpiEnd();
         if (spiMutex) xSemaphoreGiveRecursive(spiMutex);
     }
@@ -512,7 +520,11 @@ namespace LoRa_Utils {
             if (spiMutex) xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY);
             loraSpiBegin();
             if (transmitFlag) {
+                #ifdef HAS_SX1262
                 radio.startReceive(RADIOLIB_SX126X_RX_TIMEOUT_NONE);
+                #else
+                radio.startReceive();
+                #endif
                 transmitFlag = false;
             } else {
                 // Single-shot RX: after RX_DONE, radio is in STBY_RC with BUSY=0 — no wait needed.
@@ -522,7 +534,11 @@ namespace LoRa_Utils {
                     yield();
                 }
                 int state = radio.readData(packet);
+                #ifdef HAS_SX1262
                 radio.startReceive(RADIOLIB_SX126X_RX_TIMEOUT_NONE);  // re-arm single-shot RX
+                #else
+                radio.startReceive();  // re-arm single-shot RX
+                #endif
                 ESP_LOGD(TAG, "readData state=%d", state);
                 if (state == RADIOLIB_ERR_NONE) {
                     if(!packet.isEmpty()) {

@@ -52,28 +52,13 @@ static const char *TAG = "LVGL";
 #include "ui_dashboard.h"    // Dashboard screen module
 #include "ui_messaging.h"    // Messaging screens module
 
-SemaphoreHandle_t spiMutex = NULL;
+// Symbols shared with non-LVGL builds (defined in shared_symbols.cpp)
+extern SemaphoreHandle_t spiMutex;
+extern const char *symbolArray[];
+extern const int symbolArraySize;
+extern const uint8_t *symbolsAPRS[];
 
-// APRS symbol mapping (defined once here for extern declarations in
-// custom_characters.h)
-const char *symbolArray[] = {"[", ">", "j", "b", "<", "s", "u", "R",
-                             "v", "(", ";", "-", "k", "C", "a", "Y",
-                             "O", "'", "=", "y", "U", "p", "_", ")"};
-const int symbolArraySize = sizeof(symbolArray) / sizeof(symbolArray[0]);
-const uint8_t *symbolsAPRS[] = {runnerSymbol,     carSymbol,
-                                jeepSymbol,       bikeSymbol,
-                                motorcycleSymbol, shipSymbol,
-                                truck18Symbol,    recreationalVehicleSymbol,
-                                vanSymbol,        carsateliteSymbol,
-                                tentSymbol,       houseSymbol,
-                                truckSymbol,      canoeSymbol,
-                                ambulanceSymbol,  yatchSymbol,
-                                baloonSymbol,     aircraftSymbol,
-                                trainSymbol,      yagiSymbol,
-                                busSymbol,        dogSymbol,
-                                wxSymbol,         wheelchairSymbol};
-
-// Expose variables defined in this file to UIMapManager namespace
+// Expose variables defined in shared_symbols.cpp to UIMapManager namespace
 namespace UIMapManager {
 // Definitions for externs in ui_map_manager.h
 const char *const *symbolArray = ::symbolArray;

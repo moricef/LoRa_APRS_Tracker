@@ -89,6 +89,10 @@
         CrowPanel 3.5"
         <div class="board-desc">ESP32-S3 · LVGL UI · 433 MHz</div>
       </button>
+      <button class="board-btn" data-board="t-beam-v1-2">
+        T-Beam V1.2
+        <div class="board-desc">ESP32 · OLED · 433 MHz</div>
+      </button>
     </div>
   </div>
 
@@ -108,6 +112,15 @@
       <p>Connect your <strong>CrowPanel Advance 3.5"</strong> via USB and click Install:</p>
       <esp-web-install-button class="install-btn" manifest="manifest-crowpanel-advance-35.json">
         <button slot="activate">Install CrowPanel Firmware</button>
+        <span slot="unsupported">Browser not supported. Use Chrome, Edge, or Chromium.</span>
+        <span slot="not-allowed">USB access not authorized.</span>
+      </esp-web-install-button>
+    </div>
+
+    <div id="board-t-beam-v1-2" class="board-info">
+      <p>Connect your <strong>T-Beam V1.2</strong> via USB and click Install:</p>
+      <esp-web-install-button class="install-btn" manifest="manifest-t-beam-v1-2.json">
+        <button slot="activate">Install T-Beam Firmware</button>
         <span slot="unsupported">Browser not supported. Use Chrome, Edge, or Chromium.</span>
         <span slot="not-allowed">USB access not authorized.</span>
       </esp-web-install-button>
