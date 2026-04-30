@@ -1,6 +1,6 @@
 # CA2RXU LoRa APRS Tracker/Station
 
-> **📱 Note:** This is a fork with **LVGL touchscreen UI** for T-Deck Plus. See [README_LVGL.md](README_LVGL.md) for enhanced features (vector maps, WiFi station, BLE eco mode, etc.).
+> **📱 Note:** This is a fork with **LVGL touchscreen UI** for T-Deck Plus and CrowPanel 3.5", plus classic OLED firmware for T-Beam V1.2. See [README_LVGL.md](README_LVGL.md) for enhanced features (vector maps, WiFi station, BLE eco mode, etc.).
 > Original project: https://github.com/richonguzman/LoRa_APRS_Tracker
 
 This firmware is for using ESP32 based boards with LoRa Modules and GPS to live in the APRS world.

@@ -4,7 +4,7 @@
 ![Version](https://img.shields.io/badge/version-2.9.2-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
-**ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus**
+**ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus and CrowPanel Advance 3.5", plus classic OLED tracker for T-Beam V1.2**
 
 This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/LoRa_APRS_Tracker) featuring a complete LVGL-based touchscreen interface with vector map rendering (NAV format compatible with [IceNav-v3](https://github.com/jgauchia/IceNav-v3)), LovyanGFX graphics library for enhanced performance, advanced APRS messaging, and optimized memory management.
 
@@ -16,7 +16,10 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 
 ---
 ## What's New in v2.9.x
+- **Web Flasher Multi-Board** - Single-page web installer with board selector: T-Deck Plus 433, CrowPanel 3.5", T-Beam V1.2
+- **T-Beam V1.2 support** - Classic OLED tracker firmware with GNSS quality filtering and SmartBeaconing
 - **Strict 3D Fix (PDOP)** - New configurable mode to enforce PDOP filtering for altitude reliability, with a visual indicator on the dashboard.
+- **Persistent Map State** - Map's NAV memory pool and zoom/pan state are preserved across sessions to avoid PSRAM fragmentation and improve user experience.
 - **Persistent Map State** - Map's NAV memory pool and zoom/pan state are preserved across sessions to avoid PSRAM fragmentation and improve user experience.
 - **NeoGPS migration** - Replaced TinyGPS++ (legacy 2013) with NeoGPS: coherent fix merging, HDOP from GGA, configurable sentence parsing
 - **GPS Doppler cross-check filter** - New jitter rejection: when GPS reports low speed (< 8 km/h) but position barely moved (< 25m), the update is rejected. Fixes L76K Doppler noise at rest
@@ -25,7 +28,6 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 - **Map module refactoring** - `ui_map_manager.cpp` split into `map_state`, `map_tiles`, `map_render`, `map_input` modules (2247 → 655 lines)
 - **PSRAM cache for GPS traces** - SD trace files are loaded into PSRAM at startup; viewport queries scan RAM instead of SD card, drastically improving map rendering performance
 - **SmartBeacon-like trace compaction** - Replaced recursive Douglas-Peucker algorithm with speed/distance criteria similar to SmartBeacon for more natural trail preservation
-- **CrowPanel Advance 3.5" support** - New display variant with ILI9488 + GT911 touch controller and separate SPI buses
 - **mass_copy utility** - Python script for efficient bulk copying of map tiles to SD card (from IceNav-v3)
 
 ## What's New in v2.8.x
@@ -90,8 +92,9 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 - LinkStats and per-station statistics (max 20 stations)
 
 ### Hardware
-- **Board**: Lilygo T-Deck Plus (ESP32-S3, 16MB Flash, 8MB PSRAM)
-- **Display**: 320x240 IPS touchscreen with brightness control
+- **LVGL Boards (touchscreen)**: Lilygo T-Deck Plus 433MHz (ESP32-S3) · CrowPanel Advance 3.5" (ESP32-S3)
+- **OLED Board (classic)**: Lilygo T-Beam V1.2 433MHz (ESP32)
+- **Display (LVGL boards)**: 320x240 or 480x320 IPS touchscreen with brightness control
 - **LoRa**: SX1262 module
 - **GPS**: Internal GPS module
 - **Storage**: SD card (A1 class recommended for fast tile loading)
