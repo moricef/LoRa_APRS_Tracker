@@ -1,1 +1,178 @@
-fatal : le chemin 'docs/stable.html' existe sur le disque, mais pas dans 'main'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LoRa APRS Tracker - Web Installer (Stable)</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #1a1a2e;
+      color: #eee;
+    }
+    h1 { color: #4CAF50; text-align: center; }
+    h2 { color: #81C784; border-bottom: 1px solid #333; padding-bottom: 10px; }
+    .container {
+      background: #16213e;
+      border-radius: 10px;
+      padding: 15px;
+      margin: 20px 0;
+      text-align: center;
+    }
+    .board-selector {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .board-btn {
+      background: #1a1a2e;
+      border: 2px solid #333;
+      border-radius: 8px;
+      color: #ccc;
+      cursor: pointer;
+      padding: 12px 18px;
+      font-size: 0.95em;
+      transition: all 0.2s;
+      min-width: 140px;
+    }
+    .board-btn:hover { border-color: #4CAF50; color: #fff; }
+    .board-btn.active { border-color: #4CAF50; background: #4CAF5020; color: #4CAF50; font-weight: bold; }
+    .board-desc { font-size: 0.8em; color: #888; margin-top: 4px; }
+    .install-btn {
+      --esp-tools-button-color: #4CAF50;
+      --esp-tools-button-text-color: #fff;
+      font-size: 1.2em;
+    }
+    .warning {
+      background: #ff980020;
+      border: 1px solid #ff9800;
+      border-radius: 5px;
+      padding: 15px;
+      margin: 20px 0;
+    }
+    .info {
+      background: #2196f320;
+      border: 1px solid #2196f3;
+      border-radius: 5px;
+      padding: 15px;
+      margin: 20px 0;
+    }
+    ul { text-align: left; line-height: 1.8; }
+    a { color: #64B5F6; }
+    .version { color: #888; font-size: 0.9em; }
+    .features { text-align: left; columns: 2; }
+    .board-info { display: none; }
+    .board-info.active { display: block; }
+    @media (max-width: 600px) {
+      .features { columns: 1; }
+      .board-btn { min-width: 120px; padding: 10px 14px; }
+    }
+  </style>
+</head>
+<body>
+  <h1>LoRa APRS Tracker - Stable</h1>
+
+  <div class="container">
+    <h2>Select your board</h2>
+    <div class="board-selector">
+      <button class="board-btn active" data-board="t-deck-plus-433">
+        T-Deck Plus 433
+        <div class="board-desc">ESP32-S3 · LVGL UI · 433 MHz</div>
+      </button>
+      <button class="board-btn" data-board="crowpanel-35">
+        CrowPanel 3.5"
+        <div class="board-desc">ESP32-S3 · LVGL UI · 433 MHz</div>
+      </button>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Firmware Installation</h2>
+
+    <div id="board-t-deck-plus-433" class="board-info active">
+      <p>Connect your <strong>T-Deck Plus</strong> via USB and click Install:</p>
+      <esp-web-install-button class="install-btn" manifest="manifest-t-deck-plus-433.json">
+        <button slot="activate">Install T-Deck Plus Firmware</button>
+        <span slot="unsupported">Browser not supported. Use Chrome, Edge, or Chromium.</span>
+        <span slot="not-allowed">USB access not authorized.</span>
+      </esp-web-install-button>
+    </div>
+
+    <div id="board-crowpanel-35" class="board-info">
+      <p>Connect your <strong>CrowPanel Advance 3.5"</strong> via USB and click Install:</p>
+      <esp-web-install-button class="install-btn" manifest="manifest-crowpanel-advance-35.json">
+        <button slot="activate">Install CrowPanel Firmware</button>
+        <span slot="unsupported">Browser not supported. Use Chrome, Edge, or Chromium.</span>
+        <span slot="not-allowed">USB access not authorized.</span>
+      </esp-web-install-button>
+    </div>
+  </div>
+
+  <p style="text-align:center" class="version">Firmware version: <strong>v2.9.3</strong> (Stable - 2026.04.30)</p>
+
+  <div class="warning">
+    <strong>Before installation:</strong>
+    <ul>
+      <li><strong>Documentation:</strong> <a href="https://github.com/moricef/LoRa_APRS_Tracker/blob/main/README_LVGL.md">LVGL UI Guide</a> | <a href="https://github.com/richonguzman/LoRa_APRS_Tracker">GitHub CA2RXU</a></li>
+      <li>Use <strong>Google Chrome</strong>, <strong>Microsoft Edge</strong>, or <strong>Chromium</strong> (Firefox not supported)</li>
+      <li>Connect the board via USB</li>
+      <li>Close PlatformIO / Arduino IDE if open</li>
+      <li>If port is not detected, hold <strong>BOOT</strong> button while plugging USB</li>
+    </ul>
+  </div>
+
+  <h2>LVGL UI Features</h2>
+  <div class="features">
+    <ul>
+      <li>Full touchscreen interface</li>
+      <li>GPS, LoRa, WiFi, Battery dashboard</li>
+      <li>Complete Setup menu</li>
+      <li>APRS / Winlink messages</li>
+      <li>Contact management</li>
+      <li>Physical + virtual keyboard</li>
+      <li>SD card storage</li>
+      <li>APRS symbols</li>
+    </ul>
+  </div>
+
+  <div class="info">
+    <strong>After installation:</strong>
+    <ul>
+      <li>Configure your callsign via Setup menu or web interface</li>
+      <li>Connect to WiFi AP "LoRa-Tracker-AP" for configuration</li>
+    </ul>
+  </div>
+
+  <div class="container">
+    <h2>Support this project</h2>
+    <a href="https://paypal.me/moricef09">
+      <img src="https://github.com/richonguzman/LoRa_APRS_Tracker/raw/main/images/paypalme.png" alt="Donate with PayPal" style="height: 50px;">
+    </a>
+  </div>
+
+  <p style="text-align:center; color:#666; margin-top:40px;">
+    Fork by <a href="https://github.com/moricef/LoRa_APRS_Tracker">moricef</a>
+    | Original project <a href="https://github.com/richonguzman/LoRa_APRS_Tracker">CA2RXU</a>
+  </p>
+
+  <script>
+    const buttons = document.querySelectorAll('.board-btn');
+    const infos = document.querySelectorAll('.board-info');
+
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        buttons.forEach(b => b.classList.remove('active'));
+        infos.forEach(i => i.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('board-' + btn.dataset.board).classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>
