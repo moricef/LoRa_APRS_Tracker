@@ -1,0 +1,15 @@
+{
+  "name": "LoRa APRS Tracker - CrowPanel Advance 3.5\" (Stable)",
+  "version": "2.9.3 (2026-04-30)",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        { "path": "firmware/stable/crowpanel_advance_35/bootloader.bin", "offset": 0 },
+        { "path": "firmware/stable/crowpanel_advance_35/partitions.bin", "offset": 32768 },
+        { "path": "firmware/stable/crowpanel_advance_35/firmware.bin", "offset": 65536 }
+      ]
+    }
+  ]
+}
