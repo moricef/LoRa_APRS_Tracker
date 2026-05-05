@@ -52,8 +52,10 @@ static const char *TAG = "Main";
 #include <WiFi.h>
 #include "smartbeacon_utils.h"
 #include "bluetooth_utils.h"
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include "keyboard_utils.h"
 #include "joystick_utils.h"
+#endif
 #include "sd_logger.h"
 #include "configuration.h"
 #include "battery_utils.h"
@@ -246,7 +248,9 @@ void setup() {
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("Keyboard...");
     #endif
+    #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
     KEYBOARD_Utils::setup();
+#endif
     #ifdef HAS_TOUCHSCREEN
         #ifndef USE_LVGL_UI
             TOUCH_Utils::setup();  // Only use old touch when LVGL not active
@@ -294,7 +298,9 @@ void loop() {
         if (APRSPacketLib::checkNocall(currentBeacon->callsign)) {
             ESP_LOGE(TAG, "Change your callsigns in WebConfig");
             displayShow("ERROR", "Callsigns = NOCALL!", "---> change it !!!", 2000);
+            #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
             KEYBOARD_Utils::rightArrow();
+#endif
             currentBeacon = &Config.beacons[myBeaconsIndex];
         }
         miceActive = APRSPacketLib::validateMicE(currentBeacon->micE);
@@ -313,7 +319,9 @@ void loop() {
     #ifdef BUTTON_PIN
         BUTTON_Utils::loop();
     #endif
+    #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
     KEYBOARD_Utils::read();
+#endif
     #ifdef HAS_JOYSTICK
         JOYSTICK_Utils::loop();
     #endif

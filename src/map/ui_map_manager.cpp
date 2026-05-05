@@ -485,7 +485,11 @@ void create_map_screen() {
     // Canvas buffer = front sprite buffer (zero-copy)
     const size_t spriteBytes = MAP_SPRITE_SIZE * MAP_SPRITE_SIZE * 2;
     if (!backViewportSprite) {
+        #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        backViewportSprite = new LGFX_Sprite(nullptr);
+#else
         backViewportSprite = new LGFX_Sprite(&tft);
+#endif
         backViewportSprite->setPsram(true);
         if (backViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
             ESP_LOGE(TAG, "Failed to create back viewport sprite");
@@ -494,7 +498,11 @@ void create_map_screen() {
         }
     }
     if (!frontViewportSprite) {
+        #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        frontViewportSprite = new LGFX_Sprite(nullptr);
+#else
         frontViewportSprite = new LGFX_Sprite(&tft);
+#endif
         frontViewportSprite->setPsram(true);
         if (frontViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
             ESP_LOGE(TAG, "Failed to create front viewport sprite");
@@ -506,7 +514,11 @@ void create_map_screen() {
     // Initialize the static tile cache pool now that critical sprites are allocated
     // Only if we are not in persistent NAV mode (to avoid reallocating 2MB of raster tiles)
     if (!navModeActive) {
+        #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        MapEngine::initTileCache(nullptr);
+#else
         MapEngine::initTileCache(&tft);
+#endif
     }
     // Point canvas buffer directly at front sprite (no separate allocation)
     if (frontViewportSprite) {

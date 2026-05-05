@@ -31,7 +31,11 @@
 #include <Arduino.h>
 
 #ifdef HAS_TFT
-#if defined(CROWPANEL_ADVANCE_35)
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+// No LGFX device — display via ESP32_Display_Panel, backlight via CH422G
+#include "esp_io_expander.hpp"
+extern esp_expander::CH422G* waveshare_expander;
+#elif defined(CROWPANEL_ADVANCE_35)
 #include "LGFX_CrowPanel_35.h"
 extern LGFX_CrowPanel_35 tft;
 #else

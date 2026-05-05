@@ -10,7 +10,11 @@ static const char *TAG = "LVGL";
 #include <APRSPacketLib.h>
 #include <Arduino.h>
 #include <FS.h>
-#if defined(CROWPANEL_ADVANCE_35)
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+#include <esp_display_panel.hpp>
+#include "lvgl_v8_port.h"
+#include "esp_panel_board_custom_conf.h"
+#elif defined(CROWPANEL_ADVANCE_35)
 #include "LGFX_CrowPanel_35.h"
 #else
 #include "LGFX_TDeck.h"
@@ -110,6 +114,14 @@ bool screenDimmed = false;            // Non-static: accessed by UISettings
 
 // Note: Messages screen is now in UIMessaging module (ui_messaging.cpp)
 
+// Waveshare ESP32_Display_Panel references (used by display.cpp backlight too)
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+using namespace esp_panel::drivers;
+using namespace esp_panel::board;
+static Board* waveshare_board = nullptr;
+esp_expander::CH422G* waveshare_expander = nullptr;
+#endif
+
 // Brightness range constants (PWM values)
 static const uint8_t BRIGHT_MIN = 50;
 static const uint8_t BRIGHT_MAX = 255;
@@ -121,7 +133,8 @@ uint32_t last_tick = 0;  // Non-static: accessed by UISettings for blocking loop
 // Track if LVGL display is already initialized
 static bool lvgl_display_initialized = false;
 
-// Display flush callback
+// Display flush callback (not used on Waveshare — lvgl_v8_port handles it)
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
 // Note: pushImageDMA() cannot be used here because LVGL draw buffers are in PSRAM
 // (ps_malloc), and ESP32 SPI DMA requires source buffers in internal SRAM.
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
@@ -135,7 +148,7 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
     lv_disp_flush_ready(drv);
 }
 
-// Touch read callback
+// Touch read callback (not used on Waveshare — lvgl_v8_port handles it)
 static uint32_t lastTouchDebug = 0;
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
   uint16_t x, y;
@@ -172,6 +185,7 @@ static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     data->state = LV_INDEV_STATE_REL;
   }
 }
+#endif // !WAVESHARE_S3_TOUCH_LCD_7
 
 // Note: Setup, Freq, Speed, Callsign, Display, Sound, WiFi, Bluetooth screens
 // are now in UISettings module (ui_settings.cpp)
@@ -217,6 +231,43 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 #endif
 
   void initLvglDisplay() {
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    if (lvgl_display_initialized) return;
+
+    // Load saved brightness
+    STATION_Utils::loadIndex(2);
+    if (screenBrightness < BRIGHT_MIN) screenBrightness = BRIGHT_MIN;
+    if (screenBrightness > BRIGHT_MAX) screenBrightness = BRIGHT_MAX;
+
+    // Initialize board (LCD, touch, backlight, CH422G)
+    waveshare_board = new Board();
+    waveshare_board->init();
+
+    auto lcd = waveshare_board->getLCD();
+    lcd->configFrameBufferNumber(LVGL_PORT_DISP_BUFFER_NUM);
+#if ESP_PANEL_DRIVERS_BUS_ENABLE_RGB
+    auto lcd_bus = lcd->getBus();
+    if (lcd_bus->getBasicAttributes().type == ESP_PANEL_BUS_TYPE_RGB) {
+        static_cast<BusRGB*>(lcd_bus)->configRGB_BounceBufferSize(lcd->getFrameWidth() * 10);
+    }
+#endif
+    assert(waveshare_board->begin());
+
+    // Store expander ref for backlight control (used by display.cpp)
+    waveshare_expander = static_cast<esp_expander::CH422G*>(
+        waveshare_board->getIO_Expander()->getBase());
+
+    // Display brightness via CH422G on/off (expander pin 2 = DISP)
+    if (waveshare_expander && screenBrightness > 0) {
+        waveshare_expander->digitalWrite(2, 1);  // Backlight ON
+    }
+
+    // Initialize LVGL port (handles lv_init, disp_drv, indev_drv, timer task)
+    lvgl_port_init(lcd, waveshare_board->getTouch());
+
+    lvgl_display_initialized = true;
+    ESP_LOGI(TAG, "Display initialized (ESP32_Display_Panel)");
+#else
     if (spiMutex == NULL) {
       spiMutex = xSemaphoreCreateRecursiveMutex();
     }
@@ -271,6 +322,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
       }
       lvgl_display_initialized = true;
     }
+#endif // WAVESHARE_S3_TOUCH_LCD_7
   }
 
   void showSplashScreen(uint8_t loraIndex, const char *version) {
@@ -308,6 +360,9 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 #if defined(CROWPANEL_ADVANCE_35)
     lv_img_set_zoom(logo, 384); // 256 is 1x, 384 is 1.5x
     lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, 50);
+#elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_img_set_zoom(logo, 512); // 2x for 800px wide display
+    lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, 60);
 #else
     lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, 30);
 #endif
@@ -320,6 +375,8 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_18, 0);
 #if defined(CROWPANEL_ADVANCE_35)
     lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 160);
+#elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 240);
 #else
     lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 115);
 #endif
@@ -351,6 +408,8 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
                                 0); // Blue to match LoRa logo
 #if defined(CROWPANEL_ADVANCE_35)
     lv_obj_align(freq_label, LV_ALIGN_CENTER, 0, 70);
+#elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_align(freq_label, LV_ALIGN_CENTER, 0, 120);
 #else
     lv_obj_align(freq_label, LV_ALIGN_CENTER, 0, 40);
 #endif
@@ -364,6 +423,8 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
                                 0); // Red to match APRS logo
 #if defined(CROWPANEL_ADVANCE_35)
     lv_obj_align(ver_label, LV_ALIGN_BOTTOM_MID, 0, -60);
+#elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_align(ver_label, LV_ALIGN_BOTTOM_MID, 0, -100);
 #else
     lv_obj_align(ver_label, LV_ALIGN_BOTTOM_MID, 0, -50);
 #endif
@@ -400,6 +461,8 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     lv_obj_set_style_text_font(init_status_label, &lv_font_montserrat_14, 0);
 #if defined(CROWPANEL_ADVANCE_35)
     lv_obj_align(init_status_label, LV_ALIGN_BOTTOM_MID, 0, -15);
+#elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_align(init_status_label, LV_ALIGN_BOTTOM_MID, 0, -30);
 #else
     lv_obj_align(init_status_label, LV_ALIGN_BOTTOM_MID, 0, -10);
 #endif
@@ -448,6 +511,10 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
     // Only initialize display if not already done by splash screen
     if (!lvgl_display_initialized) {
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+      // Waveshare: init via ESP32_Display_Panel + lvgl_port_init
+      initLvglDisplay();
+#else
 // Set backlight with saved brightness
       displaySetBrightness(screenBrightness);
 
@@ -491,16 +558,19 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
           (buf2 != nullptr) ? 1 : 0; // Full refresh if double buffered
       lv_disp_drv_register(&disp_drv);
       lvgl_display_initialized = true;
+#endif // WAVESHARE_S3_TOUCH_LCD_7
     } else {
       ESP_LOGD(TAG, "Display already initialized by splash screen");
     }
 
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
     // Initialize touch input (GT911 managed natively by LovyanGFX)
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = touch_read_cb;
     lv_indev_drv_register(&indev_drv);
     ESP_LOGI(TAG, "Touch input registered (LGFX native GT911)");
+#endif
 
     // Create the UI (dashboard module)
     UIDashboard::createDashboard();
@@ -531,11 +601,13 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
   static String last_callsign = "";
 
   void loop() {
-    // Update LVGL tick
+    // Update LVGL tick (managed by lvgl_v8_port esp_timer on Waveshare)
     uint32_t now = millis();
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
     uint32_t elapsed = now - last_tick;
     lv_tick_inc(elapsed);
     last_tick = now;
+#endif
 
 #ifdef DEBUG
     // Debug heartbeat every 5 seconds
@@ -548,8 +620,10 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     }
 #endif
 
-    // Handle LVGL tasks
+    // Handle LVGL tasks (lvgl_v8_port task handles this on Waveshare)
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
     lv_timer_handler();
+#endif
 
     // Check if Web-Conf was requested from Settings (deferred to avoid reentrancy)
     UISettings::checkPendingWebConf();
@@ -563,7 +637,13 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
           Config.display.timeout * 1000; // Config is in seconds
       if (currentTime - lastActivityTime >= ecoTimeoutMs) {
         screenDimmed = true;
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        if (waveshare_expander) {
+          waveshare_expander->digitalWrite(2, 0); // Backlight OFF via CH422G
+        }
+#else
         tft.setBrightness(0); // Turn off backlight
+#endif
         // Reduce CPU to 80 MHz if on map screen
         if (lv_scr_act() == MapState::screen_map) {
           setCpuFrequencyMhz(80);

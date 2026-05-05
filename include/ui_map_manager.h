@@ -21,7 +21,9 @@ class Configuration;
 // External data sources from lvgl_ui.cpp and other global variables
 extern gps_fix gpsFix;
 extern Configuration Config;
-#if defined(CROWPANEL_ADVANCE_35)
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    // No LGFX device — sprite-only mode (display via ESP32_Display_Panel)
+#elif defined(CROWPANEL_ADVANCE_35)
     #include "LGFX_CrowPanel_35.h"
     extern LGFX_CrowPanel_35 tft;
 #else
@@ -37,7 +39,10 @@ extern SemaphoreHandle_t spiMutex; // Declared extern for SPI bus mutex access
 #define MAP_TILES_GRID     3
 #define MAP_SPRITE_SIZE    (MAP_TILES_GRID * MAP_TILE_SIZE)  // 768 = 3×256
 // Dimensions de l'affichage
-#if defined(CROWPANEL_ADVANCE_35)
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+#define SCREEN_WIDTH  800
+#define SCREEN_HEIGHT 480
+#elif defined(CROWPANEL_ADVANCE_35)
 #define SCREEN_WIDTH  480
 #define SCREEN_HEIGHT 320
 #else

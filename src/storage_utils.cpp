@@ -19,6 +19,9 @@
 #include <SPIFFS.h>
 #include <SD.h>
 #include <SPI.h>
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+#include "esp_io_expander.hpp"
+#endif
 #include <vector>
 #include <algorithm>
 #include <ArduinoJson.h>
@@ -99,7 +102,28 @@ namespace STORAGE_Utils {
 
         #ifdef BOARD_SDCARD_CS
             bool sdMounted = false;
-            #if defined(CROWPANEL_ADVANCE_35)
+            #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+                // SD via dedicated SPI + CH422G expander CS pin 4
+                extern esp_expander::CH422G* waveshare_expander;
+                if (waveshare_expander) {
+                    waveshare_expander->pinMode(4, OUTPUT);
+                    waveshare_expander->digitalWrite(4, HIGH);
+                }
+                SPIClass sdSPI(FSPI);
+                sdSPI.begin(BOARD_SDCARD_SCK, BOARD_SDCARD_MISO, BOARD_SDCARD_MOSI);
+                sdMounted = SD.begin(BOARD_SDCARD_CS, sdSPI, 20000000);
+                if (!sdMounted) {
+                    ESP_LOGW(TAG, "SD init @20MHz failed, retry @10MHz");
+                    sdMounted = SD.begin(BOARD_SDCARD_CS, sdSPI, 10000000);
+                }
+                if (!sdMounted) {
+                    ESP_LOGW(TAG, "SD init @10MHz failed, retry @4MHz");
+                    sdMounted = SD.begin(BOARD_SDCARD_CS, sdSPI, 4000000);
+                }
+                if (sdMounted && waveshare_expander) {
+                    waveshare_expander->digitalWrite(4, LOW);
+                }
+            #elif defined(CROWPANEL_ADVANCE_35)
                 // CrowPanel uses a different SPI bus for SD card
                 static SPIClass sdSPI(HSPI);
                 sdSPI.begin(BOARD_SDCARD_SCK, BOARD_SDCARD_MISO, BOARD_SDCARD_MOSI, BOARD_SDCARD_CS);
