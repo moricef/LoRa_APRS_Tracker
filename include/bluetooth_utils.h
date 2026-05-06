@@ -19,6 +19,7 @@
 #ifndef BLUETOOTH_UTILS_H
 #define BLUETOOTH_UTILS_H
 
+#ifdef HAS_BT_CLASSIC
 #include <BluetoothSerial.h>
 
 namespace BLUETOOTH_Utils {
@@ -30,5 +31,7 @@ namespace BLUETOOTH_Utils {
     void sendToPhone(const String& packet);
   
 }
+
+#endif  // HAS_BT_CLASSIC
 
 #endif

@@ -16,6 +16,8 @@
  * along with LoRa APRS Tracker. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#ifdef HAS_BT_CLASSIC
+
 #ifdef UNIT_TEST
 #include "mock_esp_log.h"
 #else
@@ -140,5 +142,7 @@ namespace BLUETOOTH_Utils {
             }
         }
     }
-  
+
 }
+
+#endif  // HAS_BT_CLASSIC
