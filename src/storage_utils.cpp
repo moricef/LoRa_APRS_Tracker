@@ -19,6 +19,8 @@
 #include <SPIFFS.h>
 #include <SD.h>
 #include <SPI.h>
+#include "board_pinout.h"
+#include "display.h"
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include "esp_io_expander.hpp"
 #endif
@@ -104,7 +106,6 @@ namespace STORAGE_Utils {
             bool sdMounted = false;
             #if defined(WAVESHARE_S3_TOUCH_LCD_7)
                 // SD via dedicated SPI + CH422G expander CS pin 4
-                extern esp_expander::CH422G* waveshare_expander;
                 if (waveshare_expander) {
                     waveshare_expander->pinMode(4, OUTPUT);
                     waveshare_expander->digitalWrite(4, HIGH);

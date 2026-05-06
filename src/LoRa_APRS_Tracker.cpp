@@ -50,6 +50,9 @@ static const char *TAG = "Main";
 #include <NMEAGPS.h>
 #include <Arduino.h>
 #include <WiFi.h>
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+#include <Network.h>
+#endif
 #include "smartbeacon_utils.h"
 #ifdef HAS_BT_CLASSIC
 #include "bluetooth_utils.h"
