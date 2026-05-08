@@ -10,13 +10,21 @@ static const char *TAG = "LVGL";
 #include <APRSPacketLib.h>
 #include "display.h"
 #include <Arduino.h>
+#if defined(CROWPANEL_ADVANCE_35)
+#include "LGFX_CrowPanel_35.h"
+#elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+#include "LGFX_Waveshare7.h"
+#else
 #include "LGFX_TDeck.h"
+#endif
 #include <NMEAGPS.h>
 #include "gps_utils.h"
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <lvgl.h>
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
 #define TOUCH_MODULES_GT911
+#endif
 #include "battery_utils.h"
 #include "display.h"
 #include "ble_utils.h"
@@ -34,7 +42,9 @@ static const char *TAG = "LVGL";
 #include "storage_utils.h"
 #include "utils.h"
 #include "wifi_utils.h"
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include <TouchLib.h>
+#endif
 #include <Wire.h>
 #include <algorithm> // For std::sort
 #include <freertos/FreeRTOS.h>
@@ -100,6 +110,9 @@ extern int mapStationsCount; // Station counter for the map
 #if defined(CROWPANEL_ADVANCE_35)
 #define SCREEN_WIDTH 480
 #define SCREEN_HEIGHT 320
+#elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 480
 #else
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -113,8 +126,10 @@ extern int mapStationsCount; // Station counter for the map
 extern uint8_t touchModuleAddress;
 
 // Touch controller - static instance, initialized in setup()
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
 static TouchLib touch(Wire, BOARD_I2C_SDA, BOARD_I2C_SCL, 0x00);
 static bool touchInitialized = false;
+#endif
 
 // Touch calibration (same as touch_utils.cpp)
 static const int16_t xCalibratedMin = 5;
@@ -168,6 +183,38 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 // Touch read callback
 static uint32_t lastTouchDebug = 0;
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+  // LGFX native GT911 touch
+  uint16_t x, y;
+  if (tft.getTouch(&x, &y)) {
+    data->state = LV_INDEV_STATE_PR;
+    data->point.x = x;
+    data->point.y = y;
+
+    lastActivityTime = millis();
+    displaySetBrightness(screenBrightness);
+
+    if (screenDimmed) {
+      screenDimmed = false;
+      if (lv_scr_act() == MapState::screen_map) {
+        setCpuFrequencyMhz(240);
+        ESP_LOGI(TAG, "Screen woken up, CPU boosted to %d MHz (map)", getCpuFrequencyMhz());
+        UIMapManager::redraw_map_canvas();
+      } else {
+        ESP_LOGI(TAG, "Screen woken up by touch");
+      }
+      SD_Logger::logScreenState(false);
+    }
+
+    if (millis() - lastTouchDebug > 500) {
+      ESP_LOGD(TAG, "Touch x=%d y=%d", x, y);
+      lastTouchDebug = millis();
+    }
+  } else {
+    data->state = LV_INDEV_STATE_REL;
+  }
+#else
+  // TouchLib GT911 touch
   if (touchInitialized && touch.read()) {
     TP_Point t = touch.getPoint(0);
     // X and Y are swapped and Y is inverted because TFT screen is rotated
@@ -185,7 +232,7 @@ static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     // Always reassert backlight on touch — guards against LEDC channel loss
     // (GPIO 42 shared between LovyanGFX Light_PWM and Arduino analogWrite)
     displaySetBrightness(screenBrightness);
-    
+
     if (screenDimmed) {
       screenDimmed = false;
 
@@ -210,6 +257,7 @@ static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
   } else {
     data->state = LV_INDEV_STATE_REL;
   }
+#endif
 }
 
 // Note: Setup, Freq, Speed, Callsign, Display, Sound, WiFi, Bluetooth screens
@@ -273,24 +321,61 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     if (screenBrightness > BRIGHT_MAX)
       screenBrightness = BRIGHT_MAX;
 
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    // Init I2C and CH422G expander (LCD_RST, TP_RST) before LGFX
+    Wire.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
+    tft.ch422g_begin();
+    delay(10);
+    tft.ch422g_pin_write(3, 1); // LCD_RST high
+    delay(100);
+    // TP_RST pulse (CH422G pin 1, with GPIO4 interrupt)
+    pinMode(4, OUTPUT);
+    digitalWrite(4, LOW);
+    delay(10);
+    tft.ch422g_pin_write(1, 0);
+    delay(100);
+    tft.ch422g_pin_write(1, 1);
+    delay(200);
+    pinMode(4, INPUT); // release for touch interrupt
+#endif
+
     // Init TFT
     tft.init();
     #if defined(CROWPANEL_ADVANCE_35)
     tft.setRotation(3); // Adjust for Crowpanel orientation
+    #elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+    tft.setRotation(0); // Default landscape
     #else
     tft.setRotation(1);
     #endif
     tft.fillScreen(TFT_BLACK); // Clear to black before showing anything
 
-// Now turn on backlight with saved brightness
-  displaySetBrightness(screenBrightness);
+// Turn on backlight
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    if (screenBrightness > 0) tft.ch422g_pin_write(2, 1);
+    // DIAGNOSTIC: static red screen for 5s to test Bus_RGB stability without LVGL
+    tft.fillScreen(TFT_RED);
+    ESP_LOGI("DIAG", "RED screen displayed — watch for 5 seconds");
+    delay(5000);
+    tft.fillScreen(TFT_GREEN);
+    ESP_LOGI("DIAG", "GREEN screen displayed — watch for 5 seconds");
+    delay(5000);
+    tft.fillScreen(TFT_BLACK);
+    ESP_LOGI("DIAG", "Diagnostic done, proceeding to LVGL init");
+#else
+    displaySetBrightness(screenBrightness);
+#endif
 
     // Initialize LVGL if not already done
     if (!lvgl_display_initialized) {
       lv_init();
 
-// Allocate display buffers in PSRAM
-#ifdef BOARD_HAS_PSRAM
+// Allocate display buffers
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+      // Full-screen double buffering + VSYNC sync avoids tearing on RGB panel
+      buf1 = (lv_color_t *)ps_malloc(SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(lv_color_t));
+      buf2 = (lv_color_t *)ps_malloc(SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(lv_color_t));
+#elif defined(BOARD_HAS_PSRAM)
       buf1 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
       buf2 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
 #else
@@ -299,7 +384,11 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 #endif
 
       if (buf1) {
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        lv_disp_draw_buf_init(&draw_buf, buf1, buf2, SCREEN_WIDTH * SCREEN_HEIGHT);
+#else
         lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LVGL_BUF_SIZE);
+#endif
         lv_disp_drv_init(&disp_drv);
         disp_drv.hor_res = SCREEN_WIDTH;
         disp_drv.ver_res = SCREEN_HEIGHT;
@@ -466,12 +555,18 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     // Only initialize display if not already done by splash screen
     if (!lvgl_display_initialized) {
 // Set backlight with saved brightness
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+      if (screenBrightness > 0) tft.ch422g_pin_write(2, 1);
+#else
       displaySetBrightness(screenBrightness);
+#endif
 
       // Re-init TFT for LVGL
       tft.init();
       #if defined(CROWPANEL_ADVANCE_35)
       tft.setRotation(3); // Adjust for Crowpanel orientation
+      #elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+      tft.setRotation(0); // Default landscape
       #else
       tft.setRotation(1); // Landscape, keyboard at bottom
       #endif
@@ -513,6 +608,14 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     }
 
     // Initialize touch input
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    // GT911 managed natively by LovyanGFX (initialized in tft.init())
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.type = LV_INDEV_TYPE_POINTER;
+    indev_drv.read_cb = touch_read_cb;
+    lv_indev_drv_register(&indev_drv);
+    ESP_LOGI(TAG, "Touch input registered (LGFX native GT911)");
+#else
     if (touchModuleAddress != 0x00) {
       ESP_LOGI(TAG, "Touch module found at 0x%02X",
                     touchModuleAddress);
@@ -535,6 +638,8 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     } else {
       ESP_LOGW(TAG, "No touch module detected");
     }
+#endif // !WAVESHARE
+
 
     // Create the UI (dashboard module)
     UIDashboard::createDashboard();
@@ -597,7 +702,11 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
           Config.display.timeout * 1000; // Config is in seconds
       if (currentTime - lastActivityTime >= ecoTimeoutMs) {
         screenDimmed = true;
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        tft.ch422g_pin_write(2, 0); // Backlight OFF via CH422G
+#else
         tft.setBrightness(0); // Turn off backlight
+#endif
         // Reduce CPU to 80 MHz if on map screen
         if (lv_scr_act() == MapState::screen_map) {
           setCpuFrequencyMhz(80);
