@@ -6,12 +6,6 @@
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 
-// CH422G I2C expander (shared bus with GT911: SDA=8, SCL=9)
-#define CH422G_ADDR     0x20
-#define CH422G_REG_SET  0x24  // WR_SET: bit0=IO_OE, bit2=OD_EN
-#define CH422G_REG_OC   0x23  // WR_OC: open-drain config
-#define CH422G_REG_IO   0x38  // WR_IO: output state
-
 // Waveshare ESP32-S3-Touch-LCD-7
 // ST7262 RGB 16-bit 800x480 + GT911 I2C touch + CH422G expander
 class LGFX_Waveshare7 : public lgfx::LGFX_Device
@@ -21,8 +15,6 @@ class LGFX_Waveshare7 : public lgfx::LGFX_Device
     lgfx::Touch_GT911     _touch_instance;
 
 public:
-    uint8_t _ch422g_io_state = 0;
-
     LGFX_Waveshare7(void)
     {
         // RGB bus (ST7262 800x480 16-bit)
@@ -48,8 +40,8 @@ public:
             cfg.hsync_back_porch  = 8;
             cfg.hsync_front_porch = 8;
             cfg.vsync_pulse_width = 4;
-            cfg.vsync_back_porch  = 16;
-            cfg.vsync_front_porch = 16;
+            cfg.vsync_back_porch  = 8;
+            cfg.vsync_front_porch = 8;
             cfg.pclk_active_neg = 1;
 
             _bus_instance.config(cfg);
@@ -66,6 +58,13 @@ public:
             cfg.offset_x = 0;
             cfg.offset_y = 0;
             _panel_instance.config(cfg);
+        }
+
+        // Allocate internal framebuffer in PSRAM (768 KB — won't fit in DRAM)
+        {
+            auto cfg = _panel_instance.config_detail();
+            cfg.use_psram = 1;
+            _panel_instance.config_detail(cfg);
         }
 
         // Touch GT911 (I2C addr 0x5D, shared bus with CH422G)
@@ -92,24 +91,6 @@ public:
         setPanel(&_panel_instance);
     }
 
-    // CH422G expander helpers
-
-    void ch422g_begin() {
-        Wire.beginTransmission(CH422G_ADDR);
-        Wire.write(CH422G_REG_SET);
-        Wire.write(0x01);  // IO_OE = 1 (all outputs)
-        Wire.endTransmission();
-        _ch422g_io_state = 0x00;
-    }
-
-    void ch422g_pin_write(uint8_t pin, uint8_t level) {
-        if (level) _ch422g_io_state |= (1 << pin);
-        else       _ch422g_io_state &= ~(1 << pin);
-        Wire.beginTransmission(CH422G_ADDR);
-        Wire.write(CH422G_REG_IO);
-        Wire.write(_ch422g_io_state);
-        Wire.endTransmission();
-    }
 };
 
 #endif // LGFX_WAVESHARE7_H_

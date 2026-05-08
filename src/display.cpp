@@ -26,6 +26,9 @@ static const char *TAG = "Display";
 #include "station_utils.h"
 #include "board_pinout.h"
 #include "display.h"
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+#include "ch422g.h"
+#endif
 #include "TimeLib.h"
 
 
@@ -257,7 +260,7 @@ bool        symbolAvailable         = true;
 
 void displaySetBrightness(uint8_t value) {
     #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    tft.ch422g_pin_write(2, value > 0 ? 1 : 0);
+    if (value > 0) ch422g_backlight_on(); else ch422g_backlight_off();
     #else
     tft.setBrightness(value);
     #endif
@@ -330,7 +333,7 @@ void displayToggle(bool toggle) {
         displaySetBrightness(screenBrightness);
     } else {
         #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-        tft.ch422g_pin_write(2, 0);
+        ch422g_backlight_off();
         #else
         tft.setBrightness(0);
         #endif

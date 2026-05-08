@@ -26,6 +26,7 @@
 #include <esp_log.h>
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include "display.h"
+#include "ch422g.h"
 #endif
 #include <sys/stat.h>
 #include <esp_vfs_fat.h>
@@ -127,14 +128,14 @@ namespace STORAGE_Utils {
         #ifdef BOARD_SDCARD_CS
             #if defined(WAVESHARE_S3_TOUCH_LCD_7)
             // SD via dedicated SPI + CH422G expander CS pin 4
-            tft.ch422g_pin_write(4, 1); // SD CS high (deselected)
+            ch422g_pin_write(4, 1); // SD CS high (deselected)
             SPIClass sdSPI(FSPI);
             sdSPI.begin(BOARD_SDCARD_SCK, BOARD_SDCARD_MISO, BOARD_SDCARD_MOSI);
             bool sdOk = SD.begin(BOARD_SDCARD_CS, sdSPI, 20000000);
             if (!sdOk) { sdOk = SD.begin(BOARD_SDCARD_CS, sdSPI, 10000000); }
             if (!sdOk) { sdOk = SD.begin(BOARD_SDCARD_CS, sdSPI, 4000000); }
             if (sdOk) {
-                tft.ch422g_pin_write(4, 0); // SD CS low (active)
+                ch422g_pin_write(4, 0); // SD CS low (active)
                 sdAvailable = true;
                 uint8_t cardType = SD.cardType();
                 if (cardType == CARD_NONE) {

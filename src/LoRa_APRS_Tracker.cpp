@@ -190,8 +190,7 @@ void setup() {
     #endif
     #if defined(WAVESHARE_S3_TOUCH_LCD_7)
         // CH422G expander (SD CS) must be ready before SD card init
-        Wire.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
-        tft.ch422g_begin();
+        // I2C already initialized by ch422g_init_hw() in splash screen
     #endif
     STORAGE_Utils::setup();        // Formats LittleFS on first boot
     Config.init();                 // Now LittleFS is ready, load or create config

@@ -14,6 +14,8 @@ static const char *TAG = "LVGL";
 #include "LGFX_CrowPanel_35.h"
 #elif defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include "LGFX_Waveshare7.h"
+#include "ch422g.h"
+uint8_t _ch422g_io_state = 0;
 #else
 #include "LGFX_TDeck.h"
 #endif
@@ -167,18 +169,19 @@ uint32_t last_tick = 0;  // Non-static: accessed by UISettings for blocking loop
 static bool lvgl_display_initialized = false;
 
 // Display flush callback
-// Note: pushImageDMA() cannot be used here because LVGL draw buffers are in PSRAM
-// (ps_malloc), and ESP32 SPI DMA requires source buffers in internal SRAM.
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
                           lv_color_t *color_p) {
     uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    tft.pushImage(area->x1, area->y1, w, h, (uint16_t *)color_p);
+#else
+    // SPI panels: mutex required (shared SPI bus with LoRa/SD)
+    // Note: pushImageDMA not used — LVGL buffers are in PSRAM, SPI DMA requires SRAM source
     if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
         tft.pushImage(area->x1, area->y1, w, h, (uint16_t *)color_p);
         xSemaphoreGiveRecursive(spiMutex);
     }
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    tft.waitDisplay();
 #endif
     lv_disp_flush_ready(drv);
 }
@@ -325,21 +328,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
       screenBrightness = BRIGHT_MAX;
 
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    // Init I2C and CH422G expander (LCD_RST, TP_RST) before LGFX
-    Wire.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
-    tft.ch422g_begin();
-    delay(10);
-    tft.ch422g_pin_write(3, 1); // LCD_RST high
-    delay(100);
-    // TP_RST pulse (CH422G pin 1, with GPIO4 interrupt)
-    pinMode(4, OUTPUT);
-    digitalWrite(4, LOW);
-    delay(10);
-    tft.ch422g_pin_write(1, 0);
-    delay(100);
-    tft.ch422g_pin_write(1, 1);
-    delay(200);
-    pinMode(4, INPUT); // release for touch interrupt
+    ch422g_init_hw();
 #endif
 
     // Init TFT
@@ -351,20 +340,12 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     #else
     tft.setRotation(1);
     #endif
-    tft.fillScreen(TFT_BLACK); // Clear to black before showing anything
+    tft.startWrite();
+    tft.fillScreen(TFT_BLACK);
 
 // Turn on backlight
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    if (screenBrightness > 0) tft.ch422g_pin_write(2, 1);
-    // DIAGNOSTIC: static red screen for 5s to test Bus_RGB stability without LVGL
-    tft.fillScreen(TFT_RED);
-    ESP_LOGI("DIAG", "RED screen displayed — watch for 5 seconds");
-    delay(5000);
-    tft.fillScreen(TFT_GREEN);
-    ESP_LOGI("DIAG", "GREEN screen displayed — watch for 5 seconds");
-    delay(5000);
-    tft.fillScreen(TFT_BLACK);
-    ESP_LOGI("DIAG", "Diagnostic done, proceeding to LVGL init");
+    if (screenBrightness > 0) ch422g_backlight_on();
 #else
     displaySetBrightness(screenBrightness);
 #endif
@@ -374,11 +355,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
       lv_init();
 
 // Allocate display buffers
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-      // Full-screen double buffering + VSYNC sync avoids tearing on RGB panel
-      buf1 = (lv_color_t *)ps_malloc(SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(lv_color_t));
-      buf2 = (lv_color_t *)ps_malloc(SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(lv_color_t));
-#elif defined(BOARD_HAS_PSRAM)
+#if defined(BOARD_HAS_PSRAM)
       buf1 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
       buf2 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
 #else
@@ -387,11 +364,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 #endif
 
       if (buf1) {
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-        lv_disp_draw_buf_init(&draw_buf, buf1, buf2, SCREEN_WIDTH * SCREEN_HEIGHT);
-#else
         lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LVGL_BUF_SIZE);
-#endif
         lv_disp_drv_init(&disp_drv);
         disp_drv.hor_res = SCREEN_WIDTH;
         disp_drv.ver_res = SCREEN_HEIGHT;
@@ -559,7 +532,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     if (!lvgl_display_initialized) {
 // Set backlight with saved brightness
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-      if (screenBrightness > 0) tft.ch422g_pin_write(2, 1);
+      if (screenBrightness > 0) ch422g_backlight_on();
 #else
       displaySetBrightness(screenBrightness);
 #endif
@@ -706,7 +679,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
       if (currentTime - lastActivityTime >= ecoTimeoutMs) {
         screenDimmed = true;
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-        tft.ch422g_pin_write(2, 0); // Backlight OFF via CH422G
+        ch422g_backlight_off();
 #else
         tft.setBrightness(0); // Turn off backlight
 #endif
