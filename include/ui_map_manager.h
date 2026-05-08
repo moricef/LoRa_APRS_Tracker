@@ -10,7 +10,13 @@
 #include <lvgl.h>
 #include <Arduino.h>
 #include <NMEAGPS.h>
+#if defined(CROWPANEL_ADVANCE_35)
+#include "LGFX_CrowPanel_35.h"
+#elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+#include "LGFX_Waveshare7.h"
+#else
 #include "LGFX_TDeck.h"
+#endif
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include "map_state.h"
@@ -37,8 +43,16 @@ extern SemaphoreHandle_t spiMutex; // Declared extern for SPI bus mutex access
 #define MAP_MARGIN_Y  ((MAP_SPRITE_SIZE - MAP_VISIBLE_HEIGHT) / 2) // 284
 
 // Dimensions de l'affichage
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+#define SCREEN_WIDTH  800
+#define SCREEN_HEIGHT 480
+#elif defined(CROWPANEL_ADVANCE_35)
+#define SCREEN_WIDTH  480
+#define SCREEN_HEIGHT 320
+#else
 #define SCREEN_WIDTH  320
 #define SCREEN_HEIGHT 240
+#endif
 
 namespace UIMapManager {
 

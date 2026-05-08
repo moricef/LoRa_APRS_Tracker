@@ -35,6 +35,9 @@
     #if defined(CROWPANEL_ADVANCE_35)
         #include "LGFX_CrowPanel_35.h"
         extern LGFX_CrowPanel_35 tft;
+    #elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+        #include "LGFX_Waveshare7.h"
+        extern LGFX_Waveshare7 tft;
     #else
         #include "LGFX_TDeck.h"
         extern LGFX_TDeck tft;

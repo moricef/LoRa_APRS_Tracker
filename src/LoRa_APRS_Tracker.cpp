@@ -49,11 +49,14 @@ static const char *TAG = "Main";
 #include <esp_task_wdt.h>
 #include <NMEAGPS.h>
 #include <Arduino.h>
+#include <Wire.h>
 #include <WiFi.h>
 #include "smartbeacon_utils.h"
 #include "bluetooth_utils.h"
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include "keyboard_utils.h"
 #include "joystick_utils.h"
+#endif
 #include "sd_logger.h"
 #include "configuration.h"
 #include "battery_utils.h"
@@ -185,6 +188,11 @@ void setup() {
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("Storage...");
     #endif
+    #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        // CH422G expander (SD CS) must be ready before SD card init
+        Wire.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
+        tft.ch422g_begin();
+    #endif
     STORAGE_Utils::setup();        // Formats LittleFS on first boot
     Config.init();                 // Now LittleFS is ready, load or create config
     STORAGE_Utils::loadStats();
@@ -202,14 +210,22 @@ void setup() {
     TraceSD::clearPreviousTrace();
         LVGL_UI::updateInitStatus("GPS...");
     #endif
-    GPS_Utils::setup();
+    #if defined(LORA_ON_C3)
+        ESP_LOGI(TAG, "GPS on C3 co-processor, skipping UART init");
+    #else
+        GPS_Utils::setup();
+    #endif
 
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("LoRa...");
     #endif
     currentLoRaType = &Config.loraTypes[loraIndex];
-    LoRa_Utils::setup();
-    ESP_LOGI(TAG, "LoRa setup bypassed/done");
+    #if defined(LORA_ON_C3)
+        ESP_LOGI(TAG, "LoRa on C3 co-processor, skipping SPI init");
+    #else
+        LoRa_Utils::setup();
+    #endif
+    ESP_LOGI(TAG, "LoRa setup done");
 
     // Utils::i2cScannerForPeripherals(); // TEMPORARILY DISABLED
     ESP_LOGI(TAG, "I2C Scanner bypassed");
@@ -224,7 +240,9 @@ void setup() {
     #ifdef HAS_JOYSTICK
         JOYSTICK_Utils::setup();
     #endif
+    #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
     KEYBOARD_Utils::setup();
+    #endif
     #ifdef HAS_TOUCHSCREEN
         #ifndef USE_LVGL_UI
             TOUCH_Utils::setup();  // Only use old touch when LVGL not active
@@ -276,7 +294,9 @@ void loop() {
         if (APRSPacketLib::checkNocall(currentBeacon->callsign)) {
             ESP_LOGE(TAG, "Change your callsigns in WebConfig");
             displayShow("ERROR", "Callsigns = NOCALL!", "---> change it !!!", 2000);
+            #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
             KEYBOARD_Utils::rightArrow();
+            #endif
             currentBeacon = &Config.beacons[myBeaconsIndex];
         }
         miceActive = APRSPacketLib::validateMicE(currentBeacon->micE);
@@ -295,7 +315,9 @@ void loop() {
     #ifdef BUTTON_PIN
         BUTTON_Utils::loop();
     #endif
+    #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
     KEYBOARD_Utils::read();
+    #endif
     #ifdef HAS_JOYSTICK
         JOYSTICK_Utils::loop();
     #endif

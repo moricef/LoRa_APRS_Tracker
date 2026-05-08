@@ -33,6 +33,9 @@ static const char *TAG = "Display";
     #if defined(CROWPANEL_ADVANCE_35)
         #include "LGFX_CrowPanel_35.h"
         LGFX_CrowPanel_35 tft;
+    #elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+        #include "LGFX_Waveshare7.h"
+        LGFX_Waveshare7 tft;
     #else
         #include "LGFX_TDeck.h"
         LGFX_TDeck tft;
@@ -253,13 +256,18 @@ bool        symbolAvailable         = true;
 #endif
 
 void displaySetBrightness(uint8_t value) {
+    #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    tft.ch422g_pin_write(2, value > 0 ? 1 : 0);
+    #else
     tft.setBrightness(value);
+    #endif
 }
 
 void displaySetup() {
     delay(500);
     STATION_Utils::loadIndex(2);    // Screen Brightness value
-    #ifdef HAS_TFT
+    #if defined(HAS_TFT)
+        #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
         tft.init();
         #ifdef BOARD_HAS_PSRAM
             // PSRAM is handled automatically by LovyanGFX
@@ -274,10 +282,11 @@ void displaySetup() {
         tft.fillScreen(TFT_BLACK);
         #if defined(TTGO_T_DECK_GPS) || defined(TTGO_T_DECK_PLUS)
             sprite.createSprite(320,240);
-        #else
+        #elif !defined(WAVESHARE_S3_TOUCH_LCD_7)
             sprite.createSprite(160,80);
         #endif
-    #else
+        #endif // !WAVESHARE
+    #elif !defined(HAS_TFT)
         #ifdef OLED_DISPLAY_HAS_RST_PIN
             pinMode(OLED_RST, OUTPUT);
             digitalWrite(OLED_RST, LOW);
@@ -320,7 +329,11 @@ void displayToggle(bool toggle) {
     if (toggle) {
         displaySetBrightness(screenBrightness);
     } else {
+        #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        tft.ch422g_pin_write(2, 0);
+        #else
         tft.setBrightness(0);
+        #endif
     }
 }
 

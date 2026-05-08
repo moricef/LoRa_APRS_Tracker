@@ -417,11 +417,16 @@ namespace POWER_Utils {
     }
 
     void lowerCpuFrequency() {
+        #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+            // RGB panel DMA reads directly from PSRAM — 80 MHz starves the bus
+            ESP_LOGI(TAG, "CPU frequency kept at %d MHz (RGB panel needs PSRAM bandwidth)", getCpuFrequencyMhz());
+        #else
         if (setCpuFrequencyMhz(80)) {
             ESP_LOGI(TAG, "CPU frequency lowered to %d MHz", getCpuFrequencyMhz());
         } else {
             ESP_LOGW(TAG, "CPU frequency unchanged");
         }
+        #endif
     }
 
     void shutdown() {

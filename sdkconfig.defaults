@@ -21,6 +21,13 @@ CONFIG_COMPILER_CXX_EXCEPTIONS=y
 # AsyncTCP core assignment
 CONFIG_ASYNC_TCP_RUNNING_CORE=0
 
+# CPU frequency 240 MHz (matches setCpuFrequencyMhz in setup)
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+
+# Arduino partition scheme — huge_app for 16MB flash
+CONFIG_ARDUHAL_PARTITION_SCHEME_HUGE_APP=y
+
 # Flash size 16MB (N16R8 module)
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 

@@ -24,6 +24,9 @@
 #include <ArduinoJson.h>
 #include <TimeLib.h>
 #include <esp_log.h>
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+#include "display.h"
+#endif
 #include <sys/stat.h>
 #include <esp_vfs_fat.h>
 #include <dirent.h>
@@ -122,11 +125,37 @@ namespace STORAGE_Utils {
         }
 
         #ifdef BOARD_SDCARD_CS
+            #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+            // SD via dedicated SPI + CH422G expander CS pin 4
+            tft.ch422g_pin_write(4, 1); // SD CS high (deselected)
+            SPIClass sdSPI(FSPI);
+            sdSPI.begin(BOARD_SDCARD_SCK, BOARD_SDCARD_MISO, BOARD_SDCARD_MOSI);
+            bool sdOk = SD.begin(BOARD_SDCARD_CS, sdSPI, 20000000);
+            if (!sdOk) { sdOk = SD.begin(BOARD_SDCARD_CS, sdSPI, 10000000); }
+            if (!sdOk) { sdOk = SD.begin(BOARD_SDCARD_CS, sdSPI, 4000000); }
+            if (sdOk) {
+                tft.ch422g_pin_write(4, 0); // SD CS low (active)
+                sdAvailable = true;
+                uint8_t cardType = SD.cardType();
+                if (cardType == CARD_NONE) {
+                    ESP_LOGW(TAG, "No SD card inserted");
+                    sdAvailable = false;
+                } else {
+                    ESP_LOGI(TAG, "SD card mounted (%s, %lluMB)",
+                        (cardType == CARD_MMC ? "MMC" : (cardType == CARD_SD ? "SDSC" : "SDHC")),
+                        SD.cardSize() / (1024 * 1024));
+                    createDirectoryStructure();
+                    loadFramesFromSD();
+                }
+            } else {
+                ESP_LOGE(TAG, "SD card init failed, using LittleFS");
+                sdAvailable = false;
+            }
+            #else
             // Try to init SD card on shared SPI bus
-            // SD card uses the same SPI as display/LoRa on T-Deck Plus
             SPI.begin(RADIO_SCLK_PIN, RADIO_MISO_PIN, RADIO_MOSI_PIN);
 
-            if (SD.begin(BOARD_SDCARD_CS, SPI, 10000000)) {  // 10 MHz (was 20 MHz)
+            if (SD.begin(BOARD_SDCARD_CS, SPI, 10000000)) {
                 sdAvailable = true;
                 uint8_t cardType = SD.cardType();
 
@@ -147,15 +176,16 @@ namespace STORAGE_Utils {
 
                     // Load last 20 frames from SD into RAM cache
                     loadFramesFromSD();
-                    }
-                    } else {
-                    ESP_LOGE(TAG, "SD card init failed, using LittleFS");
-                    sdAvailable = false;
-                    }
-                    #else
-                    ESP_LOGW(TAG, "No SD card support, using LittleFS");
-                    #endif
-                    }
+                }
+            } else {
+                ESP_LOGE(TAG, "SD card init failed, using LittleFS");
+                sdAvailable = false;
+            }
+            #endif
+        #else
+            ESP_LOGW(TAG, "No SD card support, using LittleFS");
+        #endif
+        }
 
     bool isSDAvailable() {
         return sdAvailable;

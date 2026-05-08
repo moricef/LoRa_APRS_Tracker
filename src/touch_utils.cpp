@@ -24,7 +24,7 @@
 
 static const char *TAG = "Touch";
 
-#ifdef HAS_TOUCHSCREEN
+#if defined(HAS_TOUCHSCREEN) && !defined(WAVESHARE_S3_TOUCH_LCD_7)
 
     #define TOUCH_MODULES_GT911
     #include <TouchLib.h>

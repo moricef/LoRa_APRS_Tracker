@@ -177,6 +177,9 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
         tft.pushImage(area->x1, area->y1, w, h, (uint16_t *)color_p);
         xSemaphoreGiveRecursive(spiMutex);
     }
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    tft.waitDisplay();
+#endif
     lv_disp_flush_ready(drv);
 }
 
