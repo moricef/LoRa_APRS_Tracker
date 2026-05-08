@@ -1,0 +1,113 @@
+diff -ruN orig/Bus.hpp mod/Bus.hpp
+--- orig/Bus.hpp
++++ mod/Bus.hpp
+@@ -71,6 +71,9 @@
+     /// 通信トランザクションを終了する。（ペリフェラルの占有を終了する）;
+     virtual void endTransaction(void) = 0;
+
++    /// フレーム同期用セマフォを取得する。RGBパネル用。
++    virtual void* getVsyncSemaphore(void) const { return nullptr; }
++
+     /// 通信が完了するのを待機する;
+     virtual void wait(void) = 0;
+
+diff -ruN orig/Bus_RGB.hpp mod/Bus_RGB.hpp
+--- orig/Bus_RGB.hpp
++++ mod/Bus_RGB.hpp
+@@ -120,6 +120,9 @@
+     void addDMAQueue(const uint8_t* data, uint32_t length) override {}
+     void execDMAQueue(void) override {}
+     uint8_t* getDMABuffer(uint32_t length) override;
++
++    void* getVsyncSemaphore(void) const override { return (void*)_vsync_sem; }
++    SemaphoreHandle_t _vsync_sem = nullptr;
+
+     void beginRead(void) override {}
+     void endRead(void) override {}
+
+diff -ruN orig/Bus_RGB.cpp mod/Bus_RGB.cpp
+--- orig/Bus_RGB.cpp
++++ mod/Bus_RGB.cpp
+@@ -21,6 +21,7 @@
+ #if __has_include (<esp_lcd_panel_rgb.h>)
+ #include "Bus_RGB.hpp"
+
++#include <freertos/semphr.h>
+ #include <esp_lcd_panel_rgb.h>
+ #include <esp_pm.h>
+ #include <esp_log.h>
+@@ -81,6 +82,11 @@
+       GDMA.channel[me->_dma_ch].out.conf0.out_rst = 0;
+       GDMA.channel[me->_dma_ch].out.link.addr = (uintptr_t)&(me->_dmadesc_restart);
+       GDMA.channel[me->_dma_ch].out.link.start = 1;
++      if (me->_vsync_sem) {
++        portBASE_TYPE task_woken = pdFALSE;
++        xSemaphoreGiveFromISR(me->_vsync_sem, &task_woken);
++        if (task_woken == pdTRUE) portYIELD_FROM_ISR();
++      }
+     }
+   }
+
+@@ -333,6 +339,8 @@
+                                     LCD_LL_EVENT_VSYNC_END, lcd_default_isr_handler, this, &_intr_handle);
+     esp_intr_enable(_intr_handle);
+
++    _vsync_sem = xSemaphoreCreateBinary();
++
+     dev->lcd_user.lcd_update = 1;
+     dev->lcd_user.lcd_start = 1;
+
+diff -ruN orig/Panel_FrameBufferBase.hpp mod/Panel_FrameBufferBase.hpp
+--- orig/Panel_FrameBufferBase.hpp
++++ mod/Panel_FrameBufferBase.hpp
+@@ -31,14 +31,14 @@
+   public:
+
+     bool init(bool use_reset) override;
+-    void beginTransaction(void) override {}
++    void beginTransaction(void) override;
+     void endTransaction(void) override {}
+     void setRotation(uint_fast8_t r) override;
+
+     void initDMA(void) override {}
+     void waitDMA(void) override {}
+     bool dmaBusy(void) override { return false; }
+-    void waitDisplay(void) override {}
++    void waitDisplay(void) override;
+     bool displayBusy(void) override { return false; }
+     color_depth_t setColorDepth(color_depth_t depth) override { _write_depth = depth; _read_depth = depth; return depth; }
+
+diff -ruN orig/Panel_FrameBufferBase.cpp mod/Panel_FrameBufferBase.cpp
+--- orig/Panel_FrameBufferBase.cpp
++++ mod/Panel_FrameBufferBase.cpp
+@@ -17,10 +17,13 @@
+
+ #include "Panel_FrameBufferBase.hpp"
++#include "../Bus.hpp"
+ #include "../platforms/common.hpp"
+ #include "../misc/pixelcopy.hpp"
+ #include "../misc/common_function.hpp"
+
++#include <freertos/semphr.h>
++
+ #if defined (ESP_PLATFORM)
+  #include <sdkconfig.h>
+
+@@ -71,6 +74,18 @@
+   static inline void cacheWriteBack(const void*, uint32_t) {}
+ #endif
+
++  void Panel_FrameBufferBase::beginTransaction(void)
++  {
++  }
++
++  void Panel_FrameBufferBase::waitDisplay(void)
++  {
++    auto sem = _bus->getVsyncSemaphore();
++    if (sem) {
++      xSemaphoreTake((SemaphoreHandle_t)sem, pdMS_TO_TICKS(50));
++    }
++  }
++
+   bool Panel_FrameBufferBase::init(bool use_reset)
+   {
