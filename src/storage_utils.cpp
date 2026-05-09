@@ -27,6 +27,9 @@
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include "display.h"
 #include "ch422g.h"
+#include <driver/sdspi_host.h>
+#include <sdmmc_cmd.h>
+#include <driver/spi_common.h>
 #endif
 #include <sys/stat.h>
 #include <esp_vfs_fat.h>
@@ -127,30 +130,43 @@ namespace STORAGE_Utils {
 
         #ifdef BOARD_SDCARD_CS
             #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-            // SD via dedicated SPI + CH422G expander CS pin 4
-            ch422g_pin_write(4, 1); // SD CS high (deselected)
-            SPIClass sdSPI(FSPI);
-            sdSPI.begin(BOARD_SDCARD_SCK, BOARD_SDCARD_MISO, BOARD_SDCARD_MOSI);
-            bool sdOk = SD.begin(BOARD_SDCARD_CS, sdSPI, 20000000);
-            if (!sdOk) { sdOk = SD.begin(BOARD_SDCARD_CS, sdSPI, 10000000); }
-            if (!sdOk) { sdOk = SD.begin(BOARD_SDCARD_CS, sdSPI, 4000000); }
-            if (sdOk) {
-                ch422g_pin_write(4, 0); // SD CS low (active)
-                sdAvailable = true;
-                uint8_t cardType = SD.cardType();
-                if (cardType == CARD_NONE) {
-                    ESP_LOGW(TAG, "No SD card inserted");
-                    sdAvailable = false;
-                } else {
-                    ESP_LOGI(TAG, "SD card mounted (%s, %lluMB)",
-                        (cardType == CARD_MMC ? "MMC" : (cardType == CARD_SD ? "SDSC" : "SDHC")),
-                        SD.cardSize() / (1024 * 1024));
+            // SD via ESP-IDF sdspi driver + CH422G CS (matches Waveshare official ESP-IDF example)
+            ch422g_pin_write(4, 0); // SD_CS low via CH422G expander
+
+            sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+            spi_bus_config_t bus_cfg = {};
+            bus_cfg.mosi_io_num = BOARD_SDCARD_MOSI;
+            bus_cfg.miso_io_num = BOARD_SDCARD_MISO;
+            bus_cfg.sclk_io_num = BOARD_SDCARD_SCK;
+            bus_cfg.quadwp_io_num = -1;
+            bus_cfg.quadhd_io_num = -1;
+            bus_cfg.max_transfer_sz = 4000;
+
+            esp_err_t ret = spi_bus_initialize((spi_host_device_t)host.slot, &bus_cfg, SDSPI_DEFAULT_DMA);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(ret));
+            } else {
+                sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+                slot_config.gpio_cs = (gpio_num_t)-1;
+                slot_config.host_id = (spi_host_device_t)host.slot;
+
+                esp_vfs_fat_sdmmc_mount_config_t mount_config = {};
+                mount_config.format_if_mount_failed = false;
+                mount_config.max_files = 5;
+                mount_config.allocation_unit_size = 16 * 1024;
+
+                static sdmmc_card_t *card = nullptr;
+                ret = esp_vfs_fat_sdspi_mount("/sd", &host, &slot_config, &mount_config, &card);
+                if (ret == ESP_OK) {
+                    sdAvailable = true;
+                    sdmmc_card_print_info(stdout, card);
+                    ESP_LOGI(TAG, "SD card mounted");
                     createDirectoryStructure();
                     loadFramesFromSD();
+                } else {
+                    ESP_LOGE(TAG, "SD card init failed: %s, using LittleFS", esp_err_to_name(ret));
+                    sdAvailable = false;
                 }
-            } else {
-                ESP_LOGE(TAG, "SD card init failed, using LittleFS");
-                sdAvailable = false;
             }
             #else
             // Try to init SD card on shared SPI bus

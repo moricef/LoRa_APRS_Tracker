@@ -49,12 +49,41 @@ extern const int symbolArraySize;
 extern const uint8_t *symbolsAPRS[];
 
 // Screen dimensions
+#if defined(CROWPANEL_ADVANCE_35)
+#define SCREEN_WIDTH 480
+#define SCREEN_HEIGHT 320
+#elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 480
+#else
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
+#endif
 
 // APRS symbol canvas dimensions
 #define APRS_CANVAS_WIDTH SYMBOL_WIDTH
 #define APRS_CANVAS_HEIGHT SYMBOL_HEIGHT
+
+// Scalable UI sizes
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+#define STATUS_BAR_H  45
+#define BTN_BAR_H     60
+#define BTN_W        160
+#define BTN_H         44
+#define CONTENT_TOP   50
+#elif defined(CROWPANEL_ADVANCE_35)
+#define STATUS_BAR_H  35
+#define BTN_BAR_H     45
+#define BTN_W        100
+#define BTN_H         35
+#define CONTENT_TOP   40
+#else
+#define STATUS_BAR_H  30
+#define BTN_BAR_H     40
+#define BTN_W         70
+#define BTN_H         30
+#define CONTENT_TOP   35
+#endif
 
 namespace UIDashboard {
 
@@ -82,6 +111,15 @@ static void btn_beacon_clicked(lv_event_t *e);
 static void btn_setup_clicked(lv_event_t *e);
 static void btn_msg_clicked(lv_event_t *e);
 static void btn_map_clicked(lv_event_t *e);
+
+static void dashboard_gesture_cb(lv_event_t *e) {
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+    if (dir == LV_DIR_LEFT) {
+        btn_msg_clicked(nullptr);
+    } else if (dir == LV_DIR_RIGHT) {
+        btn_setup_clicked(nullptr);
+    }
+}
 
 void init() {
     // Initialize dashboard module (nothing to do yet)
@@ -208,7 +246,7 @@ void createDashboard() {
 
     // Status bar at top
     lv_obj_t *status_bar = lv_obj_create(screen_main);
-    lv_obj_set_size(status_bar, SCREEN_WIDTH, 30);
+    lv_obj_set_size(status_bar, SCREEN_WIDTH, STATUS_BAR_H);
     lv_obj_set_pos(status_bar, 0, 0);
     lv_obj_set_style_bg_color(status_bar, lv_color_hex(0x16213e), 0);
     lv_obj_set_style_border_width(status_bar, 0, 0);
@@ -222,7 +260,11 @@ void createDashboard() {
     label_callsign = lv_label_create(status_bar);
     lv_label_set_text(label_callsign, "NOCALL");
     lv_obj_set_style_text_color(label_callsign, lv_color_hex(0xffffff), 0);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_set_style_text_font(label_callsign, &lv_font_montserrat_18, 0);
+#else
     lv_obj_set_style_text_font(label_callsign, &lv_font_montserrat_14, 0);
+#endif
 
     // APRS symbol canvas (center)
     aprs_symbol_buf = (lv_color_t *)malloc(
@@ -242,7 +284,11 @@ void createDashboard() {
     label_time = lv_label_create(status_bar);
     lv_label_set_text(label_time, "--/-- --:--");
     lv_obj_set_style_text_color(label_time, lv_color_hex(0xffffff), 0);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_set_style_text_font(label_time, &lv_font_montserrat_18, 0);
+#else
     lv_obj_set_style_text_font(label_time, &lv_font_montserrat_14, 0);
+#endif
 
     // GPS Strict 3D icon (hidden by default, shown when active)
     icon_gps_strict = lv_label_create(status_bar);
@@ -274,8 +320,8 @@ void createDashboard() {
 
     // Main content area
     lv_obj_t *content = lv_obj_create(screen_main);
-    lv_obj_set_size(content, SCREEN_WIDTH - 10, SCREEN_HEIGHT - 80);
-    lv_obj_set_pos(content, 5, 35);
+    lv_obj_set_size(content, SCREEN_WIDTH - 10, SCREEN_HEIGHT - STATUS_BAR_H - BTN_BAR_H - 10);
+    lv_obj_set_pos(content, 5, CONTENT_TOP);
     lv_obj_set_style_bg_color(content, lv_color_hex(0x0f0f23), 0);
     lv_obj_set_style_border_color(content, lv_color_hex(0x16213e), 0);
     lv_obj_set_style_radius(content, 8, 0);
@@ -286,7 +332,11 @@ void createDashboard() {
     lv_label_set_text(label_gps, "GPS: -- sat  Loc: --------\nLat: --.----  Lon: "
                                  "--.----\nAlt: ---- m  Spd: --- km/h");
     lv_obj_set_style_text_color(label_gps, lv_color_hex(0x759a9e), 0);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_set_style_text_font(label_gps, &lv_font_montserrat_18, 0);
+#else
     lv_obj_set_style_text_font(label_gps, &lv_font_mono_14, 0);
+#endif
     lv_obj_set_pos(label_gps, 0, 0);
 
     // LoRa info
@@ -297,7 +347,11 @@ void createDashboard() {
     snprintf(lora_init, sizeof(lora_init), "LoRa: %.3f MHz  %d bps", freq, rate);
     lv_label_set_text(label_lora, lora_init);
     lv_obj_set_style_text_color(label_lora, lv_color_hex(0xff6b6b), 0);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_set_style_text_font(label_lora, &lv_font_montserrat_18, 0);
+#else
     lv_obj_set_style_text_font(label_lora, &lv_font_mono_14, 0);
+#endif
     lv_obj_set_pos(label_lora, 0, 55);
 
     // Last RX stations (4 max)
@@ -305,13 +359,17 @@ void createDashboard() {
     lv_label_set_recolor(label_last_rx, true);
     lv_label_set_text(label_last_rx, "Last RX:\n---");
     lv_obj_set_style_text_color(label_last_rx, lv_color_hex(0xffcc00), 0);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_set_style_text_font(label_last_rx, &lv_font_montserrat_18, 0);
+#else
     lv_obj_set_style_text_font(label_last_rx, &lv_font_mono_14, 0);
+#endif
     lv_obj_set_pos(label_last_rx, 0, 80);
 
     // Bottom button bar
     lv_obj_t *btn_bar = lv_obj_create(screen_main);
-    lv_obj_set_size(btn_bar, SCREEN_WIDTH, 40);
-    lv_obj_set_pos(btn_bar, 0, SCREEN_HEIGHT - 40);
+    lv_obj_set_size(btn_bar, SCREEN_WIDTH, BTN_BAR_H);
+    lv_obj_set_pos(btn_bar, 0, SCREEN_HEIGHT - BTN_BAR_H);
     lv_obj_set_style_bg_color(btn_bar, lv_color_hex(0x16213e), 0);
     lv_obj_set_style_border_width(btn_bar, 0, 0);
     lv_obj_set_style_radius(btn_bar, 0, 0);
@@ -319,10 +377,13 @@ void createDashboard() {
     lv_obj_set_flex_flow(btn_bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btn_bar, LV_FLEX_ALIGN_SPACE_EVENLY,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_set_style_text_font(btn_bar, &lv_font_montserrat_16, 0);
+#endif
 
     // Beacon button (APRS red)
     lv_obj_t *btn_beacon = lv_btn_create(btn_bar);
-    lv_obj_set_size(btn_beacon, 70, 30);
+    lv_obj_set_size(btn_beacon, BTN_W, BTN_H);
     lv_obj_set_style_bg_color(btn_beacon, lv_color_hex(0xcc0000), 0);
     lv_obj_add_event_cb(btn_beacon, btn_beacon_clicked, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_beacon = lv_label_create(btn_beacon);
@@ -332,7 +393,7 @@ void createDashboard() {
 
     // Messages button (APRS blue)
     lv_obj_t *btn_msg = lv_btn_create(btn_bar);
-    lv_obj_set_size(btn_msg, 70, 30);
+    lv_obj_set_size(btn_msg, BTN_W, BTN_H);
     lv_obj_set_style_bg_color(btn_msg, lv_color_hex(0x0066cc), 0);
     lv_obj_add_event_cb(btn_msg, btn_msg_clicked, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_msg = lv_label_create(btn_msg);
@@ -342,7 +403,7 @@ void createDashboard() {
 
     // Map button (green)
     lv_obj_t *btn_map = lv_btn_create(btn_bar);
-    lv_obj_set_size(btn_map, 70, 30);
+    lv_obj_set_size(btn_map, BTN_W, BTN_H);
     lv_obj_set_style_bg_color(btn_map, lv_color_hex(0x009933), 0);
     lv_obj_add_event_cb(btn_map, btn_map_clicked, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_map = lv_label_create(btn_map);
@@ -352,13 +413,17 @@ void createDashboard() {
 
     // Settings button
     lv_obj_t *btn_settings = lv_btn_create(btn_bar);
-    lv_obj_set_size(btn_settings, 70, 30);
+    lv_obj_set_size(btn_settings, BTN_W, BTN_H);
     lv_obj_set_style_bg_color(btn_settings, lv_color_hex(0xc792ea), 0);
     lv_obj_add_event_cb(btn_settings, btn_setup_clicked, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_settings = lv_label_create(btn_settings);
     lv_label_set_text(lbl_settings, "SET");
     lv_obj_center(lbl_settings);
     lv_obj_set_style_text_color(lbl_settings, lv_color_hex(0x000000), 0);
+
+    // Swipe gesture navigation
+    lv_obj_add_event_cb(screen_main, dashboard_gesture_cb, LV_EVENT_GESTURE, NULL);
+    lv_obj_clear_flag(screen_main, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
     // Load the screen
     lv_scr_load(screen_main);

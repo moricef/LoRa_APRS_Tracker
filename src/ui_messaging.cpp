@@ -10,6 +10,7 @@
 #include "ui_common.h"
 #include "ui_popups.h"
 #include "ui_dashboard.h"
+#include "ui_settings.h"
 #include "lvgl_ui.h"
 
 #include <Arduino.h>
@@ -34,8 +35,16 @@ extern bool screenDimmed;
 extern uint8_t screenBrightness;
 
 // Screen dimensions
+#if defined(CROWPANEL_ADVANCE_35)
+#define SCREEN_WIDTH 480
+#define SCREEN_HEIGHT 320
+#elif defined(WAVESHARE_S3_TOUCH_LCD_7)
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 480
+#else
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
+#endif
 
 namespace UIMessaging {
 
@@ -1460,6 +1469,7 @@ static void btn_back_clicked(lv_event_t *e) {
     UIDashboard::returnToDashboard();
 }
 
+
 static void btn_compose_clicked(lv_event_t *e) {
     createComposeScreen();
     compose_screen_active = true;
@@ -1479,7 +1489,6 @@ static void btn_add_contact_clicked(lv_event_t *e) {
 void createMsgScreen() {
     screen_msg = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(screen_msg, lv_color_hex(0x1a1a2e), 0);
-
     // Title bar
     lv_obj_t *title_bar = lv_obj_create(screen_msg);
     lv_obj_set_size(title_bar, SCREEN_WIDTH, 35);

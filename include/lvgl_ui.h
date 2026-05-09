@@ -8,6 +8,7 @@
 #ifdef USE_LVGL_UI
 
 #include <lvgl.h>
+#include <WString.h>
 
 // External declarations for custom JetBrains Mono fonts
 // These must match the 'Font Name' you used in the converter

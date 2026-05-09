@@ -13,8 +13,8 @@ static const char *TAG = "LVGL";
 #if defined(CROWPANEL_ADVANCE_35)
 #include "LGFX_CrowPanel_35.h"
 #elif defined(WAVESHARE_S3_TOUCH_LCD_7)
-#include "LGFX_Waveshare7.h"
 #include "ch422g.h"
+#include "waveshare_lcd.h"
 uint8_t _ch422g_io_state = 0;
 #else
 #include "LGFX_TDeck.h"
@@ -174,7 +174,7 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
     uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    tft.pushImage(area->x1, area->y1, w, h, (uint16_t *)color_p);
+    esp_lcd_panel_draw_bitmap(ws_lcd_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_p);
 #else
     // SPI panels: mutex required (shared SPI bus with LoRa/SD)
     // Note: pushImageDMA not used — LVGL buffers are in PSRAM, SPI DMA requires SRAM source
@@ -190,9 +190,8 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 static uint32_t lastTouchDebug = 0;
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-  // LGFX native GT911 touch
   uint16_t x, y;
-  if (tft.getTouch(&x, &y)) {
+  if (gt911_read_touch(&x, &y)) {
     data->state = LV_INDEV_STATE_PR;
     data->point.x = x;
     data->point.y = y;
@@ -331,22 +330,19 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     ch422g_init_hw();
 #endif
 
-    // Init TFT
+    // Init display
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    waveshare_lcd_init();
+    if (screenBrightness > 0) ch422g_backlight_on();
+#else
     tft.init();
     #if defined(CROWPANEL_ADVANCE_35)
-    tft.setRotation(3); // Adjust for Crowpanel orientation
-    #elif defined(WAVESHARE_S3_TOUCH_LCD_7)
-    tft.setRotation(0); // Default landscape
+    tft.setRotation(3);
     #else
     tft.setRotation(1);
     #endif
     tft.startWrite();
     tft.fillScreen(TFT_BLACK);
-
-// Turn on backlight
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    if (screenBrightness > 0) ch422g_backlight_on();
-#else
     displaySetBrightness(screenBrightness);
 #endif
 
@@ -355,7 +351,12 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
       lv_init();
 
 // Allocate display buffers
-#if defined(BOARD_HAS_PSRAM)
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+      static const int WS_BUF_LINES = 240;
+      buf1 = (lv_color_t *)ps_malloc(SCREEN_WIDTH * WS_BUF_LINES * sizeof(lv_color_t));
+      buf2 = nullptr;
+      ESP_LOGI(TAG, "LVGL buffer: %d KB PSRAM (bounce buffers active)", SCREEN_WIDTH * WS_BUF_LINES * (int)sizeof(lv_color_t) / 1024);
+#elif defined(BOARD_HAS_PSRAM)
       buf1 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
       buf2 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
 #else
@@ -364,13 +365,21 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 #endif
 
       if (buf1) {
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        lv_disp_draw_buf_init(&draw_buf, buf1, buf2, SCREEN_WIDTH * WS_BUF_LINES);
+#else
         lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LVGL_BUF_SIZE);
+#endif
         lv_disp_drv_init(&disp_drv);
         disp_drv.hor_res = SCREEN_WIDTH;
         disp_drv.ver_res = SCREEN_HEIGHT;
         disp_drv.flush_cb = disp_flush_cb;
         disp_drv.draw_buf = &draw_buf;
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        disp_drv.full_refresh = 0;
+#else
         disp_drv.full_refresh = (buf2 != nullptr) ? 1 : 0;
+#endif
         lv_disp_drv_register(&disp_drv);
       }
       lvgl_display_initialized = true;
@@ -530,28 +539,28 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
     // Only initialize display if not already done by splash screen
     if (!lvgl_display_initialized) {
-// Set backlight with saved brightness
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+      ch422g_init_hw();
+      waveshare_lcd_init();
       if (screenBrightness > 0) ch422g_backlight_on();
 #else
       displaySetBrightness(screenBrightness);
-#endif
-
-      // Re-init TFT for LVGL
       tft.init();
       #if defined(CROWPANEL_ADVANCE_35)
-      tft.setRotation(3); // Adjust for Crowpanel orientation
-      #elif defined(WAVESHARE_S3_TOUCH_LCD_7)
-      tft.setRotation(0); // Default landscape
+      tft.setRotation(3);
       #else
-      tft.setRotation(1); // Landscape, keyboard at bottom
+      tft.setRotation(1);
       #endif
+#endif
 
-      // Initialize LVGL
       lv_init();
 
-// Allocate display buffers in PSRAM
-#ifdef BOARD_HAS_PSRAM
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+      static const int WS_BUF_LINES = 240;
+      buf1 = (lv_color_t *)ps_malloc(SCREEN_WIDTH * WS_BUF_LINES * sizeof(lv_color_t));
+      buf2 = nullptr;
+      ESP_LOGI(TAG, "LVGL buffer: %d KB PSRAM (bounce buffers active)", SCREEN_WIDTH * WS_BUF_LINES * (int)sizeof(lv_color_t) / 1024);
+#elif defined(BOARD_HAS_PSRAM)
       buf1 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
       buf2 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
       ESP_LOGI(TAG, "Using PSRAM for display buffers");
@@ -566,17 +575,22 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
         return;
       }
 
-      // Initialize display buffer
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+      lv_disp_draw_buf_init(&draw_buf, buf1, buf2, SCREEN_WIDTH * WS_BUF_LINES);
+#else
       lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LVGL_BUF_SIZE);
+#endif
 
-      // Initialize display driver
       lv_disp_drv_init(&disp_drv);
       disp_drv.hor_res = SCREEN_WIDTH;
       disp_drv.ver_res = SCREEN_HEIGHT;
       disp_drv.flush_cb = disp_flush_cb;
       disp_drv.draw_buf = &draw_buf;
-      disp_drv.full_refresh =
-          (buf2 != nullptr) ? 1 : 0; // Full refresh if double buffered
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+      disp_drv.full_refresh = 0;
+#else
+      disp_drv.full_refresh = (buf2 != nullptr) ? 1 : 0;
+#endif
       lv_disp_drv_register(&disp_drv);
       lvgl_display_initialized = true;
     } else {
@@ -585,12 +599,11 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
     // Initialize touch input
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    // GT911 managed natively by LovyanGFX (initialized in tft.init())
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = touch_read_cb;
     lv_indev_drv_register(&indev_drv);
-    ESP_LOGI(TAG, "Touch input registered (LGFX native GT911)");
+    ESP_LOGI(TAG, "Touch input registered (GT911 via lgfx::i2c)");
 #else
     if (touchModuleAddress != 0x00) {
       ESP_LOGI(TAG, "Touch module found at 0x%02X",

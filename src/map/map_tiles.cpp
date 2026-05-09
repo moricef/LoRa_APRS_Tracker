@@ -334,7 +334,7 @@ static void tilePreloadTaskFunc(void* param) {
             return false;
         }
 
-        if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 const char* region = map_current_region.c_str();
                 snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
@@ -346,7 +346,7 @@ static void tilePreloadTaskFunc(void* param) {
                     if (stat(path, &_pst) == 0) { strcpy(found_path, path); found = true; }
                 }
             }
-            xSemaphoreGive(spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         }
 
         // 4. Not found — add to negative cache
@@ -389,7 +389,7 @@ static void tilePreloadTaskFunc(void* param) {
         bool found = false;
         struct stat _pst;
 
-        if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 const char* region = map_current_region.c_str();
                 snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
@@ -401,7 +401,7 @@ static void tilePreloadTaskFunc(void* param) {
                     if (stat(path, &_pst) == 0) { strcpy(found_path, path); found = true; }
                 }
             }
-            xSemaphoreGive(spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         }
 
         if (!found) { cacheSlot->isValid = false; return false; }
@@ -474,7 +474,7 @@ static void tilePreloadTaskFunc(void* param) {
         int yMin = INT_MAX, yMax = INT_MIN;
 
         if (spiMutex != NULL &&
-            xSemaphoreTake(spiMutex, pdMS_TO_TICKS(300)) == pdTRUE) {
+            xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(300)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 DIR* zoomDir = opendir(path);
                 if (zoomDir) {
@@ -509,7 +509,7 @@ static void tilePreloadTaskFunc(void* param) {
                     closedir(zoomDir);
                 }
             }
-            xSemaphoreGive(spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         }
 
         if (xMin <= xMax && yMin <= yMax) {
@@ -528,7 +528,7 @@ static void tilePreloadTaskFunc(void* param) {
 
         ESP_LOGI(TAG, "Discovering map region...");
         if (spiMutex != NULL &&
-            xSemaphoreTake(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+            xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 DIR* mapsDir = opendir(SD_MOUNT_POINT "/LoRa_Tracker/Maps");
                 if (mapsDir) {
@@ -542,10 +542,10 @@ static void tilePreloadTaskFunc(void* param) {
                     }
                     closedir(mapsDir);
                 } else {
-                    ESP_LOGE(TAG, "Cannot open %s/LoRa_Tracker/Maps", SD_MOUNT_POINT);
+                    ESP_LOGE(TAG, "Cannot open %s/LoRa_Tracker/Maps (errno=%d)", SD_MOUNT_POINT, errno);
                 }
             }
-            xSemaphoreGive(spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         } else {
             ESP_LOGE(TAG, "Cannot get SPI mutex for region discovery");
         }
@@ -584,7 +584,7 @@ static void tilePreloadTaskFunc(void* param) {
         int gpsMatchIdx = -1;
 
         if (spiMutex != NULL &&
-            xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+            xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 DIR* vectDir = opendir(SD_MOUNT_POINT "/LoRa_Tracker/VectMaps");
                 if (vectDir) {
@@ -609,7 +609,7 @@ static void tilePreloadTaskFunc(void* param) {
                     closedir(vectDir);
                 }
             }
-            xSemaphoreGive(spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         }
 
         if (gpsMatchIdx > 0) {

@@ -10,6 +10,7 @@
 #include "ui_common.h"
 #include "ui_popups.h"
 #include "ui_dashboard.h"
+#include "lvgl_ui.h"
 #include <Arduino.h>
 #include <lvgl.h>
 #include <WiFi.h>
@@ -299,9 +300,18 @@ static void setup_item_about(lv_event_t *e) {
 // Setup Screen Creation
 // =============================================================================
 
+static void setup_gesture_cb(lv_event_t *e) {
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+    if (dir == LV_DIR_RIGHT) {
+        LVGL_UI::openMessagesScreen();
+    }
+}
+
 void UISettings::createSetupScreen() {
     screen_setup = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(screen_setup, lv_color_hex(UIColors::BG_DARK), 0);
+    lv_obj_add_event_cb(screen_setup, setup_gesture_cb, LV_EVENT_GESTURE, NULL);
+    lv_obj_clear_flag(screen_setup, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
     // Title bar
     lv_obj_t *title_bar = lv_obj_create(screen_setup);

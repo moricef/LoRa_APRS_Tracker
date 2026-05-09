@@ -235,7 +235,7 @@ void redraw_map_canvas() {
             // NAV→raster transition only happens on zoom-out below Z9 (handled above).
             if (navModeActive) {
                 isNavMode = true;
-            } else if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+            } else if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
                 for (int r = 0; r < navRegionCount && !isNavMode; r++) {
                     // Try NPK2 pack file first
                     snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
@@ -254,7 +254,7 @@ void redraw_map_canvas() {
                         isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                     }
                 }
-                xSemaphoreGive(spiMutex);
+                xSemaphoreGiveRecursive(spiMutex);
             } else {
                 ESP_LOGW(TAG, "isNavMode check TIMEOUT (spiMutex busy) at Z%d", map_current_zoom);
             }
@@ -554,7 +554,7 @@ void create_map_screen() {
             if (navRegionCount > 0 && map_current_zoom >= 9) {
                 if (navModeActive) {
                     isNavMode = true;
-                } else if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
+                } else if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
                     for (int r = 0; r < navRegionCount && !isNavMode; r++) {
                         // Try NPK2 pack file first
                         snprintf(navCheckPath, sizeof(navCheckPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav",
@@ -573,7 +573,7 @@ void create_map_screen() {
                             isNavMode = STORAGE_Utils::fileExists(String(navCheckPath));
                         }
                     }
-                    xSemaphoreGive(spiMutex);
+                    xSemaphoreGiveRecursive(spiMutex);
                 } else {
                     ESP_LOGW(TAG, "isNavMode check TIMEOUT (spiMutex busy) at Z%d", map_current_zoom);
                 }

@@ -294,6 +294,10 @@ namespace LoRa_Utils {
             compat_pinMode(RADIO_VCC_PIN,COMPAT_OUTPUT);
             compat_digitalWrite(RADIO_VCC_PIN,COMPAT_HIGH);
         #endif
+        #if defined(LORA_ON_C3)
+            ESP_LOGI(TAG, "LoRa on C3 co-processor, skipping local SPI/radio init");
+            return;
+        #endif
         ESP_LOGD(TAG, "Set SPI pins!");
         #if defined(LIGHTTRACKER_PLUS_1_0)
             loraSPI.begin(RADIO_SCLK_PIN, RADIO_MISO_PIN, RADIO_MOSI_PIN, RADIO_CS_PIN);

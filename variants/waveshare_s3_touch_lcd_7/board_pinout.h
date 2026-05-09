@@ -37,7 +37,7 @@
     #define HAS_TOUCHSCREEN
 
     /* SD Card */
-    #define BOARD_SDCARD_CS     -1      // managed by CH422G expander pin4
+    #define BOARD_SDCARD_CS     -1      // no direct GPIO — real CS via CH422G expander pin4
     #define BOARD_SDCARD_MOSI   11
     #define BOARD_SDCARD_MISO   13
     #define BOARD_SDCARD_SCK    12

@@ -1775,7 +1775,7 @@ namespace MapEngine {
                 char path[128];
                 bool found = false;
 
-                if (spiMutex && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                if (spiMutex && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                     if (STORAGE_Utils::isSDAvailable()) {
                         struct stat _pst;
                         snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
@@ -1787,7 +1787,7 @@ namespace MapEngine {
                             if (stat(path, &_pst) == 0) { found = true; }
                         }
                     }
-                    xSemaphoreGive(spiMutex);
+                    xSemaphoreGiveRecursive(spiMutex);
                 }
 
                 if (!found) continue;
