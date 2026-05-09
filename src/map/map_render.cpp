@@ -188,6 +188,8 @@ namespace MapRender {
 
         int16_t oldNavSubX = navSubTileX;
         int16_t oldNavSubY = navSubTileY;
+        int16_t oldOffX = offsetX, oldOffY = offsetY;
+        int oldCtx = centerTileX, oldCty = centerTileY;
         bool wasResetting = pendingResetPan;
 
         if (pendingResetPan) {
@@ -219,6 +221,21 @@ namespace MapRender {
         if (!wasResetting && navModeActive && MapEngine::lastRenderedZoom == (uint8_t)map_current_zoom) {
             offsetX -= (navSubTileX - oldNavSubX);
             offsetY -= (navSubTileY - oldNavSubY);
+        }
+
+        if (oldOffX != offsetX || oldOffY != offsetY || wasResetting) {
+            ESP_LOGI(TAG, "applyViewport: off(%d→%d, %d→%d) tile(%d→%d,%d→%d) nav(%d→%d,%d→%d) z=%d reset=%d",
+                          oldOffX, offsetX, oldOffY, offsetY,
+                          oldCtx, centerTileX, oldCty, centerTileY,
+                          oldNavSubX, navSubTileX, oldNavSubY, navSubTileY,
+                          map_current_zoom, wasResetting);
+        }
+
+        // Sync canvas position immediately — avoids 1-frame offset/content mismatch
+        if (map_canvas) {
+            int16_t canvasX = -MAP_MARGIN_X - offsetX - navSubTileX;
+            int16_t canvasY = -MAP_MARGIN_Y - offsetY - navSubTileY;
+            lv_obj_set_pos(map_canvas, canvasX, canvasY);
         }
 
         if (map_title_label) {

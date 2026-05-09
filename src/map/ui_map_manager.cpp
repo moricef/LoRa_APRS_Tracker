@@ -145,13 +145,22 @@ static void map_refresh_timer_cb(lv_timer_t* timer) {
         }
     }
 
-    // Update canvas position every frame
-    if (map_canvas) {
+    // Update canvas position every frame.
+    // During async render, freeze position to prevent stale content from drifting.
+    if (map_canvas && !redraw_in_progress) {
         int16_t canvasX = -MAP_MARGIN_X - offsetX;
         int16_t canvasY = -MAP_MARGIN_Y - offsetY;
 
         canvasX -= navSubTileX;
         canvasY -= navSubTileY;
+
+        static int16_t lastCanvasX = 0x7FFF, lastCanvasY = 0x7FFF;
+        if (canvasX != lastCanvasX || canvasY != lastCanvasY) {
+            ESP_LOGD(TAG, "canvas pos(%d,%d) off(%d,%d) nav(%d,%d) MARGIN(%d,%d)",
+                          canvasX, canvasY, offsetX, offsetY, navSubTileX, navSubTileY, MAP_MARGIN_X, MAP_MARGIN_Y);
+            lastCanvasX = canvasX;
+            lastCanvasY = canvasY;
+        }
 
         lv_obj_set_pos(map_canvas, canvasX, canvasY);
     }
@@ -485,6 +494,9 @@ void create_map_screen() {
         backViewportSprite = psram_new<LGFX_Sprite>(&tft);
         if (backViewportSprite) {
             backViewportSprite->setPsram(true);
+#if !LV_COLOR_16_SWAP
+            backViewportSprite->setColorDepth(lgfx::color_depth_t::rgb565_nonswapped);
+#endif
             if (backViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
                 ESP_LOGE(TAG, "Failed to create back viewport sprite");
                 psram_delete(backViewportSprite);
@@ -498,6 +510,9 @@ void create_map_screen() {
         frontViewportSprite = psram_new<LGFX_Sprite>(&tft);
         if (frontViewportSprite) {
             frontViewportSprite->setPsram(true);
+#if !LV_COLOR_16_SWAP
+            frontViewportSprite->setColorDepth(lgfx::color_depth_t::rgb565_nonswapped);
+#endif
             if (frontViewportSprite->createSprite(MAP_SPRITE_SIZE, MAP_SPRITE_SIZE) == nullptr) {
                 ESP_LOGE(TAG, "Failed to create front viewport sprite");
                 psram_delete(frontViewportSprite);

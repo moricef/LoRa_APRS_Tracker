@@ -3,12 +3,15 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_rgb.h>
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <lgfx/v1/platforms/common.hpp>
 #include "waveshare_lcd.h"
 
 static const char *TAG = "WS_LCD";
 
 esp_lcd_panel_handle_t ws_lcd_panel = nullptr;
+static SemaphoreHandle_t vsync_sem = nullptr;
 
 void waveshare_lcd_init() {
     esp_lcd_rgb_panel_config_t panel_cfg = {};
@@ -27,7 +30,7 @@ void waveshare_lcd_init() {
 
     panel_cfg.data_width = 16;
     panel_cfg.bits_per_pixel = 16;
-    panel_cfg.num_fbs = 1;
+    panel_cfg.num_fbs = 2;
     panel_cfg.bounce_buffer_size_px = 800 * 10;
     panel_cfg.dma_burst_size = 64;
 
@@ -58,7 +61,22 @@ void waveshare_lcd_init() {
 
     ESP_ERROR_CHECK(esp_lcd_new_rgb_panel(&panel_cfg, &ws_lcd_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(ws_lcd_panel));
-    ESP_LOGI(TAG, "RGB panel initialized with bounce buffers (800x10)");
+
+    vsync_sem = xSemaphoreCreateBinary();
+
+    esp_lcd_rgb_panel_event_callbacks_t cbs = {};
+    cbs.on_vsync = [](esp_lcd_panel_handle_t, const esp_lcd_rgb_panel_event_data_t*, void*) -> bool {
+        BaseType_t woken = pdFALSE;
+        xSemaphoreGiveFromISR(vsync_sem, &woken);
+        return woken == pdTRUE;
+    };
+    ESP_ERROR_CHECK(esp_lcd_rgb_panel_register_event_callbacks(ws_lcd_panel, &cbs, nullptr));
+
+    ESP_LOGI(TAG, "RGB panel initialized: num_fbs=2, bounce 800x10, VSYNC sync");
+}
+
+void waveshare_wait_vsync() {
+    if (vsync_sem) xSemaphoreTake(vsync_sem, pdMS_TO_TICKS(100));
 }
 
 #define GT911_ADDR  0x5D

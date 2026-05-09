@@ -1200,7 +1200,11 @@ namespace MapEngine {
         }
         if (!glyphSprite) {
             glyphSprite = psram_new<LGFX_Sprite>(&map);
+#if LV_COLOR_16_SWAP
             glyphSprite->setColorDepth(16);
+#else
+            glyphSprite->setColorDepth(lgfx::color_depth_t::rgb565_nonswapped);
+#endif
             glyphSprite->setPsram(true);
             if (glyphSprite->createSprite(maxGlyphW, maxGlyphH)) {
                 glyphSpriteW = maxGlyphW;

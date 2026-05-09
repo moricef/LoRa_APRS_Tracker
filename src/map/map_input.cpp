@@ -55,7 +55,9 @@ static inline void commitVisualCenter() {
 
 static inline void resetZoom() {
     MapTiles::initCenterTileFromLatLon(map_center_lat, map_center_lon);
-    resetPanOffset();
+    velocityX = 0.0f;
+    velocityY = 0.0f;
+    pendingResetPan = true;
 }
 
 static void shiftMapCenter(int deltaTileX, int deltaTileY) {
@@ -355,14 +357,21 @@ namespace MapInput {
         offsetX += dx;
         offsetY += dy;
 
+        int16_t oldOffX = offsetX, oldOffY = offsetY;
+
         if (!pendingResetPan) {
             map_follow_gps = false;
         }
 
-        int16_t maxOffX = MAP_MARGIN_X - 10;
-        int16_t maxOffY = MAP_MARGIN_Y - 10;
-        offsetX = (int16_t)constrain(offsetX, -maxOffX, maxOffX);
-        offsetY = (int16_t)constrain(offsetY, -maxOffY, maxOffY);
+        int16_t clampX = (MAP_MARGIN_X > 10) ? (MAP_MARGIN_X - 10) : PAN_TILE_THRESHOLD;
+        int16_t clampY = (MAP_MARGIN_Y > 10) ? (MAP_MARGIN_Y - 10) : PAN_TILE_THRESHOLD;
+        offsetX = (int16_t)constrain(offsetX, -clampX, clampX);
+        offsetY = (int16_t)constrain(offsetY, -clampY, clampY);
+
+        if (offsetX != oldOffX || offsetY != oldOffY) {
+            ESP_LOGD(TAG, "scrollMap clamp: off(%d→%d, %d→%d) clamp(%d,%d) MARGIN(%d,%d)",
+                          oldOffX, offsetX, oldOffY, offsetY, clampX, clampY, MAP_MARGIN_X, MAP_MARGIN_Y);
+        }
 
         int targetX = centerTileX;
         int targetY = centerTileY;

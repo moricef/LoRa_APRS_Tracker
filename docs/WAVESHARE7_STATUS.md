@@ -21,16 +21,31 @@
 | SD frames loading | ✅ | 20 frames loaded at boot |
 | SD config/stats | ✅ | JSON read/write via VFS |
 | SD logger | ✅ | GPS trace logging works |
-| Raster tiles (PNG/JPG) | ✅ | Load from SD, correct colors |
+| Raster tiles (PNG/JPG) | ✅ | Correct colors: LE PNG via getBuffer bypass |
+| NAV tiles (vector) | ✅ | Correct colors: viewport+glyph sprites rgb565_nonswapped |
 | Dashboard/Messages/Settings | ✅ | Swipe Dashboard↔Settings |
 | Brightness control | ⚠️ | CH422G digital only (on/off), no PWM |
+| Double-buffer RGB panel | ✅ | num_fbs=2, VSYNC callback registered |
+| Map debug logging | ✅ | scrollMap, applyViewport, canvas position |
 
 ## Known issues
 
 | Issue | Symptom | Suspected cause |
 |-------|---------|-----------------|
-| NAV false colors | Roads/water in wrong colors | Viewport sprite setSwapBytes mismatch with LVGL canvas |
-| Map flickering on zoom | Screen trembles during zoom change | Double-buffer sprite swap timing vs LVGL refresh |
+| Map flickering on pan/zoom | Screen trembles during drag and zoom | PSRAM DMA conflict: LVGL renders to buf1 while bounce buffer DMA reads it. Single LVGL buffer (buf2=null) → no double-buffering at app level. |
+
+## Investigated and ruled out
+
+| Hypothesis | Test | Result |
+|-----------|------|--------|
+| Clamp blocks tile shift | Raised clamp to PAN_TILE_THRESHOLD | No effect — tile shifts confirmed in logs |
+| resetZoom clears offset too early | Deferred to applyRenderedViewport | No effect |
+| VSYNC semaphore timeout | Removed `waveshare_wait_vsync()` | No effect |
+| 1-frame offset/content mismatch | `lv_obj_set_pos` in applyRenderedViewport | No effect |
+| Stale content drifts during render | Freeze canvas pos when `redraw_in_progress` | No effect |
+| NAV false colors | `rgb565_nonswapped` on viewport + glyph sprites | ✅ Fixed |
+| Raster false colors | Reverted tile cache sprites to default `rgb565_2Byte` (PNG writes LE directly via getBuffer, bypassing LGFX) | ✅ Fixed |
+| GPS error spam | `#if !defined(WAVESHARE_S3_TOUCH_LCD_7)` guard | ✅ Fixed |
 
 ## Root causes fixed
 
@@ -41,6 +56,14 @@
 5. **LoRa SPI conflict with SD**: `SPI.begin(RADIO_SCLK,...)` reconfigures SD bus → skip when `LORA_ON_C3`
 6. **spiMutex type mismatch**: `xSemaphoreTake` on recursive mutex → `xSemaphoreTakeRecursive`
 7. **Partial refresh tearing**: Half-height buffer (800×240) with `full_refresh=0` → full-frame (800×480) with `full_refresh=1`
+8. **NAV false colors**: Viewport + glyph sprites `rgb565_nonswapped` when `LV_COLOR_16_SWAP=0`. NAV colors are LE in file, must match.
+9. **Raster false colors**: Tile cache sprites kept at default `rgb565_2Byte`. PNG decoder writes LE via `getBuffer()` directly — bypasses LGFX color conversion.
+10. **GPS error spam on Waveshare**: C3 handles GPS, S3 sees no frames. Guarded `ESP_LOGE` with `#if !defined(WAVESHARE_S3_TOUCH_LCD_7)`.
+11. **RGB panel tearing**: Added `num_fbs=2` + VSYNC event callback. Panel double-buffers at hardware level.
+12. **Pan clamp prevents tile shift**: `MAP_MARGIN_X = -16` (negative!) caused clamp to use `PAN_TILE_THRESHOLD-1`, blocking tile shifts on X axis. Changed fallback to `PAN_TILE_THRESHOLD`.
+13. **resetZoom offset jump**: Removed immediate offsetX/Y=0 in resetZoom(), deferred to applyRenderedViewport().
+14. **VSYNC wait removed**: `waveshare_wait_vsync()` in flush callback was redundant (draw_bitmap blocks internally) and could time out at 100ms.
+15. **Canvas position synced with content**: applyRenderedViewport() now calls lv_obj_set_pos immediately after offset recalculation.
 
 ## Key files
 

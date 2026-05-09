@@ -9,6 +9,7 @@
 extern esp_lcd_panel_handle_t ws_lcd_panel;
 
 void waveshare_lcd_init();
+void waveshare_wait_vsync();
 bool gt911_read_touch(uint16_t *x, uint16_t *y);
 
 #endif // WAVESHARE_S3_TOUCH_LCD_7

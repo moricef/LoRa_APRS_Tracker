@@ -189,8 +189,10 @@ namespace GPS_Utils {
     void checkStartUpFrames() {
         if (disableGPS) return;
         if ((millis() > 10000 && nmeaGPS.statistics.chars < 10)) {
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
             ESP_LOGE(TAG, "No GPS frames detected! Try to reset the GPS Chip with this "
                         "firmware: https://github.com/richonguzman/TTGO_T_BEAM_GPS_RESET");
+#endif
             displayShow("ERROR", "No GPS frames!", "Reset the GPS Chip", 2000);
         }
     }
