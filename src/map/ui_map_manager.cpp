@@ -489,6 +489,8 @@ void create_map_screen() {
                 ESP_LOGE(TAG, "Failed to create back viewport sprite");
                 psram_delete(backViewportSprite);
                 backViewportSprite = nullptr;
+            } else {
+                backViewportSprite->setSwapBytes(false);
             }
         }
     }
@@ -500,6 +502,8 @@ void create_map_screen() {
                 ESP_LOGE(TAG, "Failed to create front viewport sprite");
                 psram_delete(frontViewportSprite);
                 frontViewportSprite = nullptr;
+            } else {
+                frontViewportSprite->setSwapBytes(false);
             }
         }
     }

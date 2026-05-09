@@ -41,8 +41,8 @@ static inline void ch422g_init_hw() {
 }
 
 static inline void ch422g_backlight_on() {
-    // IO1(TP_RST) + IO2(BL) + IO3(LCD_RST) + IO4(SD_CS high)
-    _ch422g_io_state = 0x1E;
+    // IO2(BL) on, preserving TP_RST, LCD_RST, SD_CS, USB_SEL states
+    _ch422g_io_state |= (1 << 2);
     ch422g_write(CH422G_ADDR_IO, _ch422g_io_state);
 }
 

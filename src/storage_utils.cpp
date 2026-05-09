@@ -30,6 +30,7 @@
 #include <driver/sdspi_host.h>
 #include <sdmmc_cmd.h>
 #include <driver/spi_common.h>
+#include <driver/spi_master.h>
 #endif
 #include <sys/stat.h>
 #include <esp_vfs_fat.h>
@@ -130,8 +131,11 @@ namespace STORAGE_Utils {
 
         #ifdef BOARD_SDCARD_CS
             #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-            // SD via ESP-IDF sdspi driver + CH422G CS (matches Waveshare official ESP-IDF example)
-            ch422g_pin_write(4, 0); // SD_CS low via CH422G expander
+            // SD via ESP-IDF sdspi + CH422G CS (match Waveshare official ESP-IDF example)
+            // The SD card CS is wired to CH422G IO4, not to any ESP32 GPIO.
+            // sdspi driver uses gpio_cs=-1 (dedicated bus, no other SPI devices).
+            // We manually do the 74-clock preamble with CS high (SD spec §6.4.1)
+            // before mounting, since the driver skips it when gpio_cs=-1.
 
             sdmmc_host_t host = SDSPI_HOST_DEFAULT();
             spi_bus_config_t bus_cfg = {};
@@ -146,6 +150,25 @@ namespace STORAGE_Utils {
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(ret));
             } else {
+                // SD spec: at least 74 clock cycles with CS high to reset card to SPI mode
+                ch422g_pin_write(4, 1); // SD_CS high
+                spi_device_handle_t dummy;
+                spi_device_interface_config_t dev_cfg = {};
+                dev_cfg.clock_speed_hz = 400000;
+                dev_cfg.mode = 0;
+                dev_cfg.spics_io_num = -1;
+                dev_cfg.queue_size = 1;
+                ret = spi_bus_add_device((spi_host_device_t)host.slot, &dev_cfg, &dummy);
+                if (ret == ESP_OK) {
+                    uint8_t tx[10] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+                    spi_transaction_t t = {};
+                    t.length = 80; // bits
+                    t.tx_buffer = tx;
+                    spi_device_transmit(dummy, &t);
+                    spi_bus_remove_device(dummy);
+                }
+                ch422g_pin_write(4, 0); // SD_CS low — card now in SPI mode
+
                 sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
                 slot_config.gpio_cs = (gpio_num_t)-1;
                 slot_config.host_id = (spi_host_device_t)host.slot;
@@ -159,8 +182,8 @@ namespace STORAGE_Utils {
                 ret = esp_vfs_fat_sdspi_mount("/sd", &host, &slot_config, &mount_config, &card);
                 if (ret == ESP_OK) {
                     sdAvailable = true;
-                    sdmmc_card_print_info(stdout, card);
-                    ESP_LOGI(TAG, "SD card mounted");
+                    ESP_LOGI(TAG, "SD card mounted (%lluMB)",
+                        ((uint64_t)card->csd.capacity) * 512 / (1024 * 1024));
                     createDirectoryStructure();
                     loadFramesFromSD();
                 } else {

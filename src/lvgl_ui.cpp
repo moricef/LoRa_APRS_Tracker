@@ -352,7 +352,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
 // Allocate display buffers
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-      static const int WS_BUF_LINES = 240;
+      static const int WS_BUF_LINES = SCREEN_HEIGHT;
       buf1 = (lv_color_t *)ps_malloc(SCREEN_WIDTH * WS_BUF_LINES * sizeof(lv_color_t));
       buf2 = nullptr;
       ESP_LOGI(TAG, "LVGL buffer: %d KB PSRAM (bounce buffers active)", SCREEN_WIDTH * WS_BUF_LINES * (int)sizeof(lv_color_t) / 1024);
@@ -376,7 +376,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
         disp_drv.flush_cb = disp_flush_cb;
         disp_drv.draw_buf = &draw_buf;
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-        disp_drv.full_refresh = 0;
+        disp_drv.full_refresh = 1;  // full-frame buffer, single strip
 #else
         disp_drv.full_refresh = (buf2 != nullptr) ? 1 : 0;
 #endif
@@ -556,7 +556,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
       lv_init();
 
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-      static const int WS_BUF_LINES = 240;
+      static const int WS_BUF_LINES = SCREEN_HEIGHT;
       buf1 = (lv_color_t *)ps_malloc(SCREEN_WIDTH * WS_BUF_LINES * sizeof(lv_color_t));
       buf2 = nullptr;
       ESP_LOGI(TAG, "LVGL buffer: %d KB PSRAM (bounce buffers active)", SCREEN_WIDTH * WS_BUF_LINES * (int)sizeof(lv_color_t) / 1024);
@@ -587,7 +587,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
       disp_drv.flush_cb = disp_flush_cb;
       disp_drv.draw_buf = &draw_buf;
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-      disp_drv.full_refresh = 0;
+      disp_drv.full_refresh = 1;  // full-frame buffer, single strip
 #else
       disp_drv.full_refresh = (buf2 != nullptr) ? 1 : 0;
 #endif
