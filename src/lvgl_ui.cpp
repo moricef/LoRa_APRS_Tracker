@@ -661,8 +661,15 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     }
 #endif
 
-    // Handle LVGL tasks
-    lv_timer_handler();
+    // Handle LVGL tasks — per-call log for slow (>1ms) calls to see pattern
+    {
+        uint64_t lvT0 = esp_timer_get_time();
+        lv_timer_handler();
+        uint64_t lvDt = esp_timer_get_time() - lvT0;
+        if (lvDt > 1000) {
+            ESP_LOGW(TAG, "lv_timer_handler SLOW: %llu us", lvDt);
+        }
+    }
 
     // Check if Web-Conf was requested from Settings (deferred to avoid reentrancy)
     UISettings::checkPendingWebConf();

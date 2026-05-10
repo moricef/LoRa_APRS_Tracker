@@ -32,41 +32,56 @@
 
 | Issue | Symptom | Suspected cause |
 |-------|---------|-----------------|
-| Lack of fluidity (UI globally and map pan/zoom) | All screens stutter, map pan ≈ 5 fps | LVGL produces only 5 frames/s during interactive pan despite `lv_timer_handler()` being called 500×/s (main loop runs at 2 ms/iter). LVGL render time itself reports 0 ms, but the gap between two flushes is ~240 ms. Cause is not in our code but in the LVGL ↔ esp_lcd_rgb pipeline — investigation ongoing on the `feature/rgb-native-refactor` branch. Latest hypothesis: `direct_mode = 1` combined with `num_fbs = 2` introduces a long inter-frame wait. |
+| Map pan/zoom stutter | ~5 fps during drag, screen trembles | PSRAM bandwidth shared between LVGL rendering and DMA scan-out. `full_refresh=1` forces a full 800×480 re-render on every touch event (~168 ms). Investigation on `feature/rgb-native-refactor`. |
 
 ## Refactor in progress: `feature/rgb-native-refactor` branch
 
-Branch goal: stop layering patches on a SPI-era architecture. The previous design (sprite back/front + LVGL PSRAM buffer + flush copy + hardware double-fb) was 4 logical layers; on RGB the intermediate copies become visible artefacts. The refactor introduces a thin display HAL so the application stays platform-agnostic and only one file per target carries hardware-specific code.
+### Objective
 
-**Phase 1 (done, on branch, not yet validated):**
+Stop layering SPI-era patches onto RGB hardware. The previous design (sprite back/front + LVGL PSRAM buffer + flush copy + hardware double-fb) was 4 logical layers. The refactor introduces a display HAL so the app stays platform-agnostic.
 
-- New `include/display_hal.h` interface (init, readTouch).
-- New `src/display/display_hal_waveshare_rgb.cpp` — RGB panel init + LVGL display registered with hardware framebuffers as direct draw buffers (no separate PSRAM LVGL buffer, no flush_cb copy).
-- `src/lvgl_ui.cpp` Waveshare path now calls `DisplayHAL::init()` instead of inline panel/LVGL setup. Other targets (T-Deck Plus, Crowpanel) untouched.
-- `variants/waveshare_s3_touch_lcd_7/platformio.ini` excludes legacy `src/waveshare_lcd.cpp` from the build (its content migrated into the HAL file).
-- Diagnostic instrumentation: `flush_cb` reports frames/s, draw time, gap; `monitor_cb` reports LVGL render time and pixel count; `lv_obj_set_pos(map_canvas)` reports drag rate; main loop reports iteration time.
-- Sprite ping-pong (`swapViewportSprites`) replaces the 101 ms PSRAM `copyBackToFront` in the pan path. Confirmed effective (~500 µs) but did not fix the secousses on its own.
+### Commits on the branch
 
-**Findings so far on the branch:**
+1. `bded011d` — Sprite ping-pong (swapViewportSprites, ~500 µs) replaces 101 ms copyBackToFront. Did not fix stutter alone.
+2. `9ece8c42` — Display HAL interface + Waveshare RGB implementation. LVGL no longer allocates a separate PSRAM buffer; flush_cb copy eliminated. Other targets untouched.
+3. Current working state (uncommitted) — Switched from `full_refresh=1` + `direct_mode=1` + full-frame hw draw buffers to `full_refresh=0` + partial draw buffers (800×48 ×2) + `num_fbs=2`. Strip-based rendering instead of blocking full-frame cycles.
 
-- The 101 ms PSRAM copy was real but not the dominant cause.
-- The LVGL flush copy was real but not the dominant cause either.
-- The dominant cause is the LVGL frame cadence itself — only 5 frames/s during a pan, despite LVGL being polled at 500 Hz and reporting 0 ms render time. The wait happens between two complete frames, not inside one frame.
-- Hypothesis under test: `direct_mode = 1` + `num_fbs = 2` combination. Toggle pending hardware validation.
+### Configuration evolution (Waveshare)
 
-**Files to delete after validation:**
+| Attempt | num_fbs | full_refresh | direct_mode | draw bufs | Result |
+|---------|---------|-------------|-------------|-----------|--------|
+| Legacy (SPI-era) | 2 | 1 | 0 | 1× PSRAM 750KB, buf2=null | Copy PSRAM→fb, 101 ms copyBackToFront |
+| HAL v1 | 2 | 1 | 1 | hw fb[0], fb[1] (750KB each) | No copy, but LVGL blocks 110 ms/frame waiting for fb |
+| HAL v2 | 2 | 1 | 0 | hw fb[0], fb[1] | Tearing whole screen |
+| HAL v3 | 3 | 1 | 1 | hw fb[0], fb[1] | `lv_timer_handler` still blocks 110 ms — extra fb not visible to LVGL |
+| HAL v4 (current) | 2 | 0 | 0 | 2× 800×48 PSRAM (75KB each) | Strips at 20ms gap, 36-39 strips/s. Pending hardware test. |
 
-- `src/waveshare_lcd.cpp` and `include/waveshare_lcd.h` — content fully migrated to the HAL, file already excluded from the build.
+### Key finding
+
+`full_refresh=1` was the root bottleneck. LVGL re-blits the entire 768×768 map canvas into the 800×480 fb on every touch event. At ~30 MB/s effective PSRAM bandwidth (shared with 46 MB/s DMA scan-out), this takes ≈168 ms → 5 fps. The `monitor_cb` reported 0 ms because it measures LVGL's internal dispatch time, not the accumulated wait on the shared PSRAM bus.
+
+With `full_refresh=0` + partial buffers (48-line strips), LVGL only touches the dirty area. 39 strips/s at 6ms per strip = the same total PSRAM work, but broken into non-blocking chunks. Combined with `num_fbs=2` for atomic VSYNC swap → no tearing during strip accumulation.
+
+### Files to delete after validation
+
+- `src/waveshare_lcd.cpp` and `include/waveshare_lcd.h` — content migrated to HAL, excluded from build.
 
 ## Investigated and ruled out
 
 | Hypothesis | Test | Result |
 |-----------|------|--------|
-| Clamp blocks tile shift | Raised clamp to PAN_TILE_THRESHOLD | No effect — tile shifts confirmed in logs |
+| PSRAM copy back→front (101 ms) | Ping-pong swap (~500 µs) | ✅ Fixed, not dominant |
+| LVGL→fb flush copy | HAL direct mode (hw fb as draw buf) | ✅ Fixed, not dominant |
+| Main loop too slow | Measured: 500 iters/s, avg 2 ms | ✅ Ruled out |
+| `lv_timer_handler` blocked by hw | Per-call timing: 110-170 ms spikes | Confirmed — internal LVGL/esp_lcd wait |
+| `num_fbs=3` would fix hw wait | Tested: same 110 ms block, 3rd fb invisible to LVGL | ❌ Ruled out |
+| `direct_mode=0` + `num_fbs=2` | Tested: whole-screen tearing | ❌ Worse |
+| `num_fbs=1` + partial buffers | Tested: 39 strips/s but tearing (no atomic swap) | ❌ Tearing |
+| `full_refresh=1` bottleneck | Confirmed: 168 ms/frame = shared PSRAM bus saturation | ✅ Root cause found |
+| Clamp blocks tile shift | Raised clamp to PAN_TILE_THRESHOLD | No effect |
 | resetZoom clears offset too early | Deferred to applyRenderedViewport | No effect |
 | VSYNC semaphore timeout | Removed `waveshare_wait_vsync()` | No effect |
 | 1-frame offset/content mismatch | `lv_obj_set_pos` in applyRenderedViewport | No effect |
-| Stale content drifts during render | Freeze canvas pos when `redraw_in_progress` | No effect |
 | NAV false colors | `rgb565_nonswapped` on viewport + glyph sprites | ✅ Fixed |
 | Raster false colors | Reverted tile cache sprites to default `rgb565_2Byte` (PNG writes LE directly via getBuffer, bypassing LGFX) | ✅ Fixed |
 | GPS error spam | `#if !defined(WAVESHARE_S3_TOUCH_LCD_7)` guard | ✅ Fixed |

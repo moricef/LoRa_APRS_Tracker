@@ -15,11 +15,12 @@
 // =============================================================================
 // Waveshare 7" S3 Touch LCD — RGB direct framebuffer mode
 //
-// Architecture: LVGL writes directly into one of the two hardware framebuffers
-// exposed by esp_lcd_rgb_panel (num_fbs=2). The flush callback hands the
-// completed framebuffer back to esp_lcd, which performs the swap on the next
-// VSYNC. No intermediate PSRAM buffer, no copy in flush_cb. Eliminates the
-// PSRAM DMA conflict that caused tearing/jerks during pan/zoom.
+// Architecture: two hardware framebuffers in PSRAM (num_fbs=2) with two
+// small partial draw buffers (48 lines each) also in PSRAM. LVGL renders
+// dirty strips into its draw buffers; flush_cb copies each strip to the
+// back framebuffer via draw_bitmap. DMA scans the front fb. On VSYNC the
+// roles swap atomically — no tearing, no blocking. LVGL never waits for
+// a hardware fb because its own draw buffers are separate and small.
 // =============================================================================
 
 namespace {
@@ -90,8 +91,8 @@ bool panel_init() {
 
     cfg.data_width             = 16;
     cfg.bits_per_pixel         = 16;
-    cfg.num_fbs                = 2;
-    cfg.bounce_buffer_size_px  = LCD_HRES * 10;
+    cfg.num_fbs                = 2;   // double-buffer: back for strips, front for DMA
+    cfg.bounce_buffer_size_px  = LCD_HRES * 10;  // DRAM bounce for DMA
     cfg.dma_burst_size         = 64;
 
     cfg.hsync_gpio_num = 46;
@@ -176,12 +177,24 @@ void disp_monitor_cb(lv_disp_drv_t* /*drv*/, uint32_t time_ms, uint32_t px) {
 }
 
 bool lvgl_register() {
-    // Both LVGL buffers point directly at the hardware framebuffers in PSRAM.
-    // LVGL alternates between them on each refresh (full_refresh=1 + double-buf).
-    lv_disp_draw_buf_init(&draw_buf,
-                          (lv_color_t*)fb_arr[0],
-                          (lv_color_t*)fb_arr[1],
-                          LCD_HRES * LCD_VRES);
+    // Partial draw buffers in PSRAM: 1/10 screen height = 48 lines.
+    // Two buffers so LVGL can render the next strip while the current
+    // one is being flushed. full_refresh=0 → only dirty areas rendered.
+    constexpr int LVGL_BUF_LINES = 48;
+    constexpr int LVGL_BUF_SIZE  = LCD_HRES * LVGL_BUF_LINES;
+
+    static lv_color_t* buf1 = nullptr;
+    static lv_color_t* buf2 = nullptr;
+    buf1 = (lv_color_t*)heap_caps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    buf2 = (lv_color_t*)heap_caps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    if (!buf1 || !buf2) {
+        ESP_LOGE(TAG, "Failed to allocate LVGL partial draw buffers");
+        if (buf1) { heap_caps_free(buf1); buf1 = nullptr; }
+        if (buf2) { heap_caps_free(buf2); buf2 = nullptr; }
+        return false;
+    }
+
+    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LVGL_BUF_SIZE);
 
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res        = LCD_HRES;
@@ -189,16 +202,14 @@ bool lvgl_register() {
     disp_drv.flush_cb       = disp_flush_cb;
     disp_drv.monitor_cb     = disp_monitor_cb;
     disp_drv.draw_buf       = &draw_buf;
-    disp_drv.full_refresh   = 1;
-    // direct_mode disabled — empirically forces a long wait between frames
-    // when combined with num_fbs=2. Without it, LVGL still alternates
-    // between the two hardware framebuffers as draw buffers.
+    disp_drv.full_refresh   = 0;
     disp_drv.direct_mode    = 0;
     if (lv_disp_drv_register(&disp_drv) == nullptr) {
         ESP_LOGE(TAG, "lv_disp_drv_register failed");
         return false;
     }
-    ESP_LOGI(TAG, "LVGL registered: direct mode + double hw fb");
+    ESP_LOGI(TAG, "LVGL registered: partial buffers %dx%d x2 (%d KB each) + hw double fb",
+                  LCD_HRES, LVGL_BUF_LINES, LVGL_BUF_SIZE * 2 / 1024);
     return true;
 }
 
