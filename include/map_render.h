@@ -13,6 +13,11 @@ namespace MapRender {
     // Caller MUST hold MapEngine::renderLock.
     void copyBackToFront();
 
+    // Ping-pong: swap back/front sprite pointers and rebind LVGL canvas buffer.
+    // Replaces the 101 ms PSRAM memcpy of copyBackToFront in the pan/zoom path.
+    // Caller MUST hold MapEngine::renderLock.
+    void swapViewportSprites();
+
     // Apply rendered viewport: copy sprite to front, update canvas position & UI labels.
     // Call after render completes (NAV async done) or after GPS pan.
     void applyRenderedViewport();

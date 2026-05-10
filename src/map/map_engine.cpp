@@ -331,11 +331,16 @@ namespace MapEngine {
                     regionPtrs[r] = latest.regions[r];
 
                 if (latest.isRaster) {
-                    ESP_LOGD(TAG, "Async raster render: Z%d (%.4f, %.4f)",
-                                  latest.zoom, latest.centerLat, latest.centerLon);
+                    uint64_t rT0 = esp_timer_get_time();
+                    ESP_LOGI(TAG, "RASTER render START Z%d tile(%d,%d) lat=%.4f lon=%.4f region=%s",
+                                  latest.zoom, latest.centerTileX, latest.centerTileY,
+                                  latest.centerLat, latest.centerLon, latest.regions[0]);
                     SD_Logger::updateCrashContext("MAP_RASTER", latest.centerLat, latest.centerLon);
-                    renderRasterViewport(latest.centerLat, latest.centerLon, latest.zoom,
-                                         *latest.targetSprite, latest.regions[0]);
+                    bool ok = renderRasterViewport(latest.centerLat, latest.centerLon, latest.zoom,
+                                                   *latest.targetSprite, latest.regions[0]);
+                    ESP_LOGI(TAG, "RASTER render END   Z%d tile(%d,%d) ok=%d total=%llu us",
+                                  latest.zoom, latest.centerTileX, latest.centerTileY,
+                                  (int)ok, esp_timer_get_time() - rT0);
                 } else {
                     ESP_LOGD(TAG, "Async NAV render: Z%d (%.4f, %.4f)",
                                   latest.zoom, latest.centerLat, latest.centerLon);
@@ -1727,6 +1732,8 @@ namespace MapEngine {
         map.fillSprite(map.color565(0x2F, 0x4F, 0x4F));
 
         int tilesLoaded = 0;
+        int hits = 0, missesLoaded = 0, missesNotFound = 0, missesDecodeFail = 0, skippedOutside = 0;
+        uint64_t sdLoadTotalUs = 0;
 
         // Direct sprite-to-sprite buffer copy with clipping (bypasses LGFX pipeline)
         auto blitTileToViewport = [&](LGFX_Sprite* src, int dstX, int dstY) {
@@ -1758,16 +1765,20 @@ namespace MapEngine {
                 int offsetY = viewportH / 2 - subTileOffsetY + dy * MAP_TILE_SIZE;
 
                 // Skip tiles completely outside viewport
-                if (offsetX + MAP_TILE_SIZE <= 0 || offsetX >= viewportW) continue;
-                if (offsetY + MAP_TILE_SIZE <= 0 || offsetY >= viewportH) continue;
+                if (offsetX + MAP_TILE_SIZE <= 0 || offsetX >= viewportW) { skippedOutside++; continue; }
+                if (offsetY + MAP_TILE_SIZE <= 0 || offsetY >= viewportH) { skippedOutside++; continue; }
 
                 MapEngine::CachedTile* cacheSlot = getRasterCacheSlot(zoom, tileX, tileY);
-                if (!cacheSlot) continue;
+                if (!cacheSlot) {
+                    ESP_LOGW(TAG, "RASTER no cache slot for tile(%d,%d) Z%d", tileX, tileY, zoom);
+                    continue;
+                }
 
                 // If slot is valid, it's a cache hit.
                 if (cacheSlot->isValid) {
                     blitTileToViewport(cacheSlot->sprite, offsetX, offsetY);
                     tilesLoaded++;
+                    hits++;
                     continue;
                 }
 
@@ -1790,15 +1801,22 @@ namespace MapEngine {
                     xSemaphoreGiveRecursive(spiMutex);
                 }
 
-                if (!found) continue;
+                if (!found) {
+                    missesNotFound++;
+                    ESP_LOGW(TAG, "RASTER tile(%d,%d) Z%d not found on SD", tileX, tileY, zoom);
+                    continue;
+                }
 
                 // Decode tile into the sprite provided by the cache slot
                 LGFX_Sprite* tileSprite = cacheSlot->sprite;
                 bool decoded = false;
+                uint64_t sdT0 = esp_timer_get_time();
                 if (xSemaphoreTake(spriteMutex, pdMS_TO_TICKS(2000)) == pdTRUE) {
                     decoded = renderTile(path, 0, 0, *tileSprite, (uint8_t)zoom);
                     xSemaphoreGive(spriteMutex);
                 }
+                uint64_t sdDt = esp_timer_get_time() - sdT0;
+                sdLoadTotalUs += sdDt;
 
                 if (decoded) {
                     blitTileToViewport(tileSprite, offsetX, offsetY);
@@ -1807,15 +1825,20 @@ namespace MapEngine {
                     cacheSlot->filePath[sizeof(cacheSlot->filePath) - 1] = '\0';
                     cacheSlot->isValid = true;
                     tilesLoaded++;
+                    missesLoaded++;
+                    ESP_LOGI(TAG, "RASTER tile(%d,%d) Z%d SD-loaded in %llu us", tileX, tileY, zoom, sdDt);
                 } else {
                     cacheSlot->isValid = false; // Ensure it's marked as invalid on failure
+                    missesDecodeFail++;
+                    ESP_LOGW(TAG, "RASTER tile(%d,%d) Z%d decode FAIL after %llu us", tileX, tileY, zoom, sdDt);
                 }
             }
         }
 
         uint64_t endTime = esp_timer_get_time();
-        ESP_LOGD(TAG, "Raster viewport: %llu ms, %d tiles loaded, Z%d",
-                      (endTime - startTime) / 1000, tilesLoaded, zoom);
+        ESP_LOGI(TAG, "RASTER viewport done: %llu ms total, hits=%d sdLoaded=%d notFound=%d decodeFail=%d skipped=%d sdTotal=%llu us",
+                      (endTime - startTime) / 1000, hits, missesLoaded,
+                      missesNotFound, missesDecodeFail, skippedOutside, sdLoadTotalUs);
 
         // Release render lock
         renderActive_ = false;

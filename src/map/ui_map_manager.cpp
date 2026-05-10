@@ -333,8 +333,11 @@ void redraw_map_canvas() {
                 MapEngine::enqueueNavRender(req);
                 navRenderPending = true;
 
-                ESP_LOGD(TAG, "Raster render enqueued Z%d - PSRAM free: %u KB",
-                              map_current_zoom, ESP.getFreePsram() / 1024);
+                ESP_LOGI(TAG, "RASTER enqueue Z%d tile(%d,%d) lat=%.4f lon=%.4f region=%s PSRAM=%uKB",
+                              map_current_zoom, renderTileX, renderTileY,
+                              map_center_lat, map_center_lon,
+                              map_current_region.c_str(),
+                              ESP.getFreePsram() / 1024);
             }
 
             // Return early — map_refresh_timer_cb handles memcpy + stations when done

@@ -147,6 +147,7 @@ namespace MapRender {
         uint16_t* dst = (uint16_t*)frontViewportSprite->getBuffer();
         if (!src || !dst) return;
 
+        uint64_t t0 = esp_timer_get_time();
         const int totalPixels = MAP_SPRITE_SIZE * MAP_SPRITE_SIZE;
 #if LV_COLOR_16_SWAP
         if (!navModeActive) {
@@ -160,11 +161,35 @@ namespace MapRender {
 #else
         memcpy(dst, src, totalPixels * sizeof(uint16_t));
 #endif
+        uint64_t dt = esp_timer_get_time() - t0;
+        ESP_LOGI(TAG, "copyBackToFront: %llu us (%dx%d, swap=%d, nav=%d)",
+                      dt, MAP_SPRITE_SIZE, MAP_SPRITE_SIZE,
+                      (int)LV_COLOR_16_SWAP, (int)navModeActive);
+    }
+
+    void swapViewportSprites() {
+        if (!backViewportSprite || !frontViewportSprite || !map_canvas) return;
+        uint64_t t0 = esp_timer_get_time();
+
+        // Pointer swap: what the render task just wrote becomes the displayed sprite,
+        // what was displayed becomes the next render target.
+        LGFX_Sprite* tmp = frontViewportSprite;
+        frontViewportSprite = backViewportSprite;
+        backViewportSprite  = tmp;
+
+        // Rebind LVGL canvas to the new front buffer
+        map_canvas_buf = (lv_color_t*)frontViewportSprite->getBuffer();
+        lv_canvas_set_buffer(map_canvas, map_canvas_buf,
+                             MAP_SPRITE_SIZE, MAP_SPRITE_SIZE, LV_IMG_CF_TRUE_COLOR);
+
+        uint64_t dt = esp_timer_get_time() - t0;
+        ESP_LOGI(TAG, "swapViewportSprites: %llu us", dt);
     }
 
     void applyRenderedViewport() {
         if (!backViewportSprite || !frontViewportSprite) return;
 
+        uint64_t applyT0 = esp_timer_get_time();
         if (MapEngine::renderLock) {
             if (xSemaphoreTake(MapEngine::renderLock, pdMS_TO_TICKS(50)) != pdTRUE) {
                 ESP_LOGW(TAG, "applyRenderedViewport: renderLock busy, retry next tick");
@@ -172,7 +197,7 @@ namespace MapRender {
             }
         }
 
-        copyBackToFront();
+        swapViewportSprites();
 
         if (MapEngine::renderLock) {
             xSemaphoreGive(MapEngine::renderLock);
@@ -271,27 +296,19 @@ namespace MapRender {
         }
 
         lv_obj_invalidate(map_canvas);
-        if (navRenderPending) {
-            ESP_LOGV(TAG, "Viewport applied (Z%d) sprTile(%d,%d) offset(%d,%d) — Core 0 still active, keeping pending",
-                          map_current_zoom, centerTileX, centerTileY, offsetX, offsetY);
-        } else {
-            ESP_LOGV(TAG, "Viewport applied (Z%d) sprTile(%d,%d) offset(%d,%d)",
-                          map_current_zoom, centerTileX, centerTileY, offsetX, offsetY);
-        }
+        uint64_t applyDt = esp_timer_get_time() - applyT0;
+        ESP_LOGI(TAG, "applyRenderedViewport: total %llu us (Z%d sprTile %d,%d off %d,%d pending=%d)",
+                      applyDt, map_current_zoom, centerTileX, centerTileY,
+                      offsetX, offsetY, (int)navRenderPending);
     }
 
     void refreshStationOverlay() {
         if (!map_canvas || !backViewportSprite || !frontViewportSprite) return;
 
-        if (MapEngine::renderLock) {
-            if (xSemaphoreTake(MapEngine::renderLock, pdMS_TO_TICKS(50)) != pdTRUE) {
-                return;
-            }
-        }
-        copyBackToFront();
-        if (MapEngine::renderLock) {
-            xSemaphoreGive(MapEngine::renderLock);
-        }
+        // Note: copyBackToFront removed. With ping-pong, back holds the previous
+        // displayed frame, not a clean map — copying it would revert the display.
+        // Overlays are drawn directly on top of the current front. When stations
+        // are re-introduced and need clean refresh, queue a full render instead.
 
         cleanup_station_buttons();
         draw_station_traces();
