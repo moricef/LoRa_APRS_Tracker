@@ -14,7 +14,7 @@ static const char *TAG = "LVGL";
 #include "LGFX_CrowPanel_35.h"
 #elif defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include "ch422g.h"
-#include "waveshare_lcd.h"
+#include "display_hal.h"
 uint8_t _ch422g_io_state = 0;
 #else
 #include "LGFX_TDeck.h"
@@ -168,30 +168,29 @@ uint32_t last_tick = 0;  // Non-static: accessed by UISettings for blocking loop
 // Track if LVGL display is already initialized
 static bool lvgl_display_initialized = false;
 
-// Display flush callback
+// Display flush callback (SPI panels only — Waveshare RGB has its own
+// flush_cb registered by DisplayHAL::init).
+#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
                           lv_color_t *color_p) {
     uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    esp_lcd_panel_draw_bitmap(ws_lcd_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_p);
-#else
     // SPI panels: mutex required (shared SPI bus with LoRa/SD)
     // Note: pushImageDMA not used — LVGL buffers are in PSRAM, SPI DMA requires SRAM source
     if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
         tft.pushImage(area->x1, area->y1, w, h, (uint16_t *)color_p);
         xSemaphoreGiveRecursive(spiMutex);
     }
-#endif
     lv_disp_flush_ready(drv);
 }
+#endif
 
 // Touch read callback
 static uint32_t lastTouchDebug = 0;
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
   uint16_t x, y;
-  if (gt911_read_touch(&x, &y)) {
+  if (DisplayHAL::readTouch(&x, &y)) {
     data->state = LV_INDEV_STATE_PR;
     data->point.x = x;
     data->point.y = y;
@@ -328,12 +327,6 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
     ch422g_init_hw();
-#endif
-
-    // Init display
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    waveshare_lcd_init();
-    if (screenBrightness > 0) ch422g_backlight_on();
 #else
     tft.init();
     #if defined(CROWPANEL_ADVANCE_35)
@@ -350,13 +343,18 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     if (!lvgl_display_initialized) {
       lv_init();
 
-// Allocate display buffers
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-      static const int WS_BUF_LINES = SCREEN_HEIGHT;
-      buf1 = (lv_color_t *)ps_malloc(SCREEN_WIDTH * WS_BUF_LINES * sizeof(lv_color_t));
-      buf2 = nullptr;
-      ESP_LOGI(TAG, "LVGL buffer: %d KB PSRAM (bounce buffers active)", SCREEN_WIDTH * WS_BUF_LINES * (int)sizeof(lv_color_t) / 1024);
-#elif defined(BOARD_HAS_PSRAM)
+      // RGB direct framebuffer mode: panel init + LVGL display registered
+      // by the HAL. LVGL writes straight into the hardware framebuffers,
+      // hardware swap on VSYNC, no flush copy.
+      if (!DisplayHAL::init()) {
+        ESP_LOGE(TAG, "DisplayHAL::init failed");
+        return;
+      }
+      if (screenBrightness > 0) ch422g_backlight_on();
+#else
+// Allocate display buffers
+#if defined(BOARD_HAS_PSRAM)
       buf1 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
       buf2 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
 #else
@@ -365,23 +363,16 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 #endif
 
       if (buf1) {
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-        lv_disp_draw_buf_init(&draw_buf, buf1, buf2, SCREEN_WIDTH * WS_BUF_LINES);
-#else
         lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LVGL_BUF_SIZE);
-#endif
         lv_disp_drv_init(&disp_drv);
         disp_drv.hor_res = SCREEN_WIDTH;
         disp_drv.ver_res = SCREEN_HEIGHT;
         disp_drv.flush_cb = disp_flush_cb;
         disp_drv.draw_buf = &draw_buf;
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-        disp_drv.full_refresh = 1;  // full-frame buffer, single strip
-#else
         disp_drv.full_refresh = (buf2 != nullptr) ? 1 : 0;
-#endif
         lv_disp_drv_register(&disp_drv);
       }
+#endif // WAVESHARE_S3_TOUCH_LCD_7
       lvgl_display_initialized = true;
     }
   }
@@ -541,8 +532,6 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     if (!lvgl_display_initialized) {
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
       ch422g_init_hw();
-      waveshare_lcd_init();
-      if (screenBrightness > 0) ch422g_backlight_on();
 #else
       displaySetBrightness(screenBrightness);
       tft.init();
@@ -556,11 +545,14 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
       lv_init();
 
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-      static const int WS_BUF_LINES = SCREEN_HEIGHT;
-      buf1 = (lv_color_t *)ps_malloc(SCREEN_WIDTH * WS_BUF_LINES * sizeof(lv_color_t));
-      buf2 = nullptr;
-      ESP_LOGI(TAG, "LVGL buffer: %d KB PSRAM (bounce buffers active)", SCREEN_WIDTH * WS_BUF_LINES * (int)sizeof(lv_color_t) / 1024);
-#elif defined(BOARD_HAS_PSRAM)
+      // RGB direct framebuffer mode: HAL handles panel + LVGL display.
+      if (!DisplayHAL::init()) {
+        ESP_LOGE(TAG, "DisplayHAL::init failed");
+        return;
+      }
+      if (screenBrightness > 0) ch422g_backlight_on();
+#else
+#if defined(BOARD_HAS_PSRAM)
       buf1 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
       buf2 = (lv_color_t *)ps_malloc(LVGL_BUF_SIZE * sizeof(lv_color_t));
       ESP_LOGI(TAG, "Using PSRAM for display buffers");
@@ -575,23 +567,16 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
         return;
       }
 
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-      lv_disp_draw_buf_init(&draw_buf, buf1, buf2, SCREEN_WIDTH * WS_BUF_LINES);
-#else
       lv_disp_draw_buf_init(&draw_buf, buf1, buf2, LVGL_BUF_SIZE);
-#endif
 
       lv_disp_drv_init(&disp_drv);
       disp_drv.hor_res = SCREEN_WIDTH;
       disp_drv.ver_res = SCREEN_HEIGHT;
       disp_drv.flush_cb = disp_flush_cb;
       disp_drv.draw_buf = &draw_buf;
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-      disp_drv.full_refresh = 1;  // full-frame buffer, single strip
-#else
       disp_drv.full_refresh = (buf2 != nullptr) ? 1 : 0;
-#endif
       lv_disp_drv_register(&disp_drv);
+#endif // WAVESHARE_S3_TOUCH_LCD_7
       lvgl_display_initialized = true;
     } else {
       ESP_LOGD(TAG, "Display already initialized by splash screen");

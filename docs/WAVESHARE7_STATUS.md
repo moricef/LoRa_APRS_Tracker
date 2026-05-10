@@ -32,7 +32,31 @@
 
 | Issue | Symptom | Suspected cause |
 |-------|---------|-----------------|
-| Map flickering on pan/zoom | Screen trembles during drag and zoom | PSRAM DMA conflict: LVGL renders to buf1 while bounce buffer DMA reads it. Single LVGL buffer (buf2=null) → no double-buffering at app level. |
+| Lack of fluidity (UI globally and map pan/zoom) | All screens stutter, map pan ≈ 5 fps | LVGL produces only 5 frames/s during interactive pan despite `lv_timer_handler()` being called 500×/s (main loop runs at 2 ms/iter). LVGL render time itself reports 0 ms, but the gap between two flushes is ~240 ms. Cause is not in our code but in the LVGL ↔ esp_lcd_rgb pipeline — investigation ongoing on the `feature/rgb-native-refactor` branch. Latest hypothesis: `direct_mode = 1` combined with `num_fbs = 2` introduces a long inter-frame wait. |
+
+## Refactor in progress: `feature/rgb-native-refactor` branch
+
+Branch goal: stop layering patches on a SPI-era architecture. The previous design (sprite back/front + LVGL PSRAM buffer + flush copy + hardware double-fb) was 4 logical layers; on RGB the intermediate copies become visible artefacts. The refactor introduces a thin display HAL so the application stays platform-agnostic and only one file per target carries hardware-specific code.
+
+**Phase 1 (done, on branch, not yet validated):**
+
+- New `include/display_hal.h` interface (init, readTouch).
+- New `src/display/display_hal_waveshare_rgb.cpp` — RGB panel init + LVGL display registered with hardware framebuffers as direct draw buffers (no separate PSRAM LVGL buffer, no flush_cb copy).
+- `src/lvgl_ui.cpp` Waveshare path now calls `DisplayHAL::init()` instead of inline panel/LVGL setup. Other targets (T-Deck Plus, Crowpanel) untouched.
+- `variants/waveshare_s3_touch_lcd_7/platformio.ini` excludes legacy `src/waveshare_lcd.cpp` from the build (its content migrated into the HAL file).
+- Diagnostic instrumentation: `flush_cb` reports frames/s, draw time, gap; `monitor_cb` reports LVGL render time and pixel count; `lv_obj_set_pos(map_canvas)` reports drag rate; main loop reports iteration time.
+- Sprite ping-pong (`swapViewportSprites`) replaces the 101 ms PSRAM `copyBackToFront` in the pan path. Confirmed effective (~500 µs) but did not fix the secousses on its own.
+
+**Findings so far on the branch:**
+
+- The 101 ms PSRAM copy was real but not the dominant cause.
+- The LVGL flush copy was real but not the dominant cause either.
+- The dominant cause is the LVGL frame cadence itself — only 5 frames/s during a pan, despite LVGL being polled at 500 Hz and reporting 0 ms render time. The wait happens between two complete frames, not inside one frame.
+- Hypothesis under test: `direct_mode = 1` + `num_fbs = 2` combination. Toggle pending hardware validation.
+
+**Files to delete after validation:**
+
+- `src/waveshare_lcd.cpp` and `include/waveshare_lcd.h` — content fully migrated to the HAL, file already excluded from the build.
 
 ## Investigated and ruled out
 

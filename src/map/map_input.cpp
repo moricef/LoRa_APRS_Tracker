@@ -278,6 +278,17 @@ namespace MapInput {
                     int16_t canvasX = -MAP_MARGIN_X - offsetX - navSubTileX;
                     int16_t canvasY = -MAP_MARGIN_Y - offsetY - navSubTileY;
                     lv_obj_set_pos(map_canvas, canvasX, canvasY);
+
+                    static uint32_t dragSetPosCount = 0;
+                    static uint32_t lastDragReportMs = 0;
+                    dragSetPosCount++;
+                    uint32_t nowMs = millis();
+                    if (lastDragReportMs == 0) lastDragReportMs = nowMs;
+                    if (nowMs - lastDragReportMs >= 1000) {
+                        ESP_LOGI(TAG, "drag set_pos (1s): %u calls", dragSetPosCount);
+                        dragSetPosCount = 0;
+                        lastDragReportMs = nowMs;
+                    }
                 }
 
                 float weight = 0.7f;

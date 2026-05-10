@@ -288,6 +288,30 @@ void setup() {
 
 void loop() {
     esp_task_wdt_reset();
+
+    // Main loop iteration timing — agrégat 1 s pour confirmer le bottleneck LVGL
+    static uint32_t loopCount = 0;
+    static uint64_t loopTotalUs = 0;
+    static uint64_t loopMaxUs = 0;
+    static uint64_t lastLoopReportUs = 0;
+    static uint64_t loopT0 = esp_timer_get_time();
+    {
+        uint64_t now = esp_timer_get_time();
+        uint64_t dt  = now - loopT0;
+        loopT0 = now;
+        loopCount++;
+        loopTotalUs += dt;
+        if (dt > loopMaxUs) loopMaxUs = dt;
+        if (lastLoopReportUs == 0) lastLoopReportUs = now;
+        if (now - lastLoopReportUs >= 1000000) {
+            uint32_t avgUs = loopCount ? (uint32_t)(loopTotalUs / loopCount) : 0;
+            ESP_LOGI(TAG, "main loop (1s): %u iters, avg %u us, max %llu us",
+                          loopCount, avgUs, loopMaxUs);
+            loopCount = 0; loopTotalUs = 0; loopMaxUs = 0;
+            lastLoopReportUs = now;
+        }
+    }
+
     currentBeacon = &Config.beacons[myBeaconsIndex];
     if (statusUpdate) {
         if (APRSPacketLib::checkNocall(currentBeacon->callsign)) {
