@@ -56,6 +56,9 @@ namespace LoRa_Utils {
     int getNextDataRate(int currentDataRate);
     void setup();
     void sendNewPacket(const String& newPacket);
+#if defined(LORA_ON_C3) && defined(USE_LVGL_UI)
+    void loraProtoBridgeInit();
+#endif
     void wakeRadio();
     ReceivedLoRaPacket receiveFromSleep();
     ReceivedLoRaPacket receivePacket();

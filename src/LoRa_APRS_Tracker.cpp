@@ -84,6 +84,11 @@ static const char *TAG = "Main";
 #include "trace_sd.h"
 #include "lvgl_ui.h"
 #endif
+#if defined(LORA_ON_C3) && defined(USE_LVGL_UI)
+#include "uart_link.h"
+void gpsProtoBridgeInit();
+void loraProtoBridgeInit();
+#endif
 
 
 String      versionDate             = "2026-01-12";
@@ -162,7 +167,7 @@ void setup() {
     ESP_LOGI(TAG, "CPU frequency: %d MHz", getCpuFrequencyMhz());
 
     // Turn off backlight immediately to avoid garbage display during init
-    #if defined(USE_LVGL_UI) && defined(BOARD_BL_PIN)
+    #if defined(USE_LVGL_UI) && defined(BOARD_BL_PIN) && (BOARD_BL_PIN >= 0)
         pinMode(BOARD_BL_PIN, OUTPUT);
         digitalWrite(BOARD_BL_PIN, LOW);
     #endif
@@ -210,7 +215,14 @@ void setup() {
         LVGL_UI::updateInitStatus("GPS...");
     #endif
     #if defined(LORA_ON_C3)
+        #ifdef USE_LVGL_UI
+        ESP_LOGI(TAG, "GPS on C3 co-processor, starting UART proto link");
+        UartLink::init();
+        gpsProtoBridgeInit();
+        loraProtoBridgeInit();
+        #else
         ESP_LOGI(TAG, "GPS on C3 co-processor, skipping UART init");
+        #endif
     #else
         GPS_Utils::setup();
     #endif
@@ -225,6 +237,22 @@ void setup() {
         LoRa_Utils::setup();
     #endif
     ESP_LOGI(TAG, "LoRa setup done");
+
+    // Waveshare S3 WROOM-1-N16R8: GPIO 26-37 are internal PSRAM OPI.
+    // Default notification pins collide: buzzerPinVcc=25, buzzerPinTone=33,
+    // ledTxPin=13, ledMessagePin=2 (LCD D12). Disable all.
+    #if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        Config.notification.ledTx      = false;
+        Config.notification.ledTxPin   = -1;
+        Config.notification.ledMessage = false;
+        Config.notification.ledMessagePin = -1;
+        Config.notification.buzzerActive = false;
+        Config.notification.buzzerPinTone = -1;
+        Config.notification.buzzerPinVcc = -1;
+        Config.notification.txBeep     = false;
+        Config.notification.messageRxBeep = false;
+        Config.notification.bootUpBeep = false;
+    #endif
 
     // Utils::i2cScannerForPeripherals(); // TEMPORARILY DISABLED
     ESP_LOGI(TAG, "I2C Scanner bypassed");
@@ -430,6 +458,9 @@ void loop() {
     lastTx = millis() - lastTxTime;
     if (gpsIsActive) {
         GPS_Utils::getData();
+    #if defined(LORA_ON_C3) && defined(USE_LVGL_UI)
+        UartLink::loop();  // drain UART, fire GPS/RX/status callbacks (after getData cleared newFixAvailable)
+    #endif
         bool gps_time_update = GPS_Utils::hasNewFix() && gpsFix.valid.time;
         bool gps_loc_update  = GPS_Utils::hasNewFix() && gpsFix.valid.location;
         GPS_Utils::setDateFromData();

@@ -32,6 +32,22 @@
 #endif
 
 // =============================================================================
+// Screen Transition Helper
+// =============================================================================
+// Waveshare 7" RGB has insufficient PSRAM bandwidth for animated transitions
+// (each frame requires a full 800x480 re-blit at ~150 ms). The slide animations
+// look choppy and reveal partial-render artefacts. On this board we switch
+// instantly. Other boards (T-Deck Plus SPI, Crowpanel) keep the slide anims.
+
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+#define UI_SCR_LOAD_ANIM(target, dir, time, delay, auto_del) \
+    do { (void)(dir); (void)(time); (void)(delay); (void)(auto_del); lv_scr_load(target); } while (0)
+#else
+#define UI_SCR_LOAD_ANIM(target, dir, time, delay, auto_del) \
+    lv_scr_load_anim((target), (dir), (time), (delay), (auto_del))
+#endif
+
+// =============================================================================
 // Color Constants (APRS-inspired palette)
 // =============================================================================
 

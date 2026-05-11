@@ -63,12 +63,19 @@ static const char *TAG = "GPS";
 
 bool        gpsIsActive     = true;
 
+static bool protoMode = false;
 
 namespace GPS_Utils {
 
+    void enableProtoMode() {
+        protoMode = true;
+        ESP_LOGI(TAG, "Proto mode — NMEA UART disabled, GPS from C3 bridge");
+    }
+
     void setup() {
-        if (disableGPS) {
-            ESP_LOGW(TAG, "GPS disabled");
+        if (disableGPS || protoMode) {
+            if (protoMode) ESP_LOGI(TAG, "Skipping NMEA UART (proto mode)");
+            else            ESP_LOGW(TAG, "GPS disabled");
             return;
         }
         #ifdef LIGHTTRACKER_PLUS_1_0
@@ -103,6 +110,7 @@ namespace GPS_Utils {
 
     void getData() {
         if (disableGPS) return;
+        if (protoMode) { newFixAvailable = false; return; }
         newFixAvailable = false;
         while (nmeaGPS.available(gpsSerial)) {
             gpsFix = nmeaGPS.read();
@@ -111,6 +119,7 @@ namespace GPS_Utils {
     }
 
     bool hasNewFix() { return newFixAvailable; }
+    void setNewFixAvailable() { newFixAvailable = true; }
 
     void setDateFromData() {
         if (gpsFix.valid.time && gpsFix.valid.date) {

@@ -24,6 +24,8 @@
 namespace GPS_Utils {
 
     void    setup();
+    void    enableProtoMode();   // skip NMEA init, feed via UART proto
+    void    setNewFixAvailable();
     void    calculateDistanceCourse(const String& callsign, double checkpointLatitude, double checkPointLongitude);
     void    getData();
     bool    hasNewFix();

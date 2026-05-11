@@ -20,6 +20,7 @@
 #include "station_utils.h"
 #include "gpx_writer.h"
 #include "lvgl_ui.h"
+#include "ui_common.h"
 #include "ui_map_manager.h"  // For SCREEN_WIDTH, SCREEN_HEIGHT, MAP_VISIBLE_HEIGHT, MAP_MARGIN_X/Y, MAP_TILE_SIZE, redraw_map_canvas
 #include "ui_dashboard.h"
 #include "ble_utils.h"
@@ -145,7 +146,7 @@ namespace MapInput {
         }
 
         // Retour explicite au dashboard avec del=true pour détruire la map et libérer la DRAM
-        lv_scr_load_anim(UIDashboard::getMainScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, true);
+        UI_SCR_LOAD_ANIM(UIDashboard::getMainScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, true);
         MapState::screen_map = nullptr;
     }
 

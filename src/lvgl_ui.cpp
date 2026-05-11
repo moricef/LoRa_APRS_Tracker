@@ -312,7 +312,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
       spiMutex = xSemaphoreCreateRecursiveMutex();
     }
 // Turn off backlight during init to avoid garbage display
-#ifdef BOARD_BL_PIN
+#if defined(BOARD_BL_PIN) && (BOARD_BL_PIN >= 0)
     pinMode(BOARD_BL_PIN, OUTPUT);
     digitalWrite(BOARD_BL_PIN, LOW);
 #endif

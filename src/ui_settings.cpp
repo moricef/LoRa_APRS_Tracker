@@ -140,12 +140,12 @@ static void nav_to_setup_timer_cb(lv_timer_t *timer);
 static void btn_back_clicked(lv_event_t *e) {
     ESP_LOGD(TAG, "BACK to dashboard");
     UIPopups::closeAll();
-    lv_scr_load_anim(UIScreens::getMainScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(UIScreens::getMainScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
 }
 
 static void btn_back_to_setup_clicked(lv_event_t *e) {
     ESP_LOGD(TAG, "BACK to setup");
-    lv_scr_load_anim(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
 }
 
 static void btn_wifi_back_clicked(lv_event_t *e) {
@@ -154,7 +154,7 @@ static void btn_wifi_back_clicked(lv_event_t *e) {
         lv_timer_del(wifi_update_timer);
         wifi_update_timer = nullptr;
     }
-    lv_scr_load_anim(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
 }
 
 static void btn_bluetooth_back_clicked(lv_event_t *e) {
@@ -163,11 +163,11 @@ static void btn_bluetooth_back_clicked(lv_event_t *e) {
         lv_timer_del(bluetooth_update_timer);
         bluetooth_update_timer = nullptr;
     }
-    lv_scr_load_anim(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
 }
 
 static void nav_to_setup_timer_cb(lv_timer_t *timer) {
-    lv_scr_load_anim(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
     lv_timer_del(timer);
 }
 
@@ -183,7 +183,7 @@ static void setup_item_callsign(lv_event_t *e) {
         current_callsign_btn = nullptr;
     }
     UISettings::createCallsignScreen();
-    lv_scr_load_anim(screen_callsign, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_callsign, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_frequency(lv_event_t *e) {
@@ -194,7 +194,7 @@ static void setup_item_frequency(lv_event_t *e) {
         current_freq_btn = nullptr;
     }
     UISettings::createFreqScreen();
-    lv_scr_load_anim(screen_freq, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_freq, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_speed(lv_event_t *e) {
@@ -205,7 +205,7 @@ static void setup_item_speed(lv_event_t *e) {
         current_speed_btn = nullptr;
     }
     UISettings::createSpeedScreen();
-    lv_scr_load_anim(screen_speed, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_speed, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_display(lv_event_t *e) {
@@ -213,7 +213,7 @@ static void setup_item_display(lv_event_t *e) {
     if (!screen_display) {
         UISettings::createDisplayScreen();
     }
-    lv_scr_load_anim(screen_display, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_display, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_sound(lv_event_t *e) {
@@ -221,7 +221,7 @@ static void setup_item_sound(lv_event_t *e) {
     if (!screen_sound) {
         UISettings::createSoundScreen();
     }
-    lv_scr_load_anim(screen_sound, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_sound, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_repeater(lv_event_t *e) {
@@ -229,7 +229,7 @@ static void setup_item_repeater(lv_event_t *e) {
     if (!screen_repeater) {
         UISettings::createRepeaterScreen();
     }
-    lv_scr_load_anim(screen_repeater, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_repeater, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_gps(lv_event_t *e) {
@@ -237,7 +237,7 @@ static void setup_item_gps(lv_event_t *e) {
     if (!screen_gps) {
         UISettings::createGPSScreen();
     }
-    lv_scr_load_anim(screen_gps, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_gps, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_wifi(lv_event_t *e) {
@@ -257,7 +257,7 @@ static void setup_item_wifi(lv_event_t *e) {
         wifi_rssi_label = nullptr;
     }
     UISettings::createWifiScreen();
-    lv_scr_load_anim(screen_wifi, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_wifi, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_bluetooth(lv_event_t *e) {
@@ -278,7 +278,7 @@ static void setup_item_bluetooth(lv_event_t *e) {
         bluetooth_device_row = nullptr;
     }
     UISettings::createBluetoothScreen();
-    lv_scr_load_anim(screen_bluetooth, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_bluetooth, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_reboot(lv_event_t *e) {
@@ -293,7 +293,7 @@ static void setup_item_about(lv_event_t *e) {
         screen_about = nullptr;
     }
     UISettings::createAboutScreen();
-    lv_scr_load_anim(screen_about, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_about, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 // =============================================================================
@@ -1989,7 +1989,7 @@ void UISettings::openWebConf() {
         lv_timer_handler();
         delay(3000);
 
-        lv_scr_load_anim(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+        UI_SCR_LOAD_ANIM(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
     }
 }
 
@@ -2218,16 +2218,16 @@ void UISettings::openSetup() {
     if (!screen_setup) {
         createSetupScreen();
     }
-    lv_scr_load_anim(screen_setup, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_setup, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 void UISettings::backToDashboard() {
     UIPopups::closeAll();
-    lv_scr_load_anim(UIScreens::getMainScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(UIScreens::getMainScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
 }
 
 void UISettings::backToSetup() {
-    lv_scr_load_anim(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
 }
 
 // =============================================================================

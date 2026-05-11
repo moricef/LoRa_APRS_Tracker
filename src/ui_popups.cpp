@@ -424,7 +424,7 @@ static void add_contact_btn_callback(lv_event_t *e) {
         lv_obj_t* msgScreen = UIScreens::getMsgScreen();
         lv_obj_t* tabview = UIScreens::getMsgTabview();
         if (msgScreen && tabview) {
-            lv_scr_load_anim(msgScreen, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+            UI_SCR_LOAD_ANIM(msgScreen, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
             lv_tabview_set_act(tabview, 2, LV_ANIM_ON); // 2 = Contacts tab
             UIScreens::populateContactsList();
             ESP_LOGI(TAG, "Navigated to Contacts tab");

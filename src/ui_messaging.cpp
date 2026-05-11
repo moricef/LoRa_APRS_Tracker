@@ -524,7 +524,7 @@ static void btn_conversation_back_clicked(lv_event_t *e) {
         if (list_aprs_global) {
             populate_msg_list(list_aprs_global, 0);
         }
-        lv_scr_load_anim(screen_msg, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+        UI_SCR_LOAD_ANIM(screen_msg, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
     }
 }
 
@@ -653,7 +653,7 @@ static void create_conversation_screen(const String &callsign) {
         if (old_screen) {
             lv_obj_del(old_screen);
         }
-        lv_scr_load_anim(screen_conversation, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+        UI_SCR_LOAD_ANIM(screen_conversation, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
     }
     ESP_LOGD(TAG, "Conversation screen created for %s with %d messages",
                   callsign.c_str(), messages.size());
@@ -1336,7 +1336,7 @@ static void btn_send_msg_clicked(lv_event_t *e) {
             if (compose_return_screen == screen_conversation) {
                 refresh_conversation_messages();
             }
-            lv_scr_load_anim(compose_return_screen, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+            UI_SCR_LOAD_ANIM(compose_return_screen, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
         } else {
             UIDashboard::returnToDashboard();
         }
@@ -1346,7 +1346,7 @@ static void btn_send_msg_clicked(lv_event_t *e) {
 static void btn_compose_back_clicked(lv_event_t *e) {
     compose_screen_active = false;
     if (compose_return_screen && lv_obj_is_valid(compose_return_screen)) {
-        lv_scr_load_anim(compose_return_screen, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+        UI_SCR_LOAD_ANIM(compose_return_screen, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
     } else {
         UIDashboard::returnToDashboard();
     }
@@ -1455,7 +1455,7 @@ static void btn_conversation_reply_clicked(lv_event_t *e) {
         lv_textarea_set_text(compose_to_input, current_conversation_callsign.c_str());
         current_focused_input = compose_msg_input;
         lv_keyboard_set_textarea(compose_keyboard, compose_msg_input);
-        lv_scr_load_anim(screen_compose, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+        UI_SCR_LOAD_ANIM(screen_compose, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
     }
 }
 
@@ -1475,7 +1475,7 @@ static void btn_compose_clicked(lv_event_t *e) {
     compose_screen_active = true;
     compose_return_screen = lv_scr_act();
     current_focused_input = compose_to_input;
-    lv_scr_load_anim(screen_compose, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_compose, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void btn_add_contact_clicked(lv_event_t *e) {
@@ -1660,7 +1660,7 @@ void openMessagesScreen() {
             populate_msg_list(list_aprs_global, 0);
         }
     }
-    lv_scr_load_anim(screen_msg, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_msg, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 void openComposeWithCallsign(const String& callsign) {
@@ -1675,7 +1675,7 @@ void openComposeWithCallsign(const String& callsign) {
     current_focused_input = compose_msg_input;
     lv_keyboard_set_textarea(compose_keyboard, compose_msg_input);
 
-    lv_scr_load_anim(screen_compose, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(screen_compose, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
     ESP_LOGD(TAG, "Opening compose for: %s", callsign.c_str());
 }
 

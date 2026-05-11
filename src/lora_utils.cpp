@@ -31,6 +31,9 @@
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #endif
+#if defined(LORA_ON_C3) && defined(USE_LVGL_UI)
+#include "uart_link.h"
+#endif
 
 extern Configuration    Config;
 extern LoraType         *currentLoRaType;
@@ -42,6 +45,35 @@ static const char *TAG = "LoRa";
 
 bool operationDone   = true;
 bool transmitFlag    = true;
+
+#if defined(LORA_ON_C3) && defined(USE_LVGL_UI)
+// Proto RX: packet buffered by UartLink callback, consumed by receivePacket()
+static String           protoRxText;
+static int              protoRxRssi      = 0;
+static float            protoRxSnr       = 0.0f;
+static int              protoRxFreqErr   = 0;
+static bool             protoRxPending   = false;
+
+static void onLoraRx(const lora_rx_t* rx)
+{
+    // APRS frames from C3 are raw (no RadioLib header). The existing
+    // msg_utils pipeline expects \x3c\xff\x01 prefix and strips it with
+    // substring(3). Prepend the prefix to keep the pipeline happy.
+    uint16_t len = rx->pkt_len;
+    if (len > PROTO_MAX_PAYLOAD - 8) len = PROTO_MAX_PAYLOAD - 8;
+    protoRxText    = String("\x3c\xff\x01") + String(reinterpret_cast<const char*>(rx->data), len);
+    protoRxRssi    = rx->rssi;
+    protoRxSnr     = (float)rx->snr / 4.0f;   // proto: snr dB×4 → float dB
+    protoRxFreqErr = (int)rx->freq_err;
+    protoRxPending = true;
+}
+
+void loraProtoBridgeInit()
+{
+    UartLink::setLoraRxHandler(onLoraRx);
+    ESP_LOGI(TAG, "LoRa proto bridge registered (TX via UartLink, RX via callback)");
+}
+#endif
 
 // Flags for configuration changes to apply outside ISR
 bool pendingFrequencyChange = false;
@@ -364,9 +396,6 @@ namespace LoRa_Utils {
 
     void sendNewPacket(const String& newPacket) {
         ESP_LOGI(TAG, "Tx ---> %s", newPacket.c_str());
-        /*logger.log(logging::LoggerLevel::LOGGER_LEVEL_WARN, "LoRa","Send data: %s", newPacket.c_str());
-        ESP_LOGE(TAG,"Send data: %s", newPacket.c_str());
-        ESP_LOGD(TAG,"Send data: %s", newPacket.c_str());*/
 
         if (Config.ptt.active) {
             compat_digitalWrite(Config.ptt.io_pin, Config.ptt.reverse ? COMPAT_LOW : COMPAT_HIGH);
@@ -375,7 +404,15 @@ namespace LoRa_Utils {
         if (Config.notification.ledTx) compat_digitalWrite(Config.notification.ledTxPin, COMPAT_HIGH);
         if (Config.notification.buzzerActive && Config.notification.txBeep) NOTIFICATION_Utils::beaconTxBeep();
 
-        // Acquire SPI mutex — SD card shares the same SPI bus
+#if defined(LORA_ON_C3) && defined(USE_LVGL_UI)
+        bool ok = UartLink::sendTxReq((const uint8_t*)newPacket.c_str(), newPacket.length());
+        transmitFlag = true;
+        if (ok) {
+            STORAGE_Utils::updateTxStats();
+        } else {
+            ESP_LOGE(TAG, "Tx failed: UartLink send error");
+        }
+#else
         if (spiMutex) xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY);
         int state = radio.transmit("\x3c\xff\x01" + newPacket);
         transmitFlag = true;
@@ -385,7 +422,8 @@ namespace LoRa_Utils {
         } else {
             ESP_LOGE(TAG, "Tx failed, code %d", state);
         }
-        
+#endif
+
         if (Config.notification.ledTx) compat_digitalWrite(Config.notification.ledTxPin, COMPAT_LOW);
         if (Config.ptt.active) {
             compat_delay(Config.ptt.postDelay);
@@ -394,13 +432,26 @@ namespace LoRa_Utils {
     }
 
     void wakeRadio() {
+#if defined(LORA_ON_C3) && defined(USE_LVGL_UI)
+        // C3 handles RX autonomously, nothing to wake
+#else
         if (spiMutex) xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY);
         radio.startReceive();
         if (spiMutex) xSemaphoreGiveRecursive(spiMutex);
+#endif
     }
 
     ReceivedLoRaPacket receiveFromSleep() {
         ReceivedLoRaPacket receivedLoraPacket;
+#if defined(LORA_ON_C3) && defined(USE_LVGL_UI)
+        if (protoRxPending) {
+            protoRxPending = false;
+            receivedLoraPacket.text      = protoRxText;
+            receivedLoraPacket.rssi      = protoRxRssi;
+            receivedLoraPacket.snr       = protoRxSnr;
+            receivedLoraPacket.freqError = protoRxFreqErr;
+        }
+#else
         String packet = "";
         if (spiMutex) xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY);
         int state = radio.readData(packet);
@@ -409,15 +460,25 @@ namespace LoRa_Utils {
             receivedLoraPacket.rssi       = radio.getRSSI();
             receivedLoraPacket.snr        = radio.getSNR();
             receivedLoraPacket.freqError  = radio.getFrequencyError();
-        } else {
-            //
         }
         if (spiMutex) xSemaphoreGiveRecursive(spiMutex);
+#endif
         return receivedLoraPacket;
     }
 
     ReceivedLoRaPacket receivePacket() {
         ReceivedLoRaPacket receivedLoraPacket;
+#if defined(LORA_ON_C3) && defined(USE_LVGL_UI)
+        if (protoRxPending) {
+            protoRxPending = false;
+            receivedLoraPacket.text      = protoRxText;
+            receivedLoraPacket.rssi      = protoRxRssi;
+            receivedLoraPacket.snr       = protoRxSnr;
+            receivedLoraPacket.freqError = protoRxFreqErr;
+            ESP_LOGI(TAG, "Rx ---> %s", protoRxText.c_str());
+        }
+        return receivedLoraPacket;
+#else
         String packet = "";
         if (operationDone) {
             operationDone = false;
@@ -442,6 +503,7 @@ namespace LoRa_Utils {
             if (spiMutex) xSemaphoreGiveRecursive(spiMutex);
         }
         return receivedLoraPacket;
+#endif
     }
 
     void sleepRadio() {

@@ -229,7 +229,7 @@ static void btn_map_clicked(lv_event_t *e) {
     // Hide loading popup now that map is ready
     UIPopups::hideMapLoading();
 
-    lv_scr_load_anim(MapState::screen_map, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+    UI_SCR_LOAD_ANIM(MapState::screen_map, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
     ESP_LOGD(TAG, "btn_map_clicked DONE");
 }
 
@@ -318,7 +318,7 @@ void createDashboard() {
     lv_obj_set_style_text_color(label_battery_pct, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(label_battery_pct, &lv_font_montserrat_12, 0);
 
-    // Main content area
+    // Main content area — flex column so labels stack with even spacing
     lv_obj_t *content = lv_obj_create(screen_main);
     lv_obj_set_size(content, SCREEN_WIDTH - 10, SCREEN_HEIGHT - STATUS_BAR_H - BTN_BAR_H - 10);
     lv_obj_set_pos(content, 5, CONTENT_TOP);
@@ -326,6 +326,13 @@ void createDashboard() {
     lv_obj_set_style_border_color(content, lv_color_hex(0x16213e), 0);
     lv_obj_set_style_radius(content, 8, 0);
     lv_obj_set_style_pad_all(content, 10, 0);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_set_style_pad_row(content, 12, 0);
+#else
+    lv_obj_set_style_pad_row(content, 8, 0);
+#endif
 
     // GPS info
     label_gps = lv_label_create(content);
@@ -337,7 +344,7 @@ void createDashboard() {
 #else
     lv_obj_set_style_text_font(label_gps, &lv_font_mono_14, 0);
 #endif
-    lv_obj_set_pos(label_gps, 0, 0);
+    lv_obj_set_width(label_gps, LV_PCT(100));
 
     // LoRa info
     label_lora = lv_label_create(content);
@@ -352,7 +359,7 @@ void createDashboard() {
 #else
     lv_obj_set_style_text_font(label_lora, &lv_font_mono_14, 0);
 #endif
-    lv_obj_set_pos(label_lora, 0, 55);
+    lv_obj_set_width(label_lora, LV_PCT(100));
 
     // Last RX stations (4 max)
     label_last_rx = lv_label_create(content);
@@ -364,7 +371,7 @@ void createDashboard() {
 #else
     lv_obj_set_style_text_font(label_last_rx, &lv_font_mono_14, 0);
 #endif
-    lv_obj_set_pos(label_last_rx, 0, 80);
+    lv_obj_set_width(label_last_rx, LV_PCT(100));
 
     // Bottom button bar
     lv_obj_t *btn_bar = lv_obj_create(screen_main);
@@ -576,7 +583,7 @@ void updateBluetooth() {
 
 void returnToDashboard() {
     if (screen_main) {
-        lv_scr_load_anim(screen_main, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
+        UI_SCR_LOAD_ANIM(screen_main, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
     }
 }
 

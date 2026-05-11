@@ -33,11 +33,11 @@ static inline void ch422g_init_hw() {
     gpio_set_level((gpio_num_t)4, 0);
     esp_rom_delay_us(100000);
     // IO1(TP_RST) + IO2(BL) + IO3(LCD_RST) + IO5 — TP_RST released
-    ch422g_write(CH422G_ADDR_IO, 0x2E);
+    ch422g_write(CH422G_ADDR_IO, 0x0E);
     esp_rom_delay_us(200000);
     gpio_set_direction((gpio_num_t)4, GPIO_MODE_INPUT);
 
-    _ch422g_io_state = 0x2E;
+    _ch422g_io_state = 0x0E;
 }
 
 static inline void ch422g_backlight_on() {
