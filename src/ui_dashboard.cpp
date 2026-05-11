@@ -515,7 +515,7 @@ void updateLastRx() {
         const DashboardRxEntry &e = entries[i];
 
         // No timestamp - details available in MSG > Frames
-        snprintf(line, sizeof(line), "\n#00ff00 %-9s  RSSI:%-4d  SNR:%-2.0f#",
+        snprintf(line, sizeof(line), "\n#00ff00 %-9.9s  RSSI:%-4d  SNR:%-3.0f#",
                  e.callsign.c_str(), e.rssi, e.snr);
         text += line;
     }

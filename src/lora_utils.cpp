@@ -56,17 +56,19 @@ static bool             protoRxPending   = false;
 
 static void onLoraRx(const lora_rx_t* rx)
 {
-    // C3 delivers TNC2-formatted frame with leading '<' delimiter.
-    // The existing msg_utils pipeline expects raw APRS without '<'
-    // (RadioLib strips it), so skip the delimiter when present.
-    // Prepend \x3c\xff\x01 RadioLib header so substring(3) stripping
-    // in the main loop keeps working.
+    // C3 sends the raw LoRa payload which may start with any prefix from the
+    // APRS-over-LoRa sync word \x3c\xff\x01 ('<', 0xFF, 0x01). Strip whichever
+    // leading bytes are present so the TNC2 content starts at offset.
+    // Prepend \x3c\xff\x01 so substring(3) in the main loop keeps working.
     uint16_t len = rx->pkt_len;
     if (len > PROTO_MAX_PAYLOAD - 8) len = PROTO_MAX_PAYLOAD - 8;
-    const char*   data   = reinterpret_cast<const char*>(rx->data);
-    uint16_t      offset = (len > 0 && data[0] == '<') ? 1 : 0;
+    const char*    data   = reinterpret_cast<const char*>(rx->data);
+    uint16_t       offset = 0;
+    if (len > 0 && (uint8_t)data[0] == 0x3c) offset = 1;           // skip '<'
+    if (len > offset + 1 && (uint8_t)data[offset] == 0xff
+                          && (uint8_t)data[offset + 1] == 0x01) offset += 2; // skip \xff\x01
     protoRxText = String("\x3c\xff\x01") + String(data + offset, len - offset);
-    protoRxRssi    = rx->rssi;
+    protoRxRssi    = rx->rssi / 10;            // proto: rssi dBm×10 → dBm
     protoRxSnr     = (float)rx->snr / 4.0f;   // proto: snr dB×4 → float dB
     protoRxFreqErr = (int)rx->freq_err;
     protoRxPending = true;
