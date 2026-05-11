@@ -3,11 +3,15 @@
 #ifdef USE_LVGL_UI
 
 #include "trace_sd.h"
-#include <SD.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <NMEAGPS.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <stdio.h>
+#include <string.h>
+#include "storage_utils.h"
 
 static const char* TAG = "TraceSD";
 
@@ -17,52 +21,52 @@ extern gps_fix gpsFix;
 static char currentFilePath[64] = "";
 static bool initialized = false;
 
-// Build today's filename from GPS date
 static void updateFilePath() {
     if (gpsFix.valid.date) {
         snprintf(currentFilePath, sizeof(currentFilePath),
-                 "/LoRa_Tracker/trace/trace_%04d%02d%02d.bin",
+                 SD_MOUNT_POINT "/LoRa_Tracker/trace/trace_%04d%02d%02d.bin",
                  2000 + gpsFix.dateTime.year, gpsFix.dateTime.month, gpsFix.dateTime.date);
     } else {
-        // Fallback: use a generic name until GPS date is available
-        strncpy(currentFilePath, "/LoRa_Tracker/trace/trace_nodate.bin", sizeof(currentFilePath));
+        strncpy(currentFilePath, SD_MOUNT_POINT "/LoRa_Tracker/trace/trace_nodate.bin",
+                sizeof(currentFilePath));
     }
 }
 
 namespace TraceSD {
 
-    // Called once at boot (from setup) — clears all previous session traces
     void clearPreviousTrace() {
         if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
             return;
         }
-        if (!SD.exists("/LoRa_Tracker/trace")) {
-            SD.mkdir("/LoRa_Tracker/trace");
+        struct stat st;
+        if (stat(SD_MOUNT_POINT "/LoRa_Tracker/trace", &st) != 0) {
+            mkdir(SD_MOUNT_POINT "/LoRa_Tracker/trace", 0775);
             xSemaphoreGiveRecursive(spiMutex);
             return;
         }
-        File dir = SD.open("/LoRa_Tracker/trace");
-        if (dir && dir.isDirectory()) {
-            File entry;
-            while ((entry = dir.openNextFile())) {
-                String name = String("/LoRa_Tracker/trace/") + entry.name();
-                entry.close();
-                SD.remove(name);
-                ESP_LOGI(TAG, "Cleared old trace: %s", name.c_str());
+        DIR* dir = opendir(SD_MOUNT_POINT "/LoRa_Tracker/trace");
+        if (dir) {
+            struct dirent* entry;
+            while ((entry = readdir(dir)) != nullptr) {
+                if (entry->d_name[0] == '.') continue;
+                char path[80];
+                snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/trace/%s", entry->d_name);
+                remove(path);
+                ESP_LOGI(TAG, "Cleared old trace: %s", path);
             }
-            dir.close();
+            closedir(dir);
         }
         xSemaphoreGiveRecursive(spiMutex);
     }
 
-    // Called each time map opens
     void init() {
         if (!initialized) {
             if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
                 return;
             }
-            if (!SD.exists("/LoRa_Tracker/trace")) {
-                SD.mkdir("/LoRa_Tracker/trace");
+            struct stat st;
+            if (stat(SD_MOUNT_POINT "/LoRa_Tracker/trace", &st) != 0) {
+                mkdir(SD_MOUNT_POINT "/LoRa_Tracker/trace", 0775);
             }
             xSemaphoreGiveRecursive(spiMutex);
         }
@@ -75,18 +79,17 @@ namespace TraceSD {
     void appendPoint(float lat, float lon, uint32_t time_ms) {
         if (!initialized) return;
 
-        // Update filename if GPS date became available or day changed
         updateFilePath();
 
         if (spiMutex == NULL || xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(200)) != pdTRUE) {
-            return;  // Skip this point rather than block rendering
+            return;
         }
 
-        File file = SD.open(currentFilePath, FILE_APPEND);
-        if (file) {
+        FILE* f = fopen(currentFilePath, "ab");
+        if (f) {
             TraceRecord rec = { lat, lon, time_ms };
-            file.write((const uint8_t*)&rec, sizeof(rec));
-            file.close();
+            fwrite(&rec, sizeof(rec), 1, f);
+            fclose(f);
         }
         xSemaphoreGiveRecursive(spiMutex);
     }
@@ -101,27 +104,23 @@ namespace TraceSD {
             return 0;
         }
 
-        File file = SD.open(currentFilePath, FILE_READ);
-        if (!file) {
+        FILE* f = fopen(currentFilePath, "rb");
+        if (!f) {
             xSemaphoreGiveRecursive(spiMutex);
             return 0;
         }
 
         int count = 0;
         TraceRecord rec;
-        while (file.available() >= (int)sizeof(rec) && count < maxPoints) {
-            if (file.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
-
-            // Bounding box filter
+        while (count < maxPoints && fread(&rec, sizeof(rec), 1, f) == 1) {
             if (rec.lat >= minLat && rec.lat <= maxLat &&
                 rec.lon >= minLon && rec.lon <= maxLon) {
                 outBuf[count++] = rec;
             }
         }
 
-        file.close();
+        fclose(f);
         xSemaphoreGiveRecursive(spiMutex);
-
         return count;
     }
 
@@ -134,11 +133,10 @@ namespace TraceSD {
             return 0;
         }
 
-        File file = SD.open(currentFilePath, FILE_READ);
+        struct stat st;
         int count = 0;
-        if (file) {
-            count = file.size() / sizeof(TraceRecord);
-            file.close();
+        if (stat(currentFilePath, &st) == 0) {
+            count = (int)(st.st_size / sizeof(TraceRecord));
         }
         xSemaphoreGiveRecursive(spiMutex);
         return count;

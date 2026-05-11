@@ -1485,13 +1485,14 @@ namespace MapEngine {
 
         if (isNavPoolActive()) {
             *outData = acquireNavSlot(entry->size);
+            // When pool is active, never fall back to ps_malloc: concurrent ps_malloc
+            // allocations fragment PSRAM, shrinking the largest free block from 70KB to
+            // 18KB and causing render vector reallocs to fail (partial renders).
+            // Skipping the tile here means at most NAV_POOL_MAX_SLOTS tiles per viewport,
+            // but those tiles render completely rather than all tiles rendering partially.
             if (!*outData) {
-                // Pool exhausted or tile too large — fallback to ps_malloc
-                *outData = (uint8_t*)ps_malloc(entry->size);
-                if (*outData) {
-                    ESP_LOGW(TAG, "NAV pool fallback: ps_malloc %d bytes (slots full or tile > %dKB)",
-                             (int)entry->size, NAV_POOL_SLOT_SIZE / 1024);
-                }
+                ESP_LOGW(TAG, "NAV pool slot unavailable for %d bytes — tile skipped (no ps_malloc to preserve PSRAM)",
+                         (int)entry->size);
             }
         } else {
             *outData = (uint8_t*)ps_malloc(entry->size);

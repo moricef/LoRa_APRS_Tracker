@@ -333,7 +333,7 @@ void loop() {
         if (lastLoopReportUs == 0) lastLoopReportUs = now;
         if (now - lastLoopReportUs >= 1000000) {
             uint32_t avgUs = loopCount ? (uint32_t)(loopTotalUs / loopCount) : 0;
-            ESP_LOGI(TAG, "main loop (1s): %u iters, avg %u us, max %llu us",
+            ESP_LOGD(TAG, "main loop (1s): %u iters, avg %u us, max %llu us",
                           loopCount, avgUs, loopMaxUs);
             loopCount = 0; loopTotalUs = 0; loopMaxUs = 0;
             lastLoopReportUs = now;
@@ -553,7 +553,7 @@ void loop() {
     static uint32_t lastHeartbeat = 0;
     if (millis() - lastMemLog >= 10000) {  // 10 seconds
         lastMemLog = millis();
-        ESP_LOGI(TAG, "DRAM: %u  PSRAM: %u  Largest DRAM: %u",
+        ESP_LOGD(TAG, "DRAM: %u  PSRAM: %u  Largest DRAM: %u",
                       heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                       heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                       heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));

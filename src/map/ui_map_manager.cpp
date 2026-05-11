@@ -476,8 +476,8 @@ void create_map_screen() {
 
     // Map canvas area (container clips the larger canvas to visible area)
     map_container = lv_obj_create(screen_map);
-    lv_obj_set_size(map_container, SCREEN_WIDTH, MAP_VISIBLE_HEIGHT);
-    lv_obj_set_pos(map_container, 0, 35);
+    lv_obj_set_size(map_container, MAP_VISIBLE_WIDTH, MAP_VISIBLE_HEIGHT);
+    lv_obj_set_pos(map_container, (SCREEN_WIDTH - MAP_VISIBLE_WIDTH) / 2, 35);
     lv_obj_set_style_bg_color(map_container, lv_color_hex(0x2F4F4F), 0);  // Dark slate gray
     lv_obj_set_style_border_width(map_container, 0, 0);
     lv_obj_set_style_radius(map_container, 0, 0);

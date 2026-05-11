@@ -63,7 +63,7 @@ void disp_flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_
     if (t1 - lastReportUs >= 1000000) {
         uint32_t avgDraw = flushCount ? (uint32_t)(totalDrawUs / flushCount) : 0;
         uint32_t avgGap  = flushCount ? (uint32_t)(intervalSumUs / flushCount) : 0;
-        ESP_LOGI(TAG, "flush stats (1s): %u frames, draw avg %u us, gap avg %u us",
+        ESP_LOGD(TAG, "flush stats (1s): %u frames, draw avg %u us, gap avg %u us",
                       flushCount, avgDraw, avgGap);
         flushCount = 0;
         totalDrawUs = 0;
@@ -166,7 +166,7 @@ void disp_monitor_cb(lv_disp_drv_t* /*drv*/, uint32_t time_ms, uint32_t px) {
     if (nowUs - lastReportUs >= 1000000) {
         uint32_t avgTime = cycles ? (totalTimeMs / cycles) : 0;
         uint32_t avgPx   = cycles ? (totalPx / cycles)     : 0;
-        ESP_LOGI(TAG, "LVGL render (1s): %u cycles, avg %u ms (max %u), avg %u px/cycle",
+        ESP_LOGD(TAG, "LVGL render (1s): %u cycles, avg %u ms (max %u), avg %u px/cycle",
                       cycles, avgTime, maxTimeMs, avgPx);
         cycles = 0;
         totalTimeMs = 0;
