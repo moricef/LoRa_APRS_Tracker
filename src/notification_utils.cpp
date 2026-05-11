@@ -157,13 +157,16 @@ namespace NOTIFICATION_Utils {
     }
 
     void stationHeardBeep() {
+        if (!Config.notification.buzzerActive || !Config.notification.messageRxBeep) return;
         #ifndef HAS_I2S
-            digitalWrite(Config.notification.buzzerPinVcc, HIGH);
+            if (Config.notification.buzzerPinVcc >= 0)
+                digitalWrite(Config.notification.buzzerPinVcc, HIGH);
         #endif
-        playTone(1200,100);
-        playTone(600,100);
+        if (Config.notification.buzzerPinTone >= 0) playTone(1200,100);
+        if (Config.notification.buzzerPinTone >= 0) playTone(600,100);
         #ifndef HAS_I2S
-            digitalWrite(Config.notification.buzzerPinVcc, LOW);
+            if (Config.notification.buzzerPinVcc >= 0)
+                digitalWrite(Config.notification.buzzerPinVcc, LOW);
         #endif
     }
 

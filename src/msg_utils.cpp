@@ -396,7 +396,7 @@ namespace MSG_Utils {
             } else if (ledTimeDelta > 1 * 1000) {
                 digitalWrite(Config.notification.ledMessagePin, LOW);
             }
-        } else if (!messageLed && digitalRead(Config.notification.ledMessagePin) == HIGH) {
+        } else if (!messageLed && Config.notification.ledMessagePin >= 0 && digitalRead(Config.notification.ledMessagePin) == HIGH) {
             digitalWrite(Config.notification.ledMessagePin, LOW);
         }
     }
