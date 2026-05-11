@@ -699,16 +699,23 @@ void create_map_screen() {
     // Display coordinates and station count (updated in redraw_map_canvas)
     map_info_label = lv_label_create(info_bar);
     char coords_text[64];
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    snprintf(coords_text, sizeof(coords_text), "  Lat:%.4f     Lon:%.4f     Stn:%d     d:-- a:--  ",
+             map_center_lat, map_center_lon, mapStationsCount);
+#else
     snprintf(coords_text, sizeof(coords_text), "Lat: %.4f  Lon: %.4f  Stations: %d",
              map_center_lat, map_center_lon, mapStationsCount);
+#endif
     lv_label_set_text(map_info_label, coords_text);
     lv_obj_set_style_text_color(map_info_label, lv_color_hex(0xaaaaaa), 0);
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
     lv_obj_set_style_text_font(map_info_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_width(map_info_label, lv_pct(100));
+    lv_obj_set_style_text_align(map_info_label, LV_TEXT_ALIGN_CENTER, 0);
 #else
     lv_obj_set_style_text_font(map_info_label, &lv_font_montserrat_12, 0);
-#endif
     lv_obj_center(map_info_label);
+#endif
 
     // Create periodic refresh timer for stations (10 seconds)
     if (map_refresh_timer) {

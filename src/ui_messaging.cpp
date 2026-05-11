@@ -1187,10 +1187,10 @@ static void populate_stats(lv_obj_t *cont) {
             // Column widths adjusted for balanced spacing and to fill width of 280px
             // New: Station (0, 100), Pkts (1, 40), RSSI (2, 70), SNR (3, 70) -> 100+40+70+70 = 280
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-            lv_table_set_col_width(stats_table, 0, 250);  // Station
-            lv_table_set_col_width(stats_table, 1, 100);  // Pkts
-            lv_table_set_col_width(stats_table, 2, 170);  // RSSI
-            lv_table_set_col_width(stats_table, 3, 170);  // SNR
+            lv_table_set_col_width(stats_table, 0, 280);  // Station
+            lv_table_set_col_width(stats_table, 1, 120);  // Pkts
+            lv_table_set_col_width(stats_table, 2, 190);  // RSSI
+            lv_table_set_col_width(stats_table, 3, 190);  // SNR
 #else
             lv_table_set_col_width(stats_table, 0, 100);  // Station
             lv_table_set_col_width(stats_table, 1, 40);   // Pkts

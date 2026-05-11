@@ -289,7 +289,11 @@ namespace MapRender {
 
         if (map_info_label) {
             char info_text[64];
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+            snprintf(info_text, sizeof(info_text), "  Lat:%.4f     Lon:%.4f     Stn:%d     d:%.1fm a:%.2f  ",
+#else
             snprintf(info_text, sizeof(info_text), "Lat:%.4f Lon:%.4f Stn:%d d:%.1fm a:%.2f",
+#endif
                      map_center_lat, map_center_lon, mapStationsCount,
                      gpsFilter.getLastDeltaMeters(), gpsFilter.getLastAlpha());
             lv_label_set_text(map_info_label, info_text);
@@ -316,7 +320,11 @@ namespace MapRender {
 
         if (map_info_label) {
             char info_text[64];
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+            snprintf(info_text, sizeof(info_text), "  Lat:%.4f     Lon:%.4f     Stn:%d     d:%.1fm a:%.2f  ",
+#else
             snprintf(info_text, sizeof(info_text), "Lat:%.4f Lon:%.4f Stn:%d d:%.1fm a:%.2f",
+#endif
                      map_center_lat, map_center_lon, mapStationsCount,
                      gpsFilter.getLastDeltaMeters(), gpsFilter.getLastAlpha());
             lv_label_set_text(map_info_label, info_text);
