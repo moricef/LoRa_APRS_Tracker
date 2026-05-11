@@ -680,12 +680,21 @@ void create_map_screen() {
     // Info bar at bottom
     map_info_bar = lv_obj_create(screen_map);
     lv_obj_t* info_bar = map_info_bar;
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_set_size(info_bar, SCREEN_WIDTH, 30);
+    lv_obj_set_pos(info_bar, 0, SCREEN_HEIGHT - 30);
+#else
     lv_obj_set_size(info_bar, SCREEN_WIDTH, 25);
     lv_obj_set_pos(info_bar, 0, SCREEN_HEIGHT - 25);
+#endif
     lv_obj_set_style_bg_color(info_bar, lv_color_hex(0x16213e), 0);
     lv_obj_set_style_border_width(info_bar, 0, 0);
     lv_obj_set_style_radius(info_bar, 0, 0);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_set_style_pad_all(info_bar, 4, 0);
+#else
     lv_obj_set_style_pad_all(info_bar, 2, 0);
+#endif
 
     // Display coordinates and station count (updated in redraw_map_canvas)
     map_info_label = lv_label_create(info_bar);
@@ -694,7 +703,11 @@ void create_map_screen() {
              map_center_lat, map_center_lon, mapStationsCount);
     lv_label_set_text(map_info_label, coords_text);
     lv_obj_set_style_text_color(map_info_label, lv_color_hex(0xaaaaaa), 0);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+    lv_obj_set_style_text_font(map_info_label, &lv_font_montserrat_14, 0);
+#else
     lv_obj_set_style_text_font(map_info_label, &lv_font_montserrat_12, 0);
+#endif
     lv_obj_center(map_info_label);
 
     // Create periodic refresh timer for stations (10 seconds)

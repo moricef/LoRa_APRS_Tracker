@@ -993,7 +993,11 @@ static void init_frame_pool(lv_obj_t *list) {
         lv_obj_set_width(cont, lv_pct(100));
         lv_obj_set_height(cont, LV_SIZE_CONTENT);
         lv_obj_set_style_bg_color(cont, lv_color_hex(0x0a0a14), 0);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        lv_obj_set_style_pad_all(cont, 10, 0);
+#else
         lv_obj_set_style_pad_all(cont, 6, 0);
+#endif
         lv_obj_set_style_border_width(cont, 1, LV_PART_MAIN);
         lv_obj_set_style_border_side(cont, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
         lv_obj_set_style_border_color(cont, lv_color_hex(0x333344), 0);
@@ -1004,7 +1008,11 @@ static void init_frame_pool(lv_obj_t *list) {
         lv_obj_t *label_summary = lv_label_create(cont);
         lv_obj_set_width(label_summary, lv_pct(100));
         lv_label_set_long_mode(label_summary, LV_LABEL_LONG_DOT);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+        lv_obj_set_style_text_font(label_summary, &lv_font_mono_16, 0);
+#else
         lv_obj_set_style_text_font(label_summary, &lv_font_mono_14, 0);
+#endif
 
         lv_obj_t *label_full = lv_label_create(cont);
         lv_obj_add_flag(label_full, LV_OBJ_FLAG_HIDDEN);
@@ -1134,7 +1142,11 @@ static void populate_stats(lv_obj_t *cont) {
         if (stats_title_lbl) {
             lv_label_set_text(stats_title_lbl, "Stations Heard");
             lv_obj_set_style_text_color(stats_title_lbl, lv_color_hex(0x4CAF50), 0);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+            lv_obj_set_style_text_font(stats_title_lbl, &lv_font_montserrat_18, 0);
+#else
             lv_obj_set_style_text_font(stats_title_lbl, &lv_font_montserrat_14, 0);
+#endif
         }
 
         stats_table = lv_table_create(cont);
@@ -1143,7 +1155,11 @@ static void populate_stats(lv_obj_t *cont) {
             lv_obj_set_width(stats_table, lv_pct(100));
             lv_obj_set_style_bg_color(stats_table, lv_color_hex(0x0f0f23), 0);
             lv_obj_set_style_border_color(stats_table, lv_color_hex(0x333344), 0);
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+            lv_obj_set_style_pad_all(stats_table, 5, LV_PART_ITEMS);
+#else
             lv_obj_set_style_pad_all(stats_table, 2, LV_PART_ITEMS);
+#endif
             // Default text color for table elements (data rows)
             lv_obj_set_style_text_color(stats_table, lv_color_hex(0x759a9e), LV_PART_ITEMS);
 
@@ -1151,7 +1167,11 @@ static void populate_stats(lv_obj_t *cont) {
             if (!style_header_text_initialized) { // Check if style is already initialized
                 lv_style_init(&style_header_text);
                 lv_style_set_text_color(&style_header_text, lv_color_hex(0xFF8C00)); // Orange
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+                lv_style_set_text_font(&style_header_text, &lv_font_montserrat_18); // Specify font for headers
+#else
                 lv_style_set_text_font(&style_header_text, &lv_font_montserrat_14); // Specify font for headers
+#endif
                     style_header_text_initialized = true; // Mark style as initialized
                 }
                 // Apply style for headers (using custom state)
@@ -1166,10 +1186,17 @@ static void populate_stats(lv_obj_t *cont) {
             // Column widths adjusted for balanced spacing and to fill width of 280px
             // Column widths adjusted for balanced spacing and to fill width of 280px
             // New: Station (0, 100), Pkts (1, 40), RSSI (2, 70), SNR (3, 70) -> 100+40+70+70 = 280
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
+            lv_table_set_col_width(stats_table, 0, 250);  // Station
+            lv_table_set_col_width(stats_table, 1, 100);  // Pkts
+            lv_table_set_col_width(stats_table, 2, 170);  // RSSI
+            lv_table_set_col_width(stats_table, 3, 170);  // SNR
+#else
             lv_table_set_col_width(stats_table, 0, 100);  // Station
             lv_table_set_col_width(stats_table, 1, 40);   // Pkts
             lv_table_set_col_width(stats_table, 2, 70);   // RSSI
             lv_table_set_col_width(stats_table, 3, 70);   // SNR
+#endif
 
             // Center text in all table columns
             lv_obj_set_style_text_align(stats_table, LV_TEXT_ALIGN_CENTER, LV_PART_ITEMS);

@@ -41,7 +41,7 @@ extern SemaphoreHandle_t spiMutex; // Declared extern for SPI bus mutex access
 #define SCREEN_WIDTH  800
 #define SCREEN_HEIGHT 480
 #define MAP_VISIBLE_WIDTH  768             // sprite width = 3×256, 16px margin each side of screen
-#define MAP_VISIBLE_HEIGHT (480 - 35 - 25)
+#define MAP_VISIBLE_HEIGHT (480 - 35 - 30)
 #define MAP_TILES_GRID     3
 #elif defined(CROWPANEL_ADVANCE_35)
 #define SCREEN_WIDTH  480
