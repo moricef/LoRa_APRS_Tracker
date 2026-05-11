@@ -318,7 +318,7 @@ void createDashboard() {
     lv_obj_set_style_text_color(label_battery_pct, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(label_battery_pct, &lv_font_montserrat_12, 0);
 
-    // Main content area — flex column so labels stack with even spacing
+    // Main content area
     lv_obj_t *content = lv_obj_create(screen_main);
     lv_obj_set_size(content, SCREEN_WIDTH - 10, SCREEN_HEIGHT - STATUS_BAR_H - BTN_BAR_H - 10);
     lv_obj_set_pos(content, 5, CONTENT_TOP);
@@ -326,25 +326,14 @@ void createDashboard() {
     lv_obj_set_style_border_color(content, lv_color_hex(0x16213e), 0);
     lv_obj_set_style_radius(content, 8, 0);
     lv_obj_set_style_pad_all(content, 10, 0);
-    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    lv_obj_set_style_pad_row(content, 12, 0);
-#else
-    lv_obj_set_style_pad_row(content, 8, 0);
-#endif
 
     // GPS info
     label_gps = lv_label_create(content);
     lv_label_set_text(label_gps, "GPS: -- sat  Loc: --------\nLat: --.----  Lon: "
                                  "--.----\nAlt: ---- m  Spd: --- km/h");
     lv_obj_set_style_text_color(label_gps, lv_color_hex(0x759a9e), 0);
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    lv_obj_set_style_text_font(label_gps, &lv_font_montserrat_18, 0);
-#else
-    lv_obj_set_style_text_font(label_gps, &lv_font_mono_14, 0);
-#endif
-    lv_obj_set_width(label_gps, LV_PCT(100));
+    lv_obj_set_style_text_font(label_gps, &lv_font_mono_16, 0);
+    lv_obj_set_pos(label_gps, 0, 0);
 
     // LoRa info
     label_lora = lv_label_create(content);
@@ -354,24 +343,24 @@ void createDashboard() {
     snprintf(lora_init, sizeof(lora_init), "LoRa: %.3f MHz  %d bps", freq, rate);
     lv_label_set_text(label_lora, lora_init);
     lv_obj_set_style_text_color(label_lora, lv_color_hex(0xff6b6b), 0);
+    lv_obj_set_style_text_font(label_lora, &lv_font_mono_16, 0);
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    lv_obj_set_style_text_font(label_lora, &lv_font_montserrat_18, 0);
+    lv_obj_set_pos(label_lora, 0, 70);
 #else
-    lv_obj_set_style_text_font(label_lora, &lv_font_mono_14, 0);
+    lv_obj_set_pos(label_lora, 0, 55);
 #endif
-    lv_obj_set_width(label_lora, LV_PCT(100));
 
     // Last RX stations (4 max)
     label_last_rx = lv_label_create(content);
     lv_label_set_recolor(label_last_rx, true);
     lv_label_set_text(label_last_rx, "Last RX:\n---");
     lv_obj_set_style_text_color(label_last_rx, lv_color_hex(0xffcc00), 0);
+    lv_obj_set_style_text_font(label_last_rx, &lv_font_mono_16, 0);
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    lv_obj_set_style_text_font(label_last_rx, &lv_font_montserrat_18, 0);
+    lv_obj_set_pos(label_last_rx, 0, 95);
 #else
-    lv_obj_set_style_text_font(label_last_rx, &lv_font_mono_14, 0);
+    lv_obj_set_pos(label_last_rx, 0, 80);
 #endif
-    lv_obj_set_width(label_last_rx, LV_PCT(100));
 
     // Bottom button bar
     lv_obj_t *btn_bar = lv_obj_create(screen_main);
@@ -526,7 +515,7 @@ void updateLastRx() {
         const DashboardRxEntry &e = entries[i];
 
         // No timestamp - details available in MSG > Frames
-        snprintf(line, sizeof(line), "\n#00ff00 %-9s RSSI:%-4d SNR:%-2.0f#",
+        snprintf(line, sizeof(line), "\n#00ff00 %-9s  RSSI:%-4d  SNR:%-2.0f#",
                  e.callsign.c_str(), e.rssi, e.snr);
         text += line;
     }

@@ -56,12 +56,16 @@ static bool             protoRxPending   = false;
 
 static void onLoraRx(const lora_rx_t* rx)
 {
-    // APRS frames from C3 are raw (no RadioLib header). The existing
-    // msg_utils pipeline expects \x3c\xff\x01 prefix and strips it with
-    // substring(3). Prepend the prefix to keep the pipeline happy.
+    // C3 delivers TNC2-formatted frame with leading '<' delimiter.
+    // The existing msg_utils pipeline expects raw APRS without '<'
+    // (RadioLib strips it), so skip the delimiter when present.
+    // Prepend \x3c\xff\x01 RadioLib header so substring(3) stripping
+    // in the main loop keeps working.
     uint16_t len = rx->pkt_len;
     if (len > PROTO_MAX_PAYLOAD - 8) len = PROTO_MAX_PAYLOAD - 8;
-    protoRxText    = String("\x3c\xff\x01") + String(reinterpret_cast<const char*>(rx->data), len);
+    const char*   data   = reinterpret_cast<const char*>(rx->data);
+    uint16_t      offset = (len > 0 && data[0] == '<') ? 1 : 0;
+    protoRxText = String("\x3c\xff\x01") + String(data + offset, len - offset);
     protoRxRssi    = rx->rssi;
     protoRxSnr     = (float)rx->snr / 4.0f;   // proto: snr dB×4 → float dB
     protoRxFreqErr = (int)rx->freq_err;
