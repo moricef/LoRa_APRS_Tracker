@@ -12,12 +12,13 @@ Format: **vMAJOR.MINOR.PATCH** (semver)
 
 ## Current Version
 
-**v2.7.3+dev** (2026.02.21)
+**v2.9.4** (2026.07.13)
 
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v2.9.4 | 2026.07.13 | **T-Deck**: GPS baud auto-detection (38400/9600), four-decimal LoRa frequency display, Waveshare port excluded from T-Deck builds |
 | v2.7.3+dev | 2026.03.03 | **Perf**: SD chunked DMA reads + display DMA flush (IceNav-v3) |
 | v2.7.2+dev | 2026.03.02 | **Core**: Migrate logger.log() → ESP_LOG*, fix Web-Conf reentrancy |
 | v2.7.1+dev | 2026.03.01 | **UI**: Fix Web-Config touch/watchdog + PSRAM LVGL allocator |

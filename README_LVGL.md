@@ -15,7 +15,7 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 | **Dashboard** | **Vector Map** | **Messaging** |
 
 ---
-## What's New in v2.9.x
+## What's New in v2.9.4
 - **Web Flasher Multi-Board** - Single-page web installer with board selector: T-Deck Plus 433, CrowPanel 3.5", T-Beam V1.2
 - **T-Beam V1.2 support** - Classic OLED tracker firmware with GNSS quality filtering and SmartBeacon advanced web config
 - **Strict 3D Fix (PDOP)** - New configurable mode to enforce PDOP filtering for altitude reliability, with a visual indicator on the dashboard.
