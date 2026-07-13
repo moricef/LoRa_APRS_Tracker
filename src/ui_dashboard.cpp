@@ -280,7 +280,7 @@ void createDashboard() {
     char lora_init[64];
     float freq = Config.loraTypes[loraIndex].frequency / 1000000.0;
     int rate = Config.loraTypes[loraIndex].dataRate;
-    snprintf(lora_init, sizeof(lora_init), "LoRa: %.3f MHz  %d bps", freq, rate);
+    snprintf(lora_init, sizeof(lora_init), "LoRa: %.4f MHz  %d bps", freq, rate);
     lv_label_set_text(label_lora, lora_init);
     lv_obj_set_style_text_color(label_lora, lv_color_hex(0xff6b6b), 0);
     lv_obj_set_style_text_font(label_lora, &lv_font_mono_14, 0);
@@ -420,7 +420,7 @@ void refreshLoRaInfo() {
         char buf[64];
         float freq = Config.loraTypes[loraIndex].frequency / 1000000.0;
         int rate = Config.loraTypes[loraIndex].dataRate;
-        snprintf(buf, sizeof(buf), "LoRa: %.3f MHz  %d bps", freq, rate);
+        snprintf(buf, sizeof(buf), "LoRa: %.4f MHz  %d bps", freq, rate);
         lv_label_set_text(label_lora, buf);
     }
 }

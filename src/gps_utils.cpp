@@ -63,6 +63,91 @@ static const char *TAG = "GPS";
 
 bool        gpsIsActive     = true;
 
+#ifdef TTGO_T_DECK_PLUS
+static int8_t nmeaHexValue(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+static bool detectNmeaAtBaud(uint32_t baud, uint32_t timeoutMs) {
+    gpsSerial.end();
+    delay(20);
+    gpsSerial.begin(baud, SERIAL_8N1, GPS_TX, GPS_RX);
+
+    bool inSentence = false;
+    bool inChecksum = false;
+    uint8_t checksum = 0;
+    uint8_t expectedChecksum = 0;
+    uint8_t checksumDigits = 0;
+    const uint32_t start = millis();
+
+    while (millis() - start < timeoutMs) {
+        while (gpsSerial.available()) {
+            const char c = (char)gpsSerial.read();
+
+            if (c == '$') {
+                inSentence = true;
+                inChecksum = false;
+                checksum = 0;
+                expectedChecksum = 0;
+                checksumDigits = 0;
+                continue;
+            }
+
+            if (!inSentence) continue;
+
+            if (c == '*') {
+                inChecksum = true;
+                continue;
+            }
+
+            if (c == '\r' || c == '\n') {
+                if (inChecksum && checksumDigits == 2 && checksum == expectedChecksum) {
+                    return true;
+                }
+                inSentence = false;
+                continue;
+            }
+
+            if (inChecksum) {
+                const int8_t value = nmeaHexValue(c);
+                if (value < 0 || checksumDigits >= 2) {
+                    inSentence = false;
+                    continue;
+                }
+                expectedChecksum = (expectedChecksum << 4) | (uint8_t)value;
+                checksumDigits++;
+            } else {
+                checksum ^= (uint8_t)c;
+            }
+        }
+        delay(1);
+    }
+
+    return false;
+}
+
+static uint32_t detectTDeckGpsBaud() {
+    constexpr uint32_t detectionTimeoutMs = 1500;
+
+    if (detectNmeaAtBaud(GPS_BAUD, detectionTimeoutMs)) {
+        return GPS_BAUD;
+    }
+    if (GPS_BAUD != 9600 && detectNmeaAtBaud(9600, detectionTimeoutMs)) {
+        return 9600;
+    }
+
+    gpsSerial.end();
+    delay(20);
+    gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_TX, GPS_RX);
+    ESP_LOGW(TAG, "No valid NMEA sentence during baud detection; using %u baud",
+             (unsigned)GPS_BAUD);
+    return GPS_BAUD;
+}
+#endif
+
 
 namespace GPS_Utils {
 
@@ -82,13 +167,17 @@ namespace GPS_Utils {
             delay(200);
         #endif
         
-        gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_TX, GPS_RX);
         #ifdef TTGO_T_DECK_PLUS
+            const uint32_t detectedBaud = detectTDeckGpsBaud();
+            ESP_LOGI(TAG, "T-Deck GPS detected at %u baud", (unsigned)detectedBaud);
+
             // L76K: restrict output to RMC, GGA, and GSA only (reduces UART load, speeds up parsing)
             // Note: The L76K module on the T-Deck may ignore this command depending on firmware/wiring,
             // but it is kept as best practice.
             delay(100);
             gpsSerial.print("$PMTK314,0,1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n");
+        #else
+            gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_TX, GPS_RX);
         #endif
     }
 
