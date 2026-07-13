@@ -683,6 +683,7 @@ void create_map_screen() {
     lv_label_set_text(map_info_label, coords_text);
     lv_obj_set_style_text_color(map_info_label, lv_color_hex(0xaaaaaa), 0);
     lv_obj_set_style_text_font(map_info_label, &lv_font_montserrat_12, 0);
+    MapRender::updateMapInfoLabel();
     lv_obj_center(map_info_label);
 
     // Create periodic refresh timer for stations (10 seconds)

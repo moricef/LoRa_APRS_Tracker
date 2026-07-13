@@ -353,6 +353,10 @@ namespace MapInput {
         offsetX = (int16_t)constrain(offsetX, -maxOffX, maxOffX);
         offsetY = (int16_t)constrain(offsetY, -maxOffY, maxOffY);
 
+        // Keep the displayed coordinates tied to the visual center while the
+        // finger or inertia moves the map, without waiting for a tile redraw.
+        MapRender::updateMapInfoLabel();
+
         int targetX = centerTileX;
         int targetY = centerTileY;
         int16_t tempX = offsetX, tempY = offsetY;

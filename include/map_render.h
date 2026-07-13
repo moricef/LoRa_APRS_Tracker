@@ -21,6 +21,9 @@ namespace MapRender {
     // ~10-50ms vs 500-3000ms for full re-render.
     void refreshStationOverlay();
 
+    // Update the info bar with the coordinates currently under the map center.
+    void updateMapInfoLabel();
+
     // Reset hit zones (call before redrawing stations)
     void cleanup_station_buttons();
 

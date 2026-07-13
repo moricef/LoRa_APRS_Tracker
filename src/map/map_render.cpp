@@ -141,6 +141,29 @@ static void drawStationOnCanvas(int canvasX, int canvasY,
 
 namespace MapRender {
 
+    void updateMapInfoLabel() {
+        if (!map_info_label) return;
+
+        // The rendered map may be shifted inside the viewport while panning.
+        // Convert the pixel currently under the screen center, not merely the
+        // last latitude/longitude used to render the backing sprite.
+        int visualCenterX = MAP_SPRITE_SIZE / 2 + offsetX + navSubTileX;
+        int visualCenterY = MAP_SPRITE_SIZE / 2 + offsetY + navSubTileY;
+        float visualLat = map_center_lat;
+        float visualLon = map_center_lon;
+        MapMath::pixelToLatLon(visualCenterX, visualCenterY,
+                               map_current_zoom, navModeActive,
+                               centerTileX, centerTileY,
+                               map_center_lat, map_center_lon,
+                               &visualLat, &visualLon);
+
+        char info_text[64];
+        snprintf(info_text, sizeof(info_text), "Lat:%.4f Lon:%.4f Stn:%d d:%.1fm a:%.2f",
+                 visualLat, visualLon, mapStationsCount,
+                 gpsFilter.getLastDeltaMeters(), gpsFilter.getLastAlpha());
+        lv_label_set_text(map_info_label, info_text);
+    }
+
     void copyBackToFront() {
         if (!backViewportSprite || !frontViewportSprite) return;
         uint16_t* src = (uint16_t*)backViewportSprite->getBuffer();
@@ -245,13 +268,7 @@ namespace MapRender {
         draw_station_traces();
         update_station_objects();
 
-        if (map_info_label) {
-            char info_text[64];
-            snprintf(info_text, sizeof(info_text), "Lat:%.4f Lon:%.4f Stn:%d d:%.1fm a:%.2f",
-                     map_center_lat, map_center_lon, mapStationsCount,
-                     gpsFilter.getLastDeltaMeters(), gpsFilter.getLastAlpha());
-            lv_label_set_text(map_info_label, info_text);
-        }
+        updateMapInfoLabel();
 
         lv_obj_invalidate(map_canvas);
         if (navRenderPending) {
@@ -280,13 +297,7 @@ namespace MapRender {
         draw_station_traces();
         update_station_objects();
 
-        if (map_info_label) {
-            char info_text[64];
-            snprintf(info_text, sizeof(info_text), "Lat:%.4f Lon:%.4f Stn:%d d:%.1fm a:%.2f",
-                     map_center_lat, map_center_lon, mapStationsCount,
-                     gpsFilter.getLastDeltaMeters(), gpsFilter.getLastAlpha());
-            lv_label_set_text(map_info_label, info_text);
-        }
+        updateMapInfoLabel();
 
         lv_obj_invalidate(map_canvas);
     }
