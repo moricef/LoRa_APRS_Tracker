@@ -385,6 +385,10 @@ namespace MapInput {
                           oldOffX, offsetX, oldOffY, offsetY, clampX, clampY, MAP_MARGIN_X, MAP_MARGIN_Y);
         }
 
+        // Keep the displayed coordinates tied to the visual center while the
+        // finger or inertia moves the map, without waiting for a tile redraw.
+        MapRender::updateMapInfoLabel();
+
         int targetX = centerTileX;
         int targetY = centerTileY;
         int16_t tempX = offsetX, tempY = offsetY;
