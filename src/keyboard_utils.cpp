@@ -23,6 +23,9 @@ static const char *TAG = "Keyboard";
 #include <NMEAGPS.h>
 #include "gps_utils.h"
 #include <Wire.h>
+#if defined(USE_LVGL_UI) && (defined(TTGO_T_DECK_GPS) || defined(TTGO_T_DECK_PLUS))
+#include <LovyanGFX.hpp>
+#endif
 #include "keyboard_utils.h"
 #include "winlink_utils.h"
 #include "station_utils.h"
@@ -862,21 +865,36 @@ namespace KEYBOARD_Utils {
         if (keyboardConnected) {
             uint32_t lastKey = millis() - keyboardTime;
             if (lastKey > 30 * 1000) keyDetected = false;
-            Wire.requestFrom(keyboardAddress, static_cast<uint8_t>(1));
-            while (Wire.available()) {
-                char c = Wire.read();
-                if (c != 0) {
-                    ESP_LOGD(TAG, "Key: %d (0x%02X) '%c'", c, c, (c >= 32 && c < 127) ? c : '?');
-                    keyboardTime = millis();
-                    processPressedKey(c);
+            char c = 0;
+            bool byteRead = false;
+            #if defined(USE_LVGL_UI) && (defined(TTGO_T_DECK_GPS) || defined(TTGO_T_DECK_PLUS))
+                uint8_t value = 0;
+                byteRead = lgfx::v1::i2c::transactionRead(
+                    0, keyboardAddress, &value, 1, 400000).has_value();
+                c = static_cast<char>(value);
+            #else
+                Wire.requestFrom(keyboardAddress, static_cast<uint8_t>(1));
+                if (Wire.available()) {
+                    c = Wire.read();
+                    byteRead = true;
                 }
+            #endif
+            if (byteRead && c != 0) {
+                ESP_LOGD(TAG, "Key: %d (0x%02X) '%c'", c, c, (c >= 32 && c < 127) ? c : '?');
+                keyboardTime = millis();
+                processPressedKey(c);
             }
         }
     }
 
     void setup() {
         if (!Config.simplifiedTrackerMode) {
-            if (keyboardAddress != 0x00) keyboardConnected = true;
+            if (keyboardAddress != 0x00) {
+                keyboardConnected = true;
+                ESP_LOGI(TAG, "Physical keyboard enabled");
+            }
+        } else {
+            ESP_LOGI(TAG, "Physical keyboard disabled by Simplified Tracker Mode");
         }
     }
 
