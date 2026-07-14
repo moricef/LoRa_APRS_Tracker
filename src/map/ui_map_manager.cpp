@@ -714,7 +714,6 @@ void create_map_screen() {
     lv_obj_set_style_text_align(map_info_label, LV_TEXT_ALIGN_CENTER, 0);
 #else
     lv_obj_set_style_text_font(map_info_label, &lv_font_montserrat_12, 0);
-    MapRender::updateMapInfoLabel();
     lv_obj_center(map_info_label);
 #endif
 
