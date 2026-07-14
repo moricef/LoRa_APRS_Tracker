@@ -21,6 +21,9 @@ static const char *TAG = "Utils";
 
 #include <APRSPacketLib.h>
 #include <Wire.h>
+#if defined(USE_LVGL_UI) && (defined(TTGO_T_DECK_GPS) || defined(TTGO_T_DECK_PLUS))
+#include <LovyanGFX.hpp>
+#endif
 #include "configuration.h"
 #include "board_pinout.h"
 #include "lora_utils.h"
@@ -191,14 +194,27 @@ namespace Utils {
             delay(500);
             const uint8_t keyboardAddr = 0x55;
             for (int i = 0; i < 10; ++i) {
-                Wire.beginTransmission(keyboardAddr);
-                int err = Wire.endTransmission();
-                if (err == 0) {
+                bool detected = false;
+                #ifdef USE_LVGL_UI
+                    // GT911 and keyboard share I2C_NUM_0. Once LovyanGFX has
+                    // initialized the touch controller, Arduino Wire must not
+                    // access that peripheral concurrently.
+                    uint8_t probe = 0;
+                    detected = lgfx::v1::i2c::transactionRead(
+                        0, keyboardAddr, &probe, 1, 400000).has_value();
+                #else
+                    Wire.beginTransmission(keyboardAddr);
+                    detected = (Wire.endTransmission() == 0);
+                #endif
+                if (detected) {
                     keyboardAddress = keyboardAddr;
-                    ESP_LOGI(TAG, "T-Deck Keyboard Connected to I2C");
+                    ESP_LOGI(TAG, "T-Deck Keyboard Connected to I2C (0x%02X)", keyboardAddr);
                     break;
                 }
                 delay(50);
+            }
+            if (keyboardAddress == 0x00) {
+                ESP_LOGW(TAG, "T-Deck Keyboard not detected at I2C 0x%02X", keyboardAddr);
             }
         #else
             for (addr = 1; addr < 0x7F; addr++) {
