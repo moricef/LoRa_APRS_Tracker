@@ -90,7 +90,7 @@ static const char *TAG = "Main";
 #endif
 
 
-String      versionDate             = "2026-01-12";
+String      versionDate             = "2026-07-15";
 String      versionNumber           = "2.4.1";
 Configuration                       Config;
 HardwareSerial                      gpsSerial(1);
