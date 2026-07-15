@@ -64,6 +64,7 @@ struct StationStats {
 // Dashboard Last RX cache (RAM only, max 4, cleared at boot)
 struct DashboardRxEntry {
     String callsign;
+    String rfTransmitter;
     int rssi;
     float snr;
     uint32_t timestamp;     // millis() when received
@@ -112,7 +113,8 @@ namespace STORAGE_Utils {
 
     // Raw frames logging
     bool logRawFrame(const String& frame, int rssi, float snr, bool isDirect);
-    void updateStationStats(const String& callsign, int rssi, float snr, bool isDirect);
+    void updateStationStats(const String& callsign, int rssi, float snr, bool isDirect,
+                            const String& rfTransmitter);
     const std::vector<String>& getLastFrames(int count);
     void checkFramesLogRotation();
     void loadFramesFromSD();

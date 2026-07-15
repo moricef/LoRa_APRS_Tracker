@@ -814,10 +814,12 @@ const std::vector<String>& getLastFrames(int count) {
     static const int DASHBOARD_RX_SIZE = 4;
     static std::vector<DashboardRxEntry> dashboardRx;
 
-    static void updateDashboardRx(const String& callsign, int rssi, float snr) {
+    static void updateDashboardRx(const String& callsign, int rssi, float snr,
+                                  const String& rfTransmitter) {
         // Add new entry at front
         DashboardRxEntry entry;
         entry.callsign = callsign;
+        entry.rfTransmitter = rfTransmitter;
         entry.rssi = rssi;
         entry.snr = snr;
         entry.timestamp = now(); // Unix timestamp for fixed time display
@@ -837,9 +839,10 @@ const std::vector<String>& getLastFrames(int count) {
     // ========== Per-station statistics ==========
 
     // Per-station statistics
-    void updateStationStats(const String& callsign, int rssi, float snr, bool isDirect) {
+    void updateStationStats(const String& callsign, int rssi, float snr, bool isDirect,
+                            const String& rfTransmitter) {
         // Update dashboard Last RX (RAM only, max 4)
-        updateDashboardRx(callsign, rssi, snr);
+        updateDashboardRx(callsign, rssi, snr, rfTransmitter);
 
         // Check if station already exists
         for (auto& s : stationStats) {

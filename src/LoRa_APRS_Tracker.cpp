@@ -367,11 +367,26 @@ void loop() {
         int pathStart = rawFrame.indexOf('>');
         int pathEnd = rawFrame.indexOf(':');
         bool isDirect = true; // Direct by default
+        String rfTransmitter;
 
         if (pathStart != -1 && pathEnd != -1) {
             String path = rawFrame.substring(pathStart + 1, pathEnd);
             if (path.indexOf('*') != -1) {
                 isDirect = false; // Asterisk found = Relayed
+
+                // The last path component marked as repeated is the station
+                // whose RF transmission was received directly.
+                int segmentStart = 0;
+                while (segmentStart < (int)path.length()) {
+                    int segmentEnd = path.indexOf(',', segmentStart);
+                    if (segmentEnd == -1) segmentEnd = path.length();
+                    String segment = path.substring(segmentStart, segmentEnd);
+                    if (segment.endsWith("*")) {
+                        segment.remove(segment.length() - 1);
+                        rfTransmitter = segment;
+                    }
+                    segmentStart = segmentEnd + 1;
+                }
             }
             // Update digi stats (original code)
             STORAGE_Utils::updateDigiStats(path);
@@ -384,7 +399,9 @@ void loop() {
         // --- 3. Per-station stats (Sender) ---
         if (pathStart > 0) {
             String sender = rawFrame.substring(0, pathStart);
-            STORAGE_Utils::updateStationStats(sender, packet.rssi, packet.snr, isDirect);
+            if (rfTransmitter.isEmpty()) rfTransmitter = sender;
+            STORAGE_Utils::updateStationStats(sender, packet.rssi, packet.snr,
+                                              isDirect, rfTransmitter);
         }
 
         #ifdef USE_LVGL_UI

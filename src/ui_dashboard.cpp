@@ -289,9 +289,9 @@ void createDashboard() {
     // Last RX stations (4 max)
     label_last_rx = lv_label_create(content);
     lv_label_set_recolor(label_last_rx, true);
-    lv_label_set_text(label_last_rx, "Last RX:\n---");
+    lv_label_set_text(label_last_rx, "Last RX:\nSOURCE    RSSI   SNR   RF-TX\n---");
     lv_obj_set_style_text_color(label_last_rx, lv_color_hex(0xffcc00), 0);
-    lv_obj_set_style_text_font(label_last_rx, &lv_font_mono_14, 0);
+    lv_obj_set_style_text_font(label_last_rx, &lv_font_mono_12, 0);
     lv_obj_set_pos(label_last_rx, 0, 80);
 
     // Bottom button bar
@@ -429,19 +429,19 @@ void updateLastRx() {
     if (!label_last_rx) return;
     const std::vector<DashboardRxEntry> &entries = STORAGE_Utils::getDashboardLastRx();
     if (entries.empty()) {
-        lv_label_set_text(label_last_rx, "Last RX:\n---");
+        lv_label_set_text(label_last_rx, "Last RX:\nSOURCE    RSSI   SNR   RF-TX\n---");
         return;
     }
 
-    String text = "Last RX:";
+    String text = "Last RX:\nSOURCE    RSSI   SNR   RF-TX";
     char line[128];
 
     for (size_t i = 0; i < entries.size() && i < 4; i++) {
         const DashboardRxEntry &e = entries[i];
 
         // No timestamp - details available in MSG > Frames
-        snprintf(line, sizeof(line), "\n#00ff00 %-9s RSSI:%-4d SNR:%-2.0f#",
-                 e.callsign.c_str(), e.rssi, e.snr);
+        snprintf(line, sizeof(line), "\n#00ff00 %-9.9s %4d   %3.0f   %-9.9s#",
+                 e.callsign.c_str(), e.rssi, e.snr, e.rfTransmitter.c_str());
         text += line;
     }
     lv_label_set_text(label_last_rx, text.c_str());
