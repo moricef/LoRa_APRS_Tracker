@@ -90,7 +90,7 @@ static const char *TAG = "Main";
 #endif
 
 
-String      versionDate             = "2026-07-15";
+String      versionDate             = "2026-07-16";
 String      versionNumber           = "2.4.1";
 Configuration                       Config;
 HardwareSerial                      gpsSerial(1);
@@ -383,7 +383,12 @@ void loop() {
                     String segment = path.substring(segmentStart, segmentEnd);
                     if (segment.endsWith("*")) {
                         segment.remove(segment.length() - 1);
-                        rfTransmitter = segment;
+                        // WIDEn-N and TRACEn-N are routing aliases, not station
+                        // callsigns. Keep the last explicit repeated callsign.
+                        if (!segment.startsWith("WIDE") &&
+                            !segment.startsWith("TRACE")) {
+                            rfTransmitter = segment;
+                        }
                     }
                     segmentStart = segmentEnd + 1;
                 }
@@ -399,7 +404,9 @@ void loop() {
         // --- 3. Per-station stats (Sender) ---
         if (pathStart > 0) {
             String sender = rawFrame.substring(0, pathStart);
-            if (rfTransmitter.isEmpty()) rfTransmitter = sender;
+            if (rfTransmitter.isEmpty()) {
+                rfTransmitter = isDirect ? sender : "?";
+            }
             STORAGE_Utils::updateStationStats(sender, packet.rssi, packet.snr,
                                               isDirect, rfTransmitter);
         }
