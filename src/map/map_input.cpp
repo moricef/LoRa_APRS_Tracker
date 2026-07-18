@@ -307,9 +307,14 @@ namespace MapInput {
             }
 
             if (!wasDragging) {
+                // Hit zones are stored in canvas space (canvasX - MAP_MARGIN_X).
+                // Convert them to current screen space using the live canvas
+                // position, which folds in offsetX/Y, navSubTileX/Y and any pan.
+                int canvasPosX = map_canvas ? lv_obj_get_x(map_canvas) : 0;
+                int canvasPosY = map_canvas ? lv_obj_get_y(map_canvas) : 0;
                 for (int i = 0; i < stationHitZoneCount; i++) {
-                    int16_t hx = stationHitZones[i].x;
-                    int16_t hy = stationHitZones[i].y;
+                    int16_t hx = stationHitZones[i].x + MAP_MARGIN_X + canvasPosX;
+                    int16_t hy = stationHitZones[i].y + MAP_MARGIN_Y + canvasPosY;
                     int16_t hw = stationHitZones[i].w;
                     int16_t hh = stationHitZones[i].h;
 
