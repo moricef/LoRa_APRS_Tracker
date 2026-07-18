@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Architecture Dual MCU : S3 + C3</title>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --text-color: #333;
+            --code-bg: #e9ecef;
+            --accent: #0366d6;
+            --table-border: #dee2e6;
+            --table-header: #f1f3f5;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            background-color: var(--bg-color);
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        h1, h2, h3 { color: #1a1a1a; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
+        h1 { font-size: 2.2em; color: var(--accent); }
+        h2 { font-size: 1.7em; margin-top: 1.5em; }
+        h3 { font-size: 1.3em; margin-top: 1.2em; border: none; }
+        code {
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            background-color: var(--code-bg);
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-size: 0.9em;
+            color: #d73a49;
+        }
+        pre {
+            background-color: #24292e;
+            color: #f8f8f2;
+            padding: 16px;
+            overflow: auto;
+            border-radius: 6px;
+        }
+        pre code { background-color: transparent; color: inherit; padding: 0; }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1.5em 0;
+            background: white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        th, td {
+            border: 1px solid var(--table-border);
+            padding: 12px 16px;
+            text-align: left;
+        }
+        th {
+            background-color: var(--table-header);
+            font-weight: 600;
+            color: #24292e;
+        }
+        tr:nth-child(even) { background-color: #fcfcfc; }
+        tr:hover { background-color: #f5f8fc; }
+        ul, ol { padding-left: 2em; }
+        li { margin-bottom: 0.5em; }
+        strong { color: #24292e; }
+    </style>
+</head>
+<body>
+<h1>Architecture Dual MCU : ESP32-S3 (UI) + ESP32-C3 (Radio/GNSS) — PCB maison</h1>
+<h2>Objectif</h2>
+<p>Se détacher des cartes commerciales préfabriquées (CrowPanel, Waveshare) et leurs compromis (pas de monitoring batterie, GPIO partagés, SPI SD lent, pas de TXEN/RXEN). PCB custom avec :</p>
+<ul>
+<li><strong>Écran 7&quot; RGB parallèle</strong> (800x480 ou 1024x600)</li>
+<li><strong>SDMMC</strong> pour les tuiles NAV (débit x5-x10 vs SPI SD)</li>
+<li><strong>Dual MCU</strong> : S3 dédié UI + C3 dédié radio/GNSS</li>
+<li><strong>Power management intégré</strong> : charge Li-ion + monitoring I2C</li>
+</ul>
+<h2>Pourquoi dual MCU</h2>
+<p>Un écran RGB 16-bit consomme <strong>20 GPIO</strong> sur le S3 (16 data + HSYNC + VSYNC + DE + PCLK). Il ne reste pas assez de GPIO pour caser LoRa SPI + GNSS UART + SD sur le même chip.</p>
+<p>La séparation S3/C3 élimine ce problème : le S3 gère l&#39;affichage + SD + UI, le C3 gère la radio + GPS de façon autonome. Les deux communiquent par UART.</p>
+<h2>Architecture</h2>
+<pre><code>+----------------------------+        UART         +-------------------------+
+|   ESP32-S3-WROOM-1-N16R8   | &lt;-----------------&gt; |   ESP32-C3-MINI-1       |
+|                             |  TX/RX + IRQ pin    |                         |
+|   - Ecran 7&quot; RGB 16-bit    |                      |   - GNSS UART + PPS     |
+|   - LVGL UI                 |  C3 TX -&gt; S3 RX     |   - LoRa SPI (SX1262)   |
+|   - SDMMC (tuiles NAV)     |  C3 RX &lt;- S3 TX     |   - SmartBeaconing      |
+|   - I2C (touch + fuel gauge)|  C3 IRQ -&gt; S3 GPIO  |   - Filtrage GPS        |
+|   - WiFi / BLE              |  GND commun          |   - Protocole binaire   |
+|   - USB-CDC (debug serial)  |                      |   - Debug via JTAG USB  |
+|   - I2S audio (MAX98357A)  |                      |                         |
++----------------------------+                      +-------------------------+
+         |                                                     |
+    [Li-ion 1S]                                           [Antenne LoRa]
+    [TP4056 charge]                                       [Antenne GNSS]
+    [MAX17048 I2C]
+</code></pre>
+<h2>Budget GPIO ESP32-S3</h2>
+<h3>Contrainte du module WROOM-1-N16R8</h3>
+<p>GPIO 26-37 sont utilisées en interne par le module (flash + PSRAM OPI).
+GPIO disponibles : <strong>0-21, 38-48</strong> = 33 pins.</p>
+<p>GPIO 19/20 = USB (fixe). Avec USB-CDC pour le serial debug, GPIO 43/44 sont libérées.</p>
+<h3>Allocation détaillée</h3>
+<table>
+<thead>
+<tr>
+<th>Fonction</th>
+<th>GPIO</th>
+<th>Nb</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>LCD RGB R0-R4</strong></td>
+<td>14, 21, 47, 48, 45</td>
+<td>5</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LCD RGB G0-G5</strong></td>
+<td>9, 46, 3, 8, 16, 1</td>
+<td>6</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LCD RGB B0-B4</strong></td>
+<td>15, 7, 6, 5, 4</td>
+<td>5</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LCD PCLK</strong></td>
+<td>42</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LCD DE</strong></td>
+<td>40</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LCD VSYNC</strong></td>
+<td>41</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LCD HSYNC</strong></td>
+<td>39</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LCD Backlight</strong></td>
+<td>2</td>
+<td>1</td>
+<td>PWM</td>
+</tr>
+<tr>
+<td><strong>USB D-/D+</strong></td>
+<td>19, 20</td>
+<td>2</td>
+<td>USB-CDC (serial debug + flash)</td>
+</tr>
+<tr>
+<td><strong>SDMMC CLK</strong></td>
+<td>10</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>SDMMC CMD</strong></td>
+<td>11</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>SDMMC D0</strong></td>
+<td>12</td>
+<td>1</td>
+<td>SDMMC 1-bit minimum</td>
+</tr>
+<tr>
+<td><strong>I2C SDA</strong></td>
+<td>38</td>
+<td>1</td>
+<td>Touch GT911 + MAX17048 (bus partagé)</td>
+</tr>
+<tr>
+<td><strong>I2C SCL</strong></td>
+<td>43</td>
+<td>1</td>
+<td>Libéré car USB-CDC remplace UART0</td>
+</tr>
+<tr>
+<td><strong>UART S3←C3 RX</strong></td>
+<td>44</td>
+<td>1</td>
+<td>Libéré car USB-CDC remplace UART0</td>
+</tr>
+<tr>
+<td><strong>UART S3→C3 TX</strong></td>
+<td>0</td>
+<td>1</td>
+<td>Strapping pin — pull-up externe requis</td>
+</tr>
+<tr>
+<td><strong>IRQ C3→S3</strong></td>
+<td>13</td>
+<td>1</td>
+<td>Trame APRS en attente</td>
+</tr>
+<tr>
+<td><strong>I2S BCLK</strong></td>
+<td>17</td>
+<td>1</td>
+<td>Haut-parleur via DAC I2S (ex: MAX98357A)</td>
+</tr>
+<tr>
+<td><strong>I2S LRCLK</strong></td>
+<td>18</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>I2S DOUT</strong></td>
+<td>13</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td></td>
+<td><strong>34</strong></td>
+<td>Sur 33 dispo — voir arbitrage ci-dessous</td>
+</tr>
+</tbody></table>
+<h3>Arbitrage : 34 pins nécessaires, 33 disponibles</h3>
+<p>I2S prend 3 GPIO (BCLK, LRCLK, DOUT) au lieu de 1 pour un buzzer PWM. On dépasse de 1 pin.</p>
+<p><strong>Options :</strong></p>
+<ol>
+<li><strong>Sacrifier l&#39;IRQ hardware C3→S3</strong> (GPIO 13 → I2S DOUT) : la signalisation passe par le protocole UART (flag dans le heartbeat STATUS). Ajoute ~1-5 ms de latence, négligeable pour APRS.</li>
+<li><strong>SDMMC 1-bit sans spare</strong> : les 3 GPIO I2S prennent 13, 17, 18. Zéro spare. SDMMC 4-bit impossible sans sacrifier l&#39;I2S.</li>
+<li><strong>Passer au chip nu ESP32-S3FN16R8</strong> au lieu du module WROOM : GPIO 33-37 récupérables (~5 pins), mais design RF antenne WiFi à gérer sur le PCB.</li>
+</ol>
+<p><strong>Recommandation : option 1.</strong> L&#39;IRQ hardware est un confort, pas une nécessité. Le protocole UART gère déjà la signalisation. On garde I2S + SDMMC 1-bit + 1 spare (GPIO 18 libéré si I2S n&#39;utilise que BCLK=17, LRCLK=13, DOUT=18 — dans ce cas pas de spare non plus).</p>
+<p>Allocation finale sans IRQ hardware :</p>
+<table>
+<thead>
+<tr>
+<th>Fonction</th>
+<th>GPIO</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>I2S BCLK</td>
+<td>17</td>
+</tr>
+<tr>
+<td>I2S LRCLK</td>
+<td>18</td>
+</tr>
+<tr>
+<td>I2S DOUT</td>
+<td>13</td>
+</tr>
+</tbody></table>
+<p>Total : <strong>33/33 GPIO utilisées.</strong> Zéro spare sur le S3.</p>
+<h2>Budget GPIO ESP32-C3</h2>
+<p>Le C3 a ~22 GPIO. Allocation simple, marge large.</p>
+<table>
+<thead>
+<tr>
+<th>Fonction</th>
+<th>GPIO</th>
+<th>Nb</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>LoRa SCK</strong></td>
+<td>4</td>
+<td>1</td>
+<td>SPI2 (hors SPI0/1 flash)</td>
+</tr>
+<tr>
+<td><strong>LoRa MISO</strong></td>
+<td>5</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LoRa MOSI</strong></td>
+<td>6</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LoRa CS</strong></td>
+<td>7</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LoRa RST</strong></td>
+<td>3</td>
+<td>1</td>
+<td>Dédié — plus de partage avec TFT</td>
+</tr>
+<tr>
+<td><strong>LoRa BUSY</strong></td>
+<td>8</td>
+<td>1</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>LoRa DIO1</strong></td>
+<td>10</td>
+<td>1</td>
+<td>IRQ (TX_DONE, RX_DONE)</td>
+</tr>
+<tr>
+<td><strong>GNSS TX</strong></td>
+<td>0</td>
+<td>1</td>
+<td>UART1</td>
+</tr>
+<tr>
+<td><strong>GNSS RX</strong></td>
+<td>1</td>
+<td>1</td>
+<td>UART1</td>
+</tr>
+<tr>
+<td><strong>GNSS PPS</strong></td>
+<td>2</td>
+<td>1</td>
+<td>Interrupt</td>
+</tr>
+<tr>
+<td><strong>UART C3→S3 TX</strong></td>
+<td>21</td>
+<td>1</td>
+<td>UART0 réaffecté (debug via USB JTAG)</td>
+</tr>
+<tr>
+<td><strong>UART C3→S3 RX</strong></td>
+<td>20</td>
+<td>1</td>
+<td>UART0 réaffecté</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td></td>
+<td><strong>12</strong></td>
+<td></td>
+</tr>
+<tr>
+<td><strong>Libre</strong></td>
+<td>9, 11, 18, 19</td>
+<td><strong>4</strong></td>
+<td>TXEN, RXEN si module le requiert, LED status, spare</td>
+</tr>
+</tbody></table>
+<h3>Avantage clé : TXEN/RXEN disponibles</h3>
+<p>Si le module LoRa nécessite TXEN/RXEN (ex: HT-RA62 dans certaines configurations), GPIO 18 et 19 sont disponibles. Plus de compromis &quot;pas connecté sur le PCB&quot;.</p>
+<h2>Module LoRa recommandé</h2>
+<p>Pour le PCB maison, choisir un module compatible sans câblage TXEN/RXEN :</p>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Switch RF</th>
+<th>GPIO extras</th>
+<th>Recommandé</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Module original Elecrow (SX1262 868MHz)</td>
+<td>DIO2 interne</td>
+<td>Aucun</td>
+<td>Oui</td>
+</tr>
+<tr>
+<td>Seeed Wio-SX1262-LF (433MHz)</td>
+<td>DIO2 + RF_SW (1 GPIO)</td>
+<td>1</td>
+<td>Oui</td>
+</tr>
+<tr>
+<td>Heltec HT-RA62 (433MHz)</td>
+<td>DIO2 + TXEN/RXEN</td>
+<td>2 (ou 0 selon schéma)</td>
+<td>Possible, GPIO dispo sur C3</td>
+</tr>
+</tbody></table>
+<h2>Power Management (intégré au PCB)</h2>
+<h3>Charge batterie</h3>
+<ul>
+<li><strong>TP4056</strong> (ou MCP73831) : charge linéaire 1S Li-ion depuis USB 5V</li>
+<li>Courant de charge : 500mA-1A (résistance PROG)</li>
+<li>LED CHRG + LED STDBY</li>
+<li>Protection : sous-tension (DW01A + FS8205) ou module TP4056 intégré</li>
+</ul>
+<h3>Monitoring batterie</h3>
+<ul>
+<li><strong>MAX17048</strong> sur le bus I2C partagé (touch + fuel gauge)</li>
+<li>Adresse 0x36 (pas de conflit avec GT911 0x5D)</li>
+<li>VIN connecté directement au + batterie (pas au 3.3V régulé)</li>
+<li>Lecture SOC + tension depuis le S3</li>
+</ul>
+<h3>Régulation</h3>
+<pre><code>USB 5V ──┬── TP4056 ── Batterie 1S (3.0-4.2V)
+          │
+Batterie ─┴── LDO 3.3V (AMS1117-3.3 ou ME6211) ── S3 + C3 + Périphériques
+                                                      │
+                                              MAX17048 VIN (mesure cellule)
+</code></pre>
+<h3>Autonomie estimée</h3>
+<table>
+<thead>
+<tr>
+<th>Composant</th>
+<th>Courant typ.</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ESP32-S3 (LVGL actif, WiFi off)</td>
+<td>~80-120 mA</td>
+<td></td>
+</tr>
+<tr>
+<td>ESP32-C3 (LoRa RX)</td>
+<td>~25-40 mA</td>
+<td></td>
+</tr>
+<tr>
+<td>Écran 7&quot; RGB + backlight</td>
+<td>~100-200 mA</td>
+<td>Dépend de la luminosité</td>
+</tr>
+<tr>
+<td>GNSS</td>
+<td>~25-40 mA</td>
+<td></td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td><strong>~230-400 mA</strong></td>
+<td></td>
+</tr>
+</tbody></table>
+<p>Avec 2x 18650 1S2P (4400 mAh) : <strong>~11-19h</strong> d&#39;autonomie.</p>
+<h2>Protocole série C3 ↔ S3</h2>
+<h3>Liaison physique</h3>
+<ul>
+<li>UART 460800 baud (débit suffisant pour APRS, pas de bottleneck)</li>
+<li>GND commun (même PCB → pas de problème)</li>
+<li>Pas d&#39;IRQ hardware (GPIO S3 saturées par I2S) — signalisation via protocole UART</li>
+</ul>
+<h3>Format de trame</h3>
+<pre><code>[SYNC 0xAA] [TYPE 1B] [LEN 2B LE] [PAYLOAD 0-512B] [CRC16]
+</code></pre>
+<h3>Types de messages</h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Direction</th>
+<th>Contenu</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GPS_FIX</code> (0x01)</td>
+<td>C3→S3</td>
+<td>lat, lon, alt, speed, heading, sats, hdop, timestamp</td>
+</tr>
+<tr>
+<td><code>LORA_RX</code> (0x02)</td>
+<td>C3→S3</td>
+<td>Paquet APRS brut + RSSI + SNR</td>
+</tr>
+<tr>
+<td><code>LORA_TX_REQ</code> (0x10)</td>
+<td>S3→C3</td>
+<td>Paquet APRS à transmettre</td>
+</tr>
+<tr>
+<td><code>LORA_TX_ACK</code> (0x11)</td>
+<td>C3→S3</td>
+<td>Confirmation TX (success/fail + IRQ flags)</td>
+</tr>
+<tr>
+<td><code>CONFIG</code> (0x20)</td>
+<td>S3→C3</td>
+<td>Fréquence, puissance, params SmartBeacon</td>
+</tr>
+<tr>
+<td><code>STATUS</code> (0x30)</td>
+<td>C3→S3</td>
+<td>Heartbeat : état radio, GPS lock, erreurs</td>
+</tr>
+</tbody></table>
+<h3>Signalisation sans IRQ hardware</h3>
+<p>Sans broche IRQ dédiée (GPIO S3 toutes utilisées), la signalisation passe par le protocole UART :</p>
+<ol>
+<li>C3 reçoit une trame APRS → stocke dans FIFO → envoie directement sur UART</li>
+<li>S3 reçoit via interrupt UART (ring buffer hardware) → traite quand disponible</li>
+<li>CRC16 vérifié côté S3</li>
+<li>Le heartbeat STATUS (périodique) inclut un flag &quot;trames en attente&quot; en cas de non-ACK</li>
+</ol>
+<p>Pas de perte si le S3 est occupé : le ring buffer UART hardware (256-512 octets) + FIFO C3 absorbent le délai. Latence ajoutée : ~1-5 ms, négligeable pour APRS.</p>
+<h2>Firmware</h2>
+<h3>C3 — ESP-IDF natif (~1500 lignes)</h3>
+<ul>
+<li>Lecture GNSS via UART1 + filtrage anti-gigue (Doppler, sauts)</li>
+<li>SmartBeaconing autonome (cap, vitesse, distance)</li>
+<li>LoRa via SPI2 (RadioLib + EspHal)</li>
+<li>Protocole série binaire vers S3 (FIFO + CRC + IRQ)</li>
+<li>Pas d&#39;UI, pas de LVGL, pas de SD</li>
+</ul>
+<h3>S3 — Arduino + LVGL (code existant ~80% réutilisé)</h3>
+<p><strong>Fichiers inchangés :</strong></p>
+<ul>
+<li><code>lvgl_ui.cpp</code> — init LVGL + navigation</li>
+<li><code>ui_dashboard.cpp</code> — écran principal</li>
+<li><code>ui_messaging.cpp</code> — messages, conversations, contacts</li>
+<li><code>ui_settings.cpp</code> — écrans de configuration</li>
+<li><code>ui_popups.cpp</code> — popups TX/RX/notifications</li>
+<li><code>ui_map_manager.cpp</code> + <code>src/map/</code> — carte vectorielle</li>
+<li><code>msg_utils.cpp</code> — gestion messages</li>
+</ul>
+<p><strong>Fichiers à adapter (interface radio/GPS) :</strong></p>
+<ul>
+<li><code>gps_utils.cpp</code> → réception GPS_FIX depuis UART C3 (plus de parsing NMEA)</li>
+<li><code>lora_utils.cpp</code> → envoi/réception UART vers C3 (plus de SPI direct)</li>
+<li><code>LoRa_APRS_Tracker.cpp</code> → simplification main loop</li>
+<li>Nouveau <code>uart_link.cpp</code> — protocole série C3↔S3</li>
+</ul>
+<p>L&#39;UI ne fait aucun appel SPI/UART hardware direct — elle consomme des structures (<code>gpsFix</code>, <code>lastReceivedPacket</code>, <code>Config</code>). La transition est transparente.</p>
+<h2>Avantages vs cartes commerciales</h2>
+<table>
+<thead>
+<tr>
+<th>Point</th>
+<th>CrowPanel 3.5&quot;</th>
+<th>Waveshare 4.3&quot;</th>
+<th>PCB maison 7&quot;</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Écran</td>
+<td>480x320 SPI</td>
+<td>800x480 RGB</td>
+<td>800x480+ RGB</td>
+</tr>
+<tr>
+<td>SD</td>
+<td>SPI (2 MB/s)</td>
+<td>SPI</td>
+<td>SDMMC (12-20 MB/s)</td>
+</tr>
+<tr>
+<td>LoRa</td>
+<td>SPI partagé SD</td>
+<td>Pas de LoRa</td>
+<td>C3 dédié, SPI propre</td>
+</tr>
+<tr>
+<td>GNSS</td>
+<td>UART sur S3</td>
+<td>Pas de GNSS</td>
+<td>C3 dédié, UART propre</td>
+</tr>
+<tr>
+<td>Batterie monitoring</td>
+<td>Aucun (BATTERY_PIN=-1)</td>
+<td>ADC si dispo</td>
+<td>MAX17048 I2C intégré</td>
+</tr>
+<tr>
+<td>Charge Li-ion</td>
+<td>IC inconnu, non documenté</td>
+<td>Variable</td>
+<td>TP4056/MCP73831 maîtrisé</td>
+</tr>
+<tr>
+<td>TXEN/RXEN</td>
+<td>Non connectés</td>
+<td>N/A</td>
+<td>GPIO C3 disponibles</td>
+</tr>
+<tr>
+<td>GPIO libres</td>
+<td>0</td>
+<td>Variable</td>
+<td>3-4 spare S3, 3 spare C3</td>
+</tr>
+</tbody></table>
+<h2>Limites et risques</h2>
+<ol>
+<li><strong>Budget GPIO S3 très serré</strong> : 32/33 pins utilisées avec SDMMC 1-bit. Pas de marge pour ajouter des périphériques I/O au S3 sans sacrifier une fonction.</li>
+<li><strong>Design PCB RF</strong> : si utilisation du module WROOM (recommandé), l&#39;antenne WiFi/BLE est intégrée. L&#39;antenne LoRa et GNSS sont côté C3 — routage à soigner.</li>
+<li><strong>Écran 7&quot; RGB</strong> : consommation backlight élevée (~100-200 mA), impact autonomie.</li>
+<li><strong>Firmware C3</strong> : nouveau code ESP-IDF à écrire (~1500 lignes). Pas de réutilisation directe du code Arduino existant pour la partie radio/GPS.</li>
+<li><strong>Latence UART</strong> : la communication S3↔C3 ajoute ~1-5 ms de latence. Négligeable pour APRS (beacon toutes les N secondes) mais à mesurer.</li>
+</ol>
+<h2>Étapes de développement</h2>
+<ol>
+<li><strong>Schématique</strong> : KiCad, S3 + C3 + TP4056 + MAX17048 + connecteurs écran/antennes</li>
+<li><strong>Routage PCB</strong> : 4 couches recommandé (plan GND, plan 3.3V, 2 couches signal)</li>
+<li><strong>Prototype C3 seul</strong> : firmware ESP-IDF sur DevKitC-02, valider LoRa TX/RX + GPS</li>
+<li><strong>Prototype S3 seul</strong> : écran 7&quot; sur DevKit, valider RGB + SDMMC + LVGL</li>
+<li><strong>Intégration</strong> : liaison UART, protocole série, tests bout en bout</li>
+<li><strong>PCB v1</strong> : fabrication + assemblage, tests terrain</li>
+</ol>
+
+</body></html>

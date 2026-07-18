@@ -1,0 +1,65 @@
+Rôle : Tu es un expert en C++ embarqué sur ESP32.
+Mission : Nous devons entamer la modularisation du fichier ui_map_manager.cpp (God Object) en respectant le principe KISS. Pour cette première étape, tu vas extraire uniquement les fonctions mathématiques pures et les projections de coordonnées.
+
+Actions à réaliser :
+
+Crée un nouveau module avec les fichiers map_coordinate_math.h et map_coordinate_math.cpp.
+
+Déplace les fonctions suivantes depuis ui_map_manager.cpp vers ce nouveau module (utilise un namespace MapMath ou des méthodes statiques) :
+
+    latLonToTile
+
+    tileToLatLon
+
+    latLonToPixel
+
+    shiftMapCenter
+
+Mets à jour ui_map_manager.cpp pour inclure #include "map_coordinate_math.h" et adapter les appels à ces fonctions avec le nouveau namespace/classe.
+
+Contraintes :
+
+Ces fonctions ne doivent avoir aucun état global (pas de variables statiques globales si possible, passe les valeurs par argument).
+
+Ne modifie pas la logique mathématique (Mercator), déplace-la simplement.
+
+Fournis-moi le code complet des deux nouveaux fichiers (.h et .cpp) et les modifications exactes à apporter 
+
+==================================================================
+******************************************************************
+
+
+Rôle : Expert C++ ESP32.
+Mission : Poursuivre la modularisation de ui_map_manager.cpp. Tu vas maintenant extraire toute la logique liée au GPS, au lissage de la position et à l'historique des traces de l'utilisateur.
+
+Actions à réaliser :
+
+Crée les fichiers map_gps_filter.h et map_gps_filter.cpp.
+
+Encapsule dans une classe MapGPSFilter les variables globales suivantes :
+
+    iconGpsLat, iconGpsLon, iconGpsValid
+
+    filteredOwnLat, filteredOwnLon, filteredOwnValid
+
+    Le buffer circulaire ownTrace, ownTraceCount, ownTraceHead
+
+Déplace et adapte les fonctions suivantes dans ce module :
+
+    getUiPosition
+
+    updateFilteredOwnPosition (attention, elle utilise l'objet externe gps de TinyGPS++)
+
+    addOwnTracePoint
+
+Ajoute des getters/setters si nécessaire pour que ui_map_manager.cpp puisse toujours accéder à la position filtrée pour dessiner la carte.
+
+Contraintes :
+
+Assure-toi que les dépendances externes (comme TinyGPS++ et les macros TRACE_MAX_POINTS) soient correctement incluses.
+
+Montre-moi les nouveaux fichiers et comment modifier ui_map_manager.cpp pour utiliser ce module.
+
+==================================================================
+******************************************************************
+

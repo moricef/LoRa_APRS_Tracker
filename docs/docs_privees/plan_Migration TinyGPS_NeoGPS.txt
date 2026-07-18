@@ -1,0 +1,137 @@
+Migration TinyGPS++ → NeoGPS
+
+     Context
+
+     TinyGPS++ (2013, dernière mise à jour ~2020) est une lib legacy. NeoGPS offre : cohérence du fix (toutes les données d'un même cycle NMEA), PDOP/VDOP disponibles, configuration fine des sentences parsées, et alignement avec IceNav-v3 (code de référence). Le L76K parle NMEA
+     standard — même trames, meilleur parsing.
+
+     Scope : 12 fichiers, ~95 appels API, 2 entry points NMEA (UART + Bluetooth).
+
+     Approche : remplacement direct (pas d'abstraction)
+
+     Pas de wrapper/facade. Remplacement mécanique gps.xxx → fix.xxx + helpers pour les conversions récurrentes.
+
+     Helpers centralisés (gps_utils.h)
+
+     inline float gpsSpeedKnots() { return fix.speed_kph() / 1.852f; }
+     inline int32_t gpsAltFeet()  { return (int32_t)(fix.alt.whole * 3.28084f); }
+     inline float gpsHdop()       { return (float)fix.hdop / 1000.0f; }
+
+     Étapes (chaque étape compile)
+
+     Étape 0 — Préparation (non-breaking)
+
+     - Remplacer mikalhart/TinyGPSPlus @ 1.0.3 par NeoGPS (fork Jordi) dans common_settings.ini
+     - Copier configs NeoGPS depuis IcENav-V3_reference/lib/gps/ vers lib/NeoGPS_config/ :
+       - GPSfix_cfg.h — garder : DATE, TIME, LOCATION, ALTITUDE, SPEED, HEADING, SATELLITES, HDOP
+       - NMEAGPS_cfg.h — désactiver GSV/satellite info (pas affiché). Garder EXPLICIT_MERGING, RMC last sentence
+       - NeoGPS_cfg.h — copie directe
+     - Créer lib/gps_math/gps_math.h + .cpp — calcDist() et calcCourse() portés d'IceNav (Haversine, standalone)
+
+     Étape 1 — Globals + parsing (gps_utils.cpp, LoRa_APRS_Tracker.cpp)
+
+     - Remplacer TinyGPSPlus gps; par NMEAGPS GPS; gps_fix fix;
+     - Parsing : while (GPS.available(gpsSerial)) { fix = GPS.read(); } + flag newFixAvailable
+     - gps.time.isUpdated() → hasNewFix() && fix.valid.time
+     - gps.charsProcessed() → GPS.statistics.chars
+     - Ajouter hasNewFix() dans gps_utils.h
+     - Fichiers : src/gps_utils.cpp, include/gps_utils.h, src/LoRa_APRS_Tracker.cpp
+
+     Étape 2 — APRS packets (station_utils.cpp, keyboard_utils.cpp)
+
+     - Critique pour la correctness : speed en knots, altitude en feet
+     - gps.speed.knots() → gpsSpeedKnots()
+     - gps.altitude.feet() → gpsAltFeet()
+     - TinyGPSPlus::distanceBetween() → calcDist()
+     - Fichiers : src/station_utils.cpp, src/keyboard_utils.cpp
+
+     Étape 3 — Affichage (lvgl_ui.cpp, menu_utils.cpp)
+
+     - Remplacement mécanique lat/lon/sats/hdop/speed/date/time
+     - TinyGPSPlus::distanceBetween/courseTo → calcDist/calcCourse
+     - Fichiers : src/lvgl_ui.cpp, src/menu_utils.cpp
+
+     Étape 4 — Fichiers secondaires
+
+     - src/gpx_writer.cpp — date/time : gps.date.year() → 2000 + fix.dateTime.year, etc.
+     - src/wx_utils.cpp — gps.altitude.meters() → fix.alt.whole
+     - src/bluetooth_utils.cpp — gps.encode(c) → GPS.handle(c); if (GPS.available()) fix = GPS.read();
+     - include/ui_map_manager.h, src/ui_map_manager.cpp — extern + appels directs
+
+     Étape 5 — MapGPSFilter
+
+     - Signature : updateFilteredOwnPosition(TinyGPSPlus& gps) → updateFilteredOwnPosition(const gps_fix& fix)
+     - ~20 appels à remplacer
+     - TinyGPSPlus::distanceBetween() → calcDist()
+     - Fichiers : lib/MapGPSFilter/map_gps_filter.h, lib/MapGPSFilter/map_gps_filter.cpp
+
+     Étape 6 — Tests unitaires
+
+     - Mock : gps_fix est un struct public, on peut setter les champs directement
+     - Ou garder les NMEA et feeder via GPS.handle(c) + GPS.available()
+     - Fichier : test/test_map_gps_filter/test_map_gps_filter.cpp
+
+     Étape 7 — Nettoyage
+
+     - Supprimer mikalhart/TinyGPSPlus de common_settings.ini
+     - Supprimer tout #include <TinyGPS++.h> restant
+     - Clean build
+
+     API Mapping référence
+
+     ┌────────────────────────────────┬──────────────────────────┐
+     │           TinyGPS++            │          NeoGPS          │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.location.isValid()         │ fix.valid.location       │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.location.lat()             │ fix.latitude()           │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.location.lng()             │ fix.longitude()          │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.speed.kmph()               │ fix.speed_kph()          │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.speed.knots()              │ gpsSpeedKnots()          │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.altitude.meters()          │ fix.alt.whole            │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.altitude.feet()            │ gpsAltFeet()             │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.course.deg()               │ fix.heading()            │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.satellites.value()         │ fix.satellites           │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.hdop.hdop()                │ gpsHdop()                │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.date.year()                │ 2000 + fix.dateTime.year │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.date.month()               │ fix.dateTime.month       │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.date.day()                 │ fix.dateTime.date        │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.time.hour()                │ fix.dateTime.hours       │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.time.minute()              │ fix.dateTime.minutes     │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.time.second()              │ fix.dateTime.seconds     │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ gps.encode(c)                  │ GPS.handle(c)            │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ TinyGPSPlus::distanceBetween() │ calcDist()               │
+     ├────────────────────────────────┼──────────────────────────┤
+     │ TinyGPSPlus::courseTo()        │ calcCourse()             │
+     └────────────────────────────────┴──────────────────────────┘
+
+     Risques
+
+     1. LAST_SENTENCE_IN_INTERVAL : si le L76K n'envoie pas RMC en dernier, les fix seront incomplets. Vérifier l'ordre des sentences au premier test.
+     2. float vs double : fix.latitude() retourne float (7 digits ≈ 1.1m). Suffisant pour APRS, le MapGPSFilter utilise double mais la précision GPS est ~2m de toute façon.
+     3. Thread safety BT : GPS.handle(c) dans le callback BT + parsing UART = même parser. Mutuellement exclusif en pratique (BT remplace UART quand connecté).
+
+     Vérification
+
+     1. Compile sans erreur
+     2. Test unitaires MapGPSFilter passent
+     3. Flash sur device : position, vitesse, altitude, sats, HDOP affichés correctement
+     4. APRS beacon reçu par passerelle avec position/vitesse/altitude correctes
+     5. GPX writer produit des fichiers valides avec timestamps
+     6. Bluetooth NMEA feed fonctionne

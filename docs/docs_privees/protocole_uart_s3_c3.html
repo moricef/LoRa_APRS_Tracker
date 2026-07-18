@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Protocole UART S3 - C3</title>
+<style>
+  :root { --bg: #1a1a2e; --fg: #e0e0e0; --accent: #0f3460; --hi: #e94560; --code-bg: #16213e; --border: #333; --table-alt: #1f2940; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; padding: 2em; max-width: 1100px; margin: 0 auto; }
+  h1 { color: var(--hi); border-bottom: 2px solid var(--hi); padding-bottom: 0.3em; margin-bottom: 1em; font-size: 1.8em; }
+  h2 { color: #6ab0f3; margin-top: 2em; margin-bottom: 0.5em; font-size: 1.4em; border-left: 4px solid var(--hi); padding-left: 0.5em; }
+  h3 { color: #c0c0c0; margin-top: 1.5em; margin-bottom: 0.4em; font-size: 1.1em; }
+  p { margin-bottom: 0.8em; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.9em; }
+  th { background: var(--accent); color: #fff; padding: 8px 12px; text-align: left; }
+  td { padding: 6px 12px; border-bottom: 1px solid var(--border); }
+  tr:nth-child(even) td { background: var(--table-alt); }
+  code { background: var(--code-bg); padding: 2px 6px; border-radius: 3px; font-family: 'Fira Code', 'Consolas', monospace; font-size: 0.9em; color: #7fdbca; }
+  pre { background: var(--code-bg); padding: 1em; border-radius: 6px; overflow-x: auto; margin: 1em 0; border: 1px solid var(--border); }
+  pre code { padding: 0; background: none; color: #d6deeb; font-size: 0.85em; }
+  .frame-diagram { text-align: center; margin: 1.5em 0; }
+  .frame-diagram pre { display: inline-block; text-align: left; }
+  .note { background: #1c2a4a; border-left: 4px solid #4fc3f7; padding: 0.8em 1em; margin: 1em 0; border-radius: 0 4px 4px 0; }
+  .warn { background: #2a1c1c; border-left: 4px solid var(--hi); padding: 0.8em 1em; margin: 1em 0; border-radius: 0 4px 4px 0; }
+  .sequence { background: var(--code-bg); padding: 1em; border-radius: 6px; margin: 1em 0; font-family: monospace; font-size: 0.85em; line-height: 1.8; border: 1px solid var(--border); }
+  .seq-label { color: var(--hi); font-weight: bold; }
+  .seq-arrow { color: #6ab0f3; }
+  .seq-msg { color: #7fdbca; }
+  .seq-comment { color: #666; font-style: italic; }
+  @media (max-width: 700px) { body { padding: 1em; } table { font-size: 0.8em; } }
+</style>
+</head>
+<body>
+
+<h1>Protocole UART S3 &harr; C3</h1>
+
+<h2>Vue d'ensemble</h2>
+<p>Protocole binaire full-duplex entre <strong>ESP32-S3</strong> (UI) et <strong>ESP32-C3</strong> (Radio/GNSS).<br>
+UART 460800 baud, 8N1. Pas de handshake mat&eacute;riel (ni RTS/CTS, ni IRQ GPIO).</p>
+
+<p>Le C3 envoie quand il veut (GPS fix, paquets LoRa re&ccedil;us, ACK, heartbeat).
+Le S3 envoie quand il veut (demande TX, changement de config).
+L'ISR UART c&ocirc;t&eacute; S3 absorbe les rafales via ring buffer 4096 octets.</p>
+
+<h2>Format de trame</h2>
+
+<div class="frame-diagram">
+<pre><code>+------+------+--------+-----------------+----------+
+| SYNC | TYPE | LENGTH |     PAYLOAD     |  CRC16   |
+| 1B   | 1B   | 2B LE  |   0-512 octets  |  2B LE   |
++------+------+--------+-----------------+----------+</code></pre>
+</div>
+
+<table>
+<tr><th>Champ</th><th>Taille</th><th>Description</th></tr>
+<tr><td><code>SYNC</code></td><td>1 octet</td><td><code>0xAA</code> &mdash; marqueur de d&eacute;but de trame</td></tr>
+<tr><td><code>TYPE</code></td><td>1 octet</td><td>Type de message (voir tables ci-dessous)</td></tr>
+<tr><td><code>LENGTH</code></td><td>2 octets</td><td>Taille du payload (little-endian), 0-512</td></tr>
+<tr><td><code>PAYLOAD</code></td><td>0-512 octets</td><td>Donn&eacute;es (structure d&eacute;pend du TYPE)</td></tr>
+<tr><td><code>CRC16</code></td><td>2 octets</td><td>CRC-16/CCITT sur TYPE + LENGTH + PAYLOAD (little-endian)</td></tr>
+</table>
+
+<p><strong>Taille max d'une trame :</strong> 1 + 1 + 2 + 512 + 2 = <strong>518 octets</strong>.</p>
+
+<div class="note">
+<strong>Synchronisation :</strong> Le parser cherche <code>0xAA</code>, puis lit TYPE + LENGTH.
+Si le CRC ne matche pas, il rejette la trame et cherche le prochain <code>0xAA</code>.
+Pas de byte stuffing &mdash; le parser s'appuie sur LENGTH + CRC pour valider.
+</div>
+
+<h3>CRC-16/CCITT</h3>
+<p>Polyn&ocirc;me <code>0x1021</code>, valeur initiale <code>0xFFFF</code>. Calcul&eacute; sur TYPE + LENGTH (2B) + PAYLOAD.</p>
+<pre><code>uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)data[i] << 8;
+        for (int j = 0; j < 8; j++) {
+            crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
+        }
+    }
+    return crc;
+}</code></pre>
+
+<h2>Types de messages</h2>
+
+<h3>C3 &rarr; S3</h3>
+<table>
+<tr><th>Type</th><th>Code</th><th>Payload</th><th>Fr&eacute;quence</th></tr>
+<tr><td>GPS_FIX</td><td><code>0x01</code></td><td>Position GPS filtr&eacute;e</td><td>1 Hz</td></tr>
+<tr><td>LORA_RX</td><td><code>0x02</code></td><td>Paquet APRS re&ccedil;u</td><td>&Eacute;v&eacute;nementiel</td></tr>
+<tr><td>LORA_TX_ACK</td><td><code>0x11</code></td><td>Confirmation de TX</td><td>R&eacute;ponse &agrave; TX_REQ</td></tr>
+<tr><td>STATUS</td><td><code>0x30</code></td><td>&Eacute;tat radio + GPS</td><td>5s (heartbeat)</td></tr>
+<tr><td>ERROR</td><td><code>0x3F</code></td><td>Code erreur</td><td>&Eacute;v&eacute;nementiel</td></tr>
+</table>
+
+<h3>S3 &rarr; C3</h3>
+<table>
+<tr><th>Type</th><th>Code</th><th>Payload</th><th>Fr&eacute;quence</th></tr>
+<tr><td>LORA_TX_REQ</td><td><code>0x10</code></td><td>Paquet APRS &agrave; transmettre</td><td>&Eacute;v&eacute;nementiel</td></tr>
+<tr><td>CONFIG</td><td><code>0x20</code></td><td>Param&egrave;tres radio/GPS/beacon</td><td>&Eacute;v&eacute;nementiel</td></tr>
+<tr><td>CONFIG_ACK</td><td><code>0x21</code></td><td>&mdash;</td><td>R&eacute;ponse &agrave; CONFIG</td></tr>
+</table>
+
+<h2>Structures payload</h2>
+<p>Toutes les structures sont <strong>packed</strong> (pas de padding), <strong>little-endian</strong>.</p>
+
+<h3>GPS_FIX (0x01) &mdash; 30 octets</h3>
+<pre><code>typedef struct __attribute__((packed)) {
+    int32_t  lat;        // Latitude &times; 1e7 (ex: 438123456 = 43.8123456&deg;)
+    int32_t  lon;        // Longitude &times; 1e7
+    int32_t  alt;        // Altitude en mm
+    uint16_t speed;      // Vitesse en cm/s (ex: 1389 = 50 km/h)
+    uint16_t heading;    // Cap &times; 100 (ex: 18045 = 180.45&deg;)
+    uint8_t  sats;       // Nombre de satellites
+    uint8_t  fix_type;   // 0=no fix, 2=2D, 3=3D
+    uint16_t hdop;       // HDOP &times; 100 (ex: 120 = 1.20)
+    uint32_t timestamp;  // UTC epoch (secondes)
+    uint8_t  flags;      // Bit 0: fix valid, Bit 1: DGPS, Bit 2: speed valid
+    uint8_t  reserved;
+} gps_fix_t;             // 30 octets</code></pre>
+
+<h3>LORA_RX (0x02) &mdash; 8 + N octets</h3>
+<pre><code>typedef struct __attribute__((packed)) {
+    int16_t  rssi;       // RSSI en dBm &times; 10 (ex: -1125 = -112.5 dBm)
+    int8_t   snr;        // SNR en dB &times; 4 (ex: 28 = 7.0 dB)
+    uint8_t  cr;         // Coding rate (5-8)
+    uint16_t pkt_len;    // Longueur du paquet APRS brut
+    uint16_t freq_err;   // Erreur de fr&eacute;quence en Hz
+    uint8_t  data[];     // Paquet APRS brut (pkt_len octets)
+} lora_rx_t;</code></pre>
+
+<h3>LORA_TX_REQ (0x10) &mdash; 2 + N octets</h3>
+<pre><code>typedef struct __attribute__((packed)) {
+    uint16_t pkt_len;    // Longueur du paquet APRS
+    uint8_t  data[];     // Paquet APRS brut
+} lora_tx_req_t;</code></pre>
+
+<h3>LORA_TX_ACK (0x11) &mdash; 4 octets</h3>
+<pre><code>typedef struct __attribute__((packed)) {
+    uint8_t  status;     // 0=OK, 1=TX_TIMEOUT, 2=SPI_ERROR, 3=BUSY
+    uint8_t  reserved;
+    uint16_t irq_flags;  // Registre IRQ du SX1262
+} lora_tx_ack_t;</code></pre>
+
+<h3>CONFIG (0x20) &mdash; 16 octets</h3>
+<pre><code>typedef struct __attribute__((packed)) {
+    uint32_t freq;       // Fr&eacute;quence Hz (ex: 433775000)
+    int8_t   tx_power;   // Puissance TX dBm (-9 &agrave; +22)
+    uint8_t  sf;         // Spreading Factor (7-12)
+    uint8_t  bw;         // Bandwidth index (7=125k, 8=250k, 9=500k)
+    uint8_t  cr;         // Coding Rate (5-8)
+    uint16_t preamble;   // Longueur pr&eacute;ambule (symboles)
+    uint8_t  sb_active;  // SmartBeaconing actif (0/1)
+    uint8_t  sb_slow_rate;  // Slow rate (secondes / 10)
+    uint8_t  sb_fast_rate;  // Fast rate (secondes)
+    uint8_t  sb_min_speed;  // Vitesse min km/h
+    uint8_t  sb_max_speed;  // Vitesse max km/h
+} config_t;</code></pre>
+
+<h3>STATUS (0x30) &mdash; 12 octets</h3>
+<pre><code>typedef struct __attribute__((packed)) {
+    uint8_t  gps_fix;    // 0=no fix, 2=2D, 3=3D
+    uint8_t  gps_sats;
+    uint8_t  lora_state; // 0=idle, 1=RX, 2=TX, 3=CAD, 4=sleep
+    uint8_t  flags;      // Bit 0: RX pending, Bit 1: TX in progress
+    uint16_t rx_count;   // Compteur RX depuis boot
+    uint16_t tx_count;   // Compteur TX depuis boot
+    uint16_t error_count;
+    uint16_t uptime;     // Minutes (max 45 jours)
+} status_t;</code></pre>
+
+<h3>ERROR (0x3F) &mdash; 4 octets</h3>
+<pre><code>typedef struct __attribute__((packed)) {
+    uint16_t code;       // Code erreur
+    uint16_t detail;     // D&eacute;tail (registre SX1262, errno...)
+} error_t;</code></pre>
+
+<table>
+<tr><th>Code</th><th>Description</th></tr>
+<tr><td><code>0x0001</code></td><td>LORA_INIT_FAIL &mdash; radio.begin() &eacute;chou&eacute;</td></tr>
+<tr><td><code>0x0002</code></td><td>LORA_SPI_ERROR &mdash; SPI timeout ou CHIP_NOT_FOUND</td></tr>
+<tr><td><code>0x0003</code></td><td>LORA_XOSC_ERROR &mdash; XOSC_START_ERR</td></tr>
+<tr><td><code>0x0010</code></td><td>GPS_NO_FIX &mdash; pas de fix depuis &gt; 60s</td></tr>
+<tr><td><code>0x0011</code></td><td>GPS_UART_ERROR &mdash; pas de donn&eacute;es GNSS depuis &gt; 10s</td></tr>
+<tr><td><code>0x0020</code></td><td>PROTO_CRC_ERROR &mdash; CRC invalide sur trame re&ccedil;ue</td></tr>
+<tr><td><code>0x0021</code></td><td>PROTO_OVERFLOW &mdash; FIFO C3 pleine, trame dropp&eacute;e</td></tr>
+</table>
+
+<h2>Machine d'&eacute;tat du parser</h2>
+
+<pre><code>                  +----------+
+         octet    |          |  octet != 0xAA
+     ---------->  |  IDLE    | <----------------+
+                  |          |                   |
+                  +----+-----+                   |
+                       | 0xAA                    |
+                       v                         |
+                  +----------+                   |
+                  |  TYPE    |                   |
+                  +----+-----+                   |
+                       | 1 octet                 |
+                       v                         |
+                  +----------+                   |
+                  |  LEN_LO  |                   |
+                  +----+-----+                   |
+                       | 1 octet                 |
+                       v                         |
+                  +----------+                   |
+                  |  LEN_HI  |                   |
+                  +----+-----+                   |
+                       | length > 512 -> IDLE ---+
+                       v                         |
+                  +----------+                   |
+                  | PAYLOAD  | (length octets)   |
+                  +----+-----+                   |
+                       | tous recus              |
+                       v                         |
+                  +----------+                   |
+                  |  CRC_LO  |                   |
+                  +----+-----+                   |
+                       | 1 octet                 |
+                       v                         |
+                  +----------+                   |
+                  |  CRC_HI  |                   |
+                  +----+-----+                   |
+                       | CRC OK -> dispatch()    |
+                       | CRC KO -> IDLE ---------+
+                       v
+                  +----------+
+                  | DISPATCH | -> callback(type, payload, length)
+                  +----------+</code></pre>
+
+<h2>S&eacute;quences typiques</h2>
+
+<h3>R&eacute;ception LoRa</h3>
+<div class="sequence">
+<span class="seq-label">C3</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-label">S3</span><br>
+&nbsp;<span class="seq-comment">&larr; SX1262 IRQ (DIO1)</span><br>
+&nbsp;Lecture paquet SPI<br>
+&nbsp;<span class="seq-arrow">&mdash;&mdash; LORA_RX (raw + RSSI) &mdash;&mdash;&mdash;&rarr;</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-comment">Parse + popup RX</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-comment">Stocke dans msg_utils</span>
+</div>
+
+<h3>&Eacute;mission LoRa (UI)</h3>
+<div class="sequence">
+<span class="seq-label">C3</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-label">S3</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-comment">User compose message</span><br>
+&nbsp;<span class="seq-arrow">&larr;&mdash;&mdash; LORA_TX_REQ (raw) &mdash;&mdash;&mdash;&mdash;</span><br>
+&nbsp;radio.transmit()<br>
+&nbsp;<span class="seq-arrow">&mdash;&mdash; LORA_TX_ACK (status) &mdash;&mdash;&rarr;</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-comment">Popup TX OK/FAIL</span>
+</div>
+
+<h3>SmartBeaconing (autonome C3)</h3>
+<div class="sequence">
+<span class="seq-label">C3</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-label">S3</span><br>
+&nbsp;GPS fix &rarr; filtre &rarr; SmartBeacon<br>
+&nbsp;D&eacute;cision: &eacute;mettre beacon<br>
+&nbsp;radio.transmit(beacon)<br>
+&nbsp;<span class="seq-arrow">&mdash;&mdash; LORA_TX_ACK &mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&rarr;</span>&nbsp;<span class="seq-comment">(compteur TX)</span><br>
+&nbsp;<span class="seq-arrow">&mdash;&mdash; GPS_FIX &mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&rarr;</span>&nbsp;<span class="seq-comment">(position carte)</span>
+</div>
+
+<h3>Changement de configuration</h3>
+<div class="sequence">
+<span class="seq-label">C3</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-label">S3</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-comment">Settings &rarr; change freq</span><br>
+&nbsp;<span class="seq-arrow">&larr;&mdash;&mdash; CONFIG (freq, power) &mdash;&mdash;</span><br>
+&nbsp;radio.setFrequency()<br>
+&nbsp;radio.setOutputPower()<br>
+&nbsp;<span class="seq-arrow">&mdash;&mdash; CONFIG_ACK &mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&rarr;</span>
+</div>
+
+<h3>Heartbeat</h3>
+<div class="sequence">
+<span class="seq-label">C3</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-label">S3</span><br>
+&nbsp;<span class="seq-comment">(toutes les 5s)</span><br>
+&nbsp;<span class="seq-arrow">&mdash;&mdash; STATUS &mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&rarr;</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-comment">MAJ ic&ocirc;nes GPS/LoRa</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="seq-comment">D&eacute;tecte perte C3 si &gt; 15s</span>
+</div>
+
+<h2>Gestion des erreurs</h2>
+
+<h3>Trame corrompue (CRC KO)</h3>
+<p>Le r&eacute;cepteur incr&eacute;mente <code>crc_error_count</code> et cherche le prochain <code>0xAA</code>.
+Pas de retransmission &mdash; APRS est fire-and-forget.</p>
+
+<h3>Timeout r&eacute;ponse</h3>
+<table>
+<tr><th>Situation</th><th>Timeout</th><th>Action</th></tr>
+<tr><td>TX_REQ sans TX_ACK</td><td>10 s</td><td>S3 affiche &laquo; TX TIMEOUT &raquo;</td></tr>
+<tr><td>CONFIG sans CONFIG_ACK</td><td>3 s</td><td>S3 retente &times;1, puis affiche erreur</td></tr>
+</table>
+
+<h3>Perte de communication</h3>
+<div class="warn">
+Si aucun <code>STATUS</code> re&ccedil;u pendant <strong>15 secondes</strong> &rarr; alerte &laquo; C3 OFFLINE &raquo; sur le dashboard.
+Le S3 continue en mode d&eacute;grad&eacute; (carte + messages stock&eacute;s, pas de radio/GPS).
+</div>
+
+<h2>Impl&eacute;mentation &mdash; Header commun</h2>
+
+<pre><code>// uart_proto.h &mdash; partag&eacute; entre S3 et C3
+
+#ifndef UART_PROTO_H
+#define UART_PROTO_H
+
+#include &lt;stdint.h&gt;
+#include &lt;stddef.h&gt;
+
+#define PROTO_SYNC          0xAA
+#define PROTO_MAX_PAYLOAD   512
+#define PROTO_HEADER_SIZE   4     // SYNC + TYPE + LEN(2)
+#define PROTO_CRC_SIZE      2
+#define PROTO_MAX_FRAME     (PROTO_HEADER_SIZE + PROTO_MAX_PAYLOAD + PROTO_CRC_SIZE)
+
+// Message types C3 &rarr; S3
+#define MSG_GPS_FIX         0x01
+#define MSG_LORA_RX         0x02
+#define MSG_LORA_TX_ACK     0x11
+#define MSG_STATUS          0x30
+#define MSG_ERROR           0x3F
+
+// Message types S3 &rarr; C3
+#define MSG_LORA_TX_REQ     0x10
+#define MSG_CONFIG          0x20
+#define MSG_CONFIG_ACK      0x21
+
+// TX ACK status
+#define TX_OK               0x00
+#define TX_TIMEOUT          0x01
+#define TX_SPI_ERROR        0x02
+#define TX_BUSY             0x03
+
+// Error codes
+#define ERR_LORA_INIT       0x0001
+#define ERR_LORA_SPI        0x0002
+#define ERR_LORA_XOSC       0x0003
+#define ERR_GPS_NO_FIX      0x0010
+#define ERR_GPS_UART        0x0011
+#define ERR_PROTO_CRC       0x0020
+#define ERR_PROTO_OVERFLOW  0x0021
+
+typedef enum {
+    PARSE_IDLE, PARSE_TYPE, PARSE_LEN_LO, PARSE_LEN_HI,
+    PARSE_PAYLOAD, PARSE_CRC_LO, PARSE_CRC_HI
+} parse_state_t;
+
+typedef struct {
+    parse_state_t state;
+    uint8_t  type;
+    uint16_t length;
+    uint16_t payload_idx;
+    uint8_t  payload[PROTO_MAX_PAYLOAD];
+    uint8_t  crc_lo;
+    uint16_t crc_error_count;
+    uint16_t rx_frame_count;
+} proto_parser_t;
+
+typedef void (*proto_callback_t)(uint8_t type, const uint8_t *payload,
+                                  uint16_t length);
+
+uint16_t proto_crc16(const uint8_t *data, size_t len);
+void     proto_parser_init(proto_parser_t *p);
+void     proto_parser_feed(proto_parser_t *p, uint8_t byte, proto_callback_t cb);
+size_t   proto_build_frame(uint8_t *buf, uint8_t type,
+                           const uint8_t *payload, uint16_t length);
+
+#endif</code></pre>
+
+<h2>Impl&eacute;mentation &mdash; Parser + Builder</h2>
+
+<pre><code>// uart_proto.c
+
+#include "uart_proto.h"
+
+uint16_t proto_crc16(const uint8_t *data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i &lt; len; i++) {
+        crc ^= (uint16_t)data[i] &lt;&lt; 8;
+        for (int j = 0; j &lt; 8; j++)
+            crc = (crc &amp; 0x8000) ? (crc &lt;&lt; 1) ^ 0x1021 : crc &lt;&lt; 1;
+    }
+    return crc;
+}
+
+void proto_parser_init(proto_parser_t *p) {
+    p-&gt;state = PARSE_IDLE;
+    p-&gt;crc_error_count = 0;
+    p-&gt;rx_frame_count = 0;
+}
+
+void proto_parser_feed(proto_parser_t *p, uint8_t byte, proto_callback_t cb) {
+    switch (p-&gt;state) {
+    case PARSE_IDLE:
+        if (byte == PROTO_SYNC) p-&gt;state = PARSE_TYPE;
+        break;
+    case PARSE_TYPE:
+        p-&gt;type = byte;
+        p-&gt;state = PARSE_LEN_LO;
+        break;
+    case PARSE_LEN_LO:
+        p-&gt;length = byte;
+        p-&gt;state = PARSE_LEN_HI;
+        break;
+    case PARSE_LEN_HI:
+        p-&gt;length |= (uint16_t)byte &lt;&lt; 8;
+        if (p-&gt;length &gt; PROTO_MAX_PAYLOAD) {
+            p-&gt;state = PARSE_IDLE;
+        } else if (p-&gt;length == 0) {
+            p-&gt;payload_idx = 0;
+            p-&gt;state = PARSE_CRC_LO;
+        } else {
+            p-&gt;payload_idx = 0;
+            p-&gt;state = PARSE_PAYLOAD;
+        }
+        break;
+    case PARSE_PAYLOAD:
+        p-&gt;payload[p-&gt;payload_idx++] = byte;
+        if (p-&gt;payload_idx &gt;= p-&gt;length)
+            p-&gt;state = PARSE_CRC_LO;
+        break;
+    case PARSE_CRC_LO:
+        p-&gt;crc_lo = byte;
+        p-&gt;state = PARSE_CRC_HI;
+        break;
+    case PARSE_CRC_HI: {
+        uint16_t rx_crc = p-&gt;crc_lo | ((uint16_t)byte &lt;&lt; 8);
+        uint16_t calc_crc = proto_crc16(&amp;p-&gt;type, 3 + p-&gt;length);
+        // Note: type, len_lo, len_hi, payload are contiguous in memory
+        // so we recompute from a temp buffer:
+        uint8_t hdr[3] = { p-&gt;type,
+                           (uint8_t)(p-&gt;length),
+                           (uint8_t)(p-&gt;length &gt;&gt; 8) };
+        calc_crc = proto_crc16(hdr, 3);
+        for (uint16_t i = 0; i &lt; p-&gt;length; i++) {
+            calc_crc ^= (uint16_t)p-&gt;payload[i] &lt;&lt; 8;
+            for (int j = 0; j &lt; 8; j++)
+                calc_crc = (calc_crc &amp; 0x8000)
+                    ? (calc_crc &lt;&lt; 1) ^ 0x1021 : calc_crc &lt;&lt; 1;
+        }
+        if (rx_crc == calc_crc) {
+            p-&gt;rx_frame_count++;
+            if (cb) cb(p-&gt;type, p-&gt;payload, p-&gt;length);
+        } else {
+            p-&gt;crc_error_count++;
+        }
+        p-&gt;state = PARSE_IDLE;
+        break;
+    }
+    }
+}
+
+size_t proto_build_frame(uint8_t *buf, uint8_t type,
+                         const uint8_t *payload, uint16_t length) {
+    buf[0] = PROTO_SYNC;
+    buf[1] = type;
+    buf[2] = (uint8_t)(length);
+    buf[3] = (uint8_t)(length &gt;&gt; 8);
+    if (length &gt; 0 &amp;&amp; payload)
+        for (uint16_t i = 0; i &lt; length; i++)
+            buf[4 + i] = payload[i];
+    uint16_t crc = proto_crc16(&amp;buf[1], 3 + length);
+    buf[4 + length]     = (uint8_t)(crc);
+    buf[4 + length + 1] = (uint8_t)(crc &gt;&gt; 8);
+    return 4 + length + 2;
+}</code></pre>
+
+<h2>Int&eacute;gration S3 (Arduino)</h2>
+
+<pre><code>// uart_link.cpp (c&ocirc;t&eacute; S3)
+#include "uart_proto.h"
+
+static proto_parser_t parser;
+
+void setup() {
+    Serial1.setRxBufferSize(4096);
+    Serial1.begin(460800, SERIAL_8N1, RX_PIN, TX_PIN);
+    proto_parser_init(&amp;parser);
+}
+
+void loop() {
+    while (Serial1.available())
+        proto_parser_feed(&amp;parser, Serial1.read(), on_c3_message);
+}
+
+void on_c3_message(uint8_t type, const uint8_t *payload, uint16_t length) {
+    switch (type) {
+    case MSG_GPS_FIX: {
+        const gps_fix_t *fix = (const gps_fix_t *)payload;
+        // Mettre &agrave; jour gpsFix global
+        break;
+    }
+    case MSG_LORA_RX: {
+        const lora_rx_t *rx = (const lora_rx_t *)payload;
+        // Passer &agrave; msg_utils
+        break;
+    }
+    // ...
+    }
+}</code></pre>
+
+<h2>Int&eacute;gration C3 (ESP-IDF)</h2>
+
+<pre><code>// uart_link.c (c&ocirc;t&eacute; C3)
+#include "uart_proto.h"
+
+static proto_parser_t parser;
+static uint8_t tx_buf[PROTO_MAX_FRAME];
+
+void uart_link_init(void) {
+    // uart_config_t + uart_driver_install(UART_NUM_0, 4096, ...)
+    proto_parser_init(&amp;parser);
+}
+
+void uart_link_send_gps(const gps_fix_t *fix) {
+    size_t len = proto_build_frame(tx_buf, MSG_GPS_FIX,
+                                   (const uint8_t *)fix, sizeof(gps_fix_t));
+    uart_write_bytes(UART_NUM_0, tx_buf, len);
+}
+
+void uart_link_task(void *pv) {
+    uint8_t buf[128];
+    while (1) {
+        int rx = uart_read_bytes(UART_NUM_0, buf, sizeof(buf), pdMS_TO_TICKS(10));
+        for (int i = 0; i &lt; rx; i++)
+            proto_parser_feed(&amp;parser, buf[i], on_s3_message);
+    }
+}</code></pre>
+
+<hr style="margin-top: 3em; border-color: var(--border);">
+<p style="color: #666; font-size: 0.8em; text-align: center; margin-top: 1em;">
+Protocole UART S3&harr;C3 &mdash; LoRa APRS Tracker &mdash; Avril 2026
+</p>
+
+</body>
+</html>

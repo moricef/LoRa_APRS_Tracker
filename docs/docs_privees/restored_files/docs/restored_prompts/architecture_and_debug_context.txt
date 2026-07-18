@@ -1,0 +1,24 @@
+# DEBUG ASYNC NAV - Plan de refactorisation et contexte
+Branche de base : feature/station-gps-traces (qui contenait da841b8, 7b2f597, 25e122e)
+Branche actuelle : refact/refactor_ui_map_manager
+
+## Invariants Critiques (Tirés de l'analyse IceNav-v3 et LovyanGFX)
+1.  **Labels texte NAV :** Les GEOM_TEXT sont rendus dans la passe `textRefs` (après toute la géométrie), PAS dans le `case 4` des globalLayers. 
+2.  **Font VLW (`VLWfont::loadFont()`) :** La font VLW Unicode DOIT être settée avant la passe `textRefs` (`map.setFont(&vlwFont)`). Le `vlwFontWrapper` DOIT être statique. Un wrapper local sur la pile provoque des crashs ou l'affichage de " | " à la place des accents en raison de pointeurs pendus.
+3.  **Building Outlines :** Appliquer des contours uniquement aux polygones avec l'indicateur d'esquisse (`fp[4] & 0x80`). Ne pas les appliquer à tous les polygones.
+4.  **Casing de route abandonné :** Les primitives de LovyanGFX (`drawWideLine`, `fillCircle`, `drawLine`) ne gèrent pas correctement l'anti-aliasing sur l'ESP32. Conserver la méthode `drawWideLine` simple comme dans IceNav-v3.
+
+## Principes de Gestion Mémoire (Pattern Jordi)
+*   **Allocation des Sprites :** Allouer une seule fois. Ne jamais libérer et recréer à chaque cycle (Fragmentations PSRAM graves, sinon échec de `createSprite()`).
+*   **Mémoire DRAM :** Garder la DRAM disponible (~53KB dispo au boot) strictement pour l'OS, le WiFi et les petites structures de données. Tout le reste (buffers d'icônes, cache de tuiles, grand sprite de la carte) doit utiliser la PSRAM.
+*   **Évitement des Objets LVGL pour la carte :** Rendre les éléments de la carte et les icônes directement sur le canvas ou le sprite de la carte (`fillCircle`, `pushImage`, `lv_canvas_draw_img`).
+*   **Culling (Élimination) :** Exécuter une vérification stricte des limites de l'écran (bounds check) avant chaque opération de dessin.
+
+## Comportement des Bugs Connus (Tactile / LVGL)
+*   `lv_draw_label_dsc_t` ne gère ni `bk_color` ni `bk_opa` (c'est une erreur commune avec LVGL v8.4 de la branche Lovyan). Il faut dessiner des rectangles de fond d'abord via `lv_canvas_draw_rect()`.
+*   Toute redéfinition de l'interface graphique liée au panoramique nécessite un recalcul soigné des décalages `offsetX`, `offsetY` et de l'amortissement inertiel (vitesse).
+
+## Problème Asynchrone Core 0 :
+La branche `feature/core0-async-rendering` a préservé un travail non finalisé sur le rendu NAV asynchrone Core 0 (commit `7548079`). Les tuiles NAV sont mises en file d'attente, mais la tâche du Core 0 ne les traite pas correctement. NE PAS FUSIONNER avec cette logique.
+
+*   *Note de log: Garder les logs de mémoire (DRAM / PSRAM libre / plus grand bloc) actifs avant et après l'entrée sur la carte (toutes les 10 secondes).*

@@ -1,0 +1,39 @@
+# RÈGLES DE REFACTORING ET ARCHITECTURE (Reconstituées)
+Date d'origine : Mars 2026
+Projet : LoRa APRS Tracker - CA2RXU
+
+## Objectif Principal
+Refactoriser le "God Object" `ui_map_manager.cpp` en composants modulaires en suivant strictement le principe KISS.
+Commencer par extraire les fonctions mathématiques pures et la logique GPS/traces, puis extraire la machine d'état complexe du panoramique tactile et du défilement inertiel.
+
+## Contraintes et Préférences (KISS Compliance)
+1.  **Usage de la langue :** Commentaires en anglais dans le code. Les conversations avec l'IA peuvent être en français.
+2.  **Pas de logique métier modifiée :** Ne pas altérer la logique d'origine lors de l'extraction des fonctions.
+3.  **Principe KISS :**
+    *   Éviter toute complexité inutile.
+    *   Préférer l'allocation statique à la dynamique.
+    *   Garder les dépendances au strict minimum.
+    *   Ne pas utiliser de surcharge excessive avec `std::function` si non indispensable.
+4.  **Processus strict de modification :** L'agent doit *toujours* attendre une approbation explicite de l'utilisateur avant de modifier un fichier ou d'exécuter une commande.
+5.  **Encapsulation Tactile (`MapTouchController`) :** 
+    *   Le module extrait ne doit pas appeler directement `redraw_map_canvas()`. 
+    *   Utiliser des callbacks (Redraw, Scroll, ShiftTile, DoubleTap) ou retourner des booléens pour laisser `UIMapManager` gérer les appels LVGL et MapEngine.
+6.  **Dépendances Temporelles :** Gérer les dépendances liées au temps (`esp_timer_get_time()`) proprement.
+7.  **API Propre :** Fournir une interface claire pour le tactile, par exemple : `updateInertia()`, `getOffsets()`, `scroll()`, etc.
+
+## Décisions Clés (Architecture et Design)
+*   **Encapsulation Orientée Objet :** Utiliser des classes (`MapGPSFilter`, `MapTouchController`) plutôt que des namespaces pour isoler pleinement les variables d'état (comme `iconGpsLat`, variables de scroll, etc.) tout en fournissant des getters/setters (par exemple, des getters `const`).
+*   **Fidélité au comportement d'origine :** 
+    *   Aucun lissage ou limitation de fréquence (time-throttling) ajouté qui ne figurait pas dans le code de base.
+    *   Garder le filtrage basé sur les centroïdes, les seuils de satellites (>= 3 pour l'icône, >= 6 pour l'UI).
+    *   Garder la fenêtre stricte de 300 ms et les signes/vitesses exacts pour le panoramique et le défilement (ex: `-dx/dt`).
+    *   Double tap = `toggleMapFullscreen()`, sans zoom additionnel.
+    *   Shift tuile quand `|offset| > PAN_TILE_THRESHOLD` (128 px).
+*   **Allocation pour Trace Buffer :** Utiliser une allocation statique et un tableau fixe `ownTrace[TRACE_MAX_POINTS]` pour éviter les fuites PSRAM/DRAM, le maximum de points provenant de `station_utils.h`.
+*   **Pas de Mutex initialement :** Supposer une utilisation mono-thread de LVGL sur le Core 1 (Core 1 uniquement). La sécurité des threads (Thread-safety) pourra être ajoutée plus tard si cela s'avère nécessaire.
+*   **Règles LVGL et LovyanGFX :** Les éléments graphiques volumineux (sprites, caches de tuiles) doivent résider en PSRAM ; aucune allocation ou recréation de sprites de fenêtre à chaque itération/cycle de carte afin d'éviter la fragmentation de la mémoire (Pattern de Jordi / IceNav-v3).
+
+## Prochaines étapes de l'architecture
+(Après le tactile et le GPS, bien que le tactile ait été abandonné temporairement suite à la complexité) :
+*   Refactorisation de `TileCache`
+*   Refactorisation du module `NpkReader`
