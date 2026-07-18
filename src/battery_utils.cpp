@@ -17,17 +17,66 @@
  */
 
 #include <Arduino.h>
+#include <esp_log.h>
 #include "configuration.h"
 #include "battery_utils.h"
 #include "board_pinout.h"
 #include "power_utils.h"
 #include "display.h"
 
+static const char *TAG = "BATT";
+
 #ifdef HAS_FUEL_GAUGE_I2C
-    #include <Wire.h>
-    #include "Adafruit_MAX1704X.h"
-    static Adafruit_MAX17048 fuelGauge;
-    static bool fuelGaugeReady = false;
+    #if defined(CROWPANEL_ADVANCE_35)
+        // CrowPanel: GT911 touch and MAX17048 share I2C_NUM_0 via LovyanGFX bare-metal driver.
+        // Arduino Wire cannot coexist with lgfx::i2c on the same peripheral, so we talk to
+        // the MAX17048 directly through the lgfx I2C API (same bus as GT911).
+        #include <LovyanGFX.hpp>
+        static constexpr int      MAX17048_I2C_PORT = 0;
+        static constexpr uint8_t  MAX17048_I2C_ADDR = 0x36;
+        static constexpr uint32_t MAX17048_I2C_FREQ = 400000;
+        static constexpr uint8_t  MAX17048_REG_VCELL = 0x02;
+        static constexpr uint8_t  MAX17048_REG_SOC   = 0x04;
+        static constexpr uint8_t  MAX17048_REG_MODE  = 0x06;
+        static constexpr uint8_t  MAX17048_REG_CRATE = 0x16;
+        static bool fuelGaugeReady = false;
+
+        static bool max17048Read16(uint8_t reg, uint16_t &out) {
+            uint8_t buf[2] = {0, 0};
+            auto res = lgfx::v1::i2c::transactionWriteRead(
+                MAX17048_I2C_PORT, MAX17048_I2C_ADDR, &reg, 1, buf, 2, MAX17048_I2C_FREQ);
+            if (res.has_error()) return false;
+            out = ((uint16_t)buf[0] << 8) | buf[1];
+            return true;
+        }
+        static float max17048CellVoltage() {
+            uint16_t v;
+            if (!max17048Read16(MAX17048_REG_VCELL, v)) return NAN;
+            return v * 78.125f / 1000000.0f;
+        }
+        static float max17048CellPercent() {
+            uint16_t v;
+            if (!max17048Read16(MAX17048_REG_SOC, v)) return NAN;
+            return v / 256.0f;
+        }
+        static bool max17048QuickStart() {
+            // MODE register: write 0x4000 to trigger ModelGauge recompute from current VCELL
+            uint8_t buf[3] = { MAX17048_REG_MODE, 0x40, 0x00 };
+            auto res = lgfx::v1::i2c::transactionWrite(
+                MAX17048_I2C_PORT, MAX17048_I2C_ADDR, buf, 3, MAX17048_I2C_FREQ);
+            return res.has_value();
+        }
+        static float max17048ChargeRate() {
+            uint16_t v;
+            if (!max17048Read16(MAX17048_REG_CRATE, v)) return NAN;
+            return (int16_t)v * 0.208f;
+        }
+    #else
+        #include <Wire.h>
+        #include "Adafruit_MAX1704X.h"
+        static Adafruit_MAX17048 fuelGauge;
+        static bool fuelGaugeReady = false;
+    #endif
 #endif
 
 #ifdef ADC_CTRL
@@ -85,7 +134,11 @@ namespace BATTERY_Utils {
     String getPercentVoltageBattery(float voltage) {
         #ifdef HAS_FUEL_GAUGE_I2C
             if (fuelGaugeReady) {
-                float soc = fuelGauge.cellPercent();
+                #if defined(CROWPANEL_ADVANCE_35)
+                    float soc = max17048CellPercent();
+                #else
+                    float soc = fuelGauge.cellPercent();
+                #endif
                 if (!isnan(soc) && soc > 0.0f) {
                     int percent = (int)(soc + 0.5f);
                     if (percent > 100) percent = 100;
@@ -104,26 +157,57 @@ namespace BATTERY_Utils {
 
     void initBatteryGauge() {
         #ifdef HAS_FUEL_GAUGE_I2C
-            Wire.begin(FUEL_GAUGE_I2C_SDA, FUEL_GAUGE_I2C_SCL);
-            delay(5);  // let I2C bus settle (shared with GT911 touch via lgfx)
-            fuelGaugeReady = fuelGauge.begin(&Wire);
-            if (fuelGaugeReady) {
-                float v = fuelGauge.cellVoltage();
-                if (v == 0.0f || isnan(v)) {
-                    delay(50);  // retry after touch scan window
-                    v = fuelGauge.cellVoltage();
+            #if defined(CROWPANEL_ADVANCE_35)
+                // Bus already up via LovyanGFX (GT911). Probe MAX17048 by reading VCELL.
+                delay(10);
+                float v = NAN;
+                for (int retry = 0; retry < 5; ++retry) {
+                    v = max17048CellVoltage();
+                    if (!isnan(v) && v > 0.5f) { fuelGaugeReady = true; break; }
+                    delay(50);
                 }
-                Serial.printf("[BATT] MAX17048 OK - cell=%.3fV SOC=%.1f%%\n",
-                              v, fuelGauge.cellPercent());
-            } else {
-                Serial.println("[BATT] MAX17048 not found, battery monitoring disabled");
-            }
+                if (fuelGaugeReady) {
+                    ESP_LOGI(TAG, "MAX17048 OK (lgfx i2c) - cell=%.3fV SOC=%.1f%% (raw)",
+                             v, max17048CellPercent());
+                    if (max17048QuickStart()) {
+                        delay(150);  // ModelGauge needs ~125ms to recompute SOC
+                        ESP_LOGI(TAG, "MAX17048 QuickStart done - SOC=%.1f%%",
+                                 max17048CellPercent());
+                    } else {
+                        ESP_LOGW(TAG, "MAX17048 QuickStart write failed");
+                    }
+                } else {
+                    ESP_LOGE(TAG, "MAX17048 not found on lgfx i2c port %d addr 0x%02X",
+                             MAX17048_I2C_PORT, MAX17048_I2C_ADDR);
+                }
+            #else
+                delay(10);
+                fuelGaugeReady = fuelGauge.begin(&Wire);
+                if (fuelGaugeReady) {
+                    float v = fuelGauge.cellVoltage();
+                    if (v == 0.0f || isnan(v)) {
+                        delay(100);
+                        v = fuelGauge.cellVoltage();
+                    }
+                    ESP_LOGI(TAG, "MAX17048 OK - cell=%.3fV SOC=%.1f%%",
+                             v, fuelGauge.cellPercent());
+                } else {
+                    ESP_LOGE(TAG, "MAX17048 not found, battery monitoring disabled");
+                }
+            #endif
         #endif
     }
 
     float readBatteryVoltage() {
         #ifdef HAS_FUEL_GAUGE_I2C
-            if (fuelGaugeReady) return fuelGauge.cellVoltage();
+            if (fuelGaugeReady) {
+                #if defined(CROWPANEL_ADVANCE_35)
+                    float v = max17048CellVoltage();
+                    return isnan(v) ? 0.0f : v;
+                #else
+                    return fuelGauge.cellVoltage();
+                #endif
+            }
             return 0.0;
         #endif
         #if defined(HAS_AXP192) || defined(HAS_AXP2101)
@@ -170,8 +254,35 @@ namespace BATTERY_Utils {
     void obtainBatteryInfo() {
         #ifdef HAS_FUEL_GAUGE_I2C
             if (fuelGaugeReady) {
-                batteryVoltage   = String(fuelGauge.cellVoltage(), 2);
-                batteryConnected = (batteryVoltage.toFloat() > 1.5);
+                #if defined(CROWPANEL_ADVANCE_35)
+                    float cellV = max17048CellVoltage();
+                    float soc   = max17048CellPercent();
+                    float rate  = max17048ChargeRate();
+                #else
+                    float cellV = fuelGauge.cellVoltage();
+                    float soc   = fuelGauge.cellPercent();
+                    float rate  = fuelGauge.chargeRate();
+                #endif
+                batteryVoltage                  = String(cellV, 2);
+                batteryConnected                = (cellV > 1.5);
+                batteryChargeDischargeCurrent   = String(rate, 0);
+
+                static uint32_t lastBattLog    = 0;
+                static float    lastVoltage    = 0.0f;
+                static bool     lastConnected  = false;
+
+                bool significantChange = (fabsf(cellV - lastVoltage) > 0.1f)
+                                      || (lastConnected != batteryConnected);
+
+                if (millis() - lastBattLog > 10000 || significantChange) {
+                    const char *state = (rate > 10.0f) ? "CHARGING" :
+                                        (rate < -10.0f) ? "DISCHARGING" : "IDLE";
+                    ESP_LOGI(TAG, "%.3fV %.1f%% %+.0fmA/h %s",
+                             cellV, soc, rate, state);
+                    lastBattLog   = millis();
+                    lastVoltage   = cellV;
+                    lastConnected = batteryConnected;
+                }
             } else {
                 batteryVoltage   = "0.00";
                 batteryConnected = false;

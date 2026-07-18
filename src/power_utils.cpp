@@ -411,9 +411,10 @@ namespace POWER_Utils {
             pinMode(ADC_CTRL, OUTPUT);
         #endif
 
-        #ifdef HELTEC_WIRELESS_TRACKER
+        #if defined(HELTEC_WIRELESS_TRACKER)
             Wire.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
         #endif
+        // CrowPanel: I2C bus owned by LovyanGFX (GT911 touch). MAX17048 accessed via lgfx::i2c.
 
         #if defined(HELTEC_V3_GPS) || defined(HELTEC_V3_TNC) || defined(HELTEC_V3_2_GPS) || defined(HELTEC_V3_2_TNC) || defined(HELTEC_WSL_V3_GPS_DISPLAY)
             Wire1.begin(BOARD_I2C_SDA, BOARD_I2C_SCL);
