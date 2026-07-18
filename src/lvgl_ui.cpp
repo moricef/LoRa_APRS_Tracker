@@ -150,13 +150,10 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 
 // Touch read callback (not used on Waveshare — lvgl_v8_port handles it)
 static uint32_t lastTouchDebug = 0;
+static bool absorbTouchUntilRelease = false;   // absorbe le toucher de réveil jusqu'au relâchement
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
   uint16_t x, y;
   if (tft.getTouch(&x, &y)) {
-    data->state = LV_INDEV_STATE_PR;
-    data->point.x = x;
-    data->point.y = y;
-
     // Reset activity timer on touch
     lastActivityTime = millis();
 
@@ -166,6 +163,7 @@ static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 
     if (screenDimmed) {
       screenDimmed = false;
+      absorbTouchUntilRelease = true;   // ce toucher réveille, il ne doit pas cliquer
       if (lv_scr_act() == MapState::screen_map) {
         setCpuFrequencyMhz(240);
         ESP_LOGI(TAG, "Screen woken up, CPU boosted to %d MHz (map)",
@@ -177,11 +175,20 @@ static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
       SD_Logger::logScreenState(false);
     }
 
+    if (absorbTouchUntilRelease) {
+      data->state = LV_INDEV_STATE_REL;   // tant que le doigt reste posé après réveil
+    } else {
+      data->state = LV_INDEV_STATE_PR;
+      data->point.x = x;
+      data->point.y = y;
+    }
+
     if (millis() - lastTouchDebug > 500) {
       ESP_LOGD(TAG, "Touch x=%d y=%d", x, y);
       lastTouchDebug = millis();
     }
   } else {
+    absorbTouchUntilRelease = false;   // doigt relâché → réarme pour le prochain vrai toucher
     data->state = LV_INDEV_STATE_REL;
   }
 }
