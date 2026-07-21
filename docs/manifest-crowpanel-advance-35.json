@@ -1,6 +1,6 @@
 {
   "name": "LoRa APRS Tracker - CrowPanel Advance 3.5\" (Stable)",
-  "version": "2.9.5 (2026-07-18)",
+  "version": "2.9.5 (2026-07-21)",
   "new_install_prompt_erase": true,
   "builds": [
     {
