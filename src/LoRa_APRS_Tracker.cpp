@@ -402,8 +402,9 @@ void loop() {
         STORAGE_Utils::updateRxStats(packet.rssi, packet.snr);
 
         // --- 3. Per-station stats (Sender) ---
+        String sender;
         if (pathStart > 0) {
-            String sender = rawFrame.substring(0, pathStart);
+            sender = rawFrame.substring(0, pathStart);
             if (rfTransmitter.isEmpty()) {
                 rfTransmitter = isDirect ? sender : "?";
             }
@@ -415,8 +416,16 @@ void loop() {
             LVGL_UI::refreshFramesList();
         #endif
 
-        // Repeater mode: retransmit received packet with proper APRS digipeating
-        if (Config.lora.repeaterMode) {
+        // Repeater mode: retransmit received packet with proper APRS digipeating.
+        // Guard against self-echo: never repeat our own beacon when a neighbour
+        // sends it back to us with the alias still intact (path 2 already does this).
+        // Also refuse when the alias already appears in used form (ALIAS*): the
+        // library's replace is global, so a path carrying both the used and the
+        // free form would be rewritten twice, emitting an invalid "CALL**" path.
+        int digiColon = packet.text.indexOf(':');
+        String digiHeader = (digiColon > 0) ? packet.text.substring(0, digiColon) : packet.text;
+        bool aliasAlreadyUsed = (digiHeader.indexOf(Config.lora.digipeatAlias + "*") != -1);
+        if (Config.lora.repeaterMode && sender != currentBeacon->callsign && !aliasAlreadyUsed) {
             String digipeatedPacket = APRSPacketLib::generateDigipeatedPacket(packet.text, currentBeacon->callsign, Config.lora.digipeatAlias);
             if (digipeatedPacket != "X") {
                 ESP_LOGI(TAG, "Digipeating: %s", digipeatedPacket.c_str());

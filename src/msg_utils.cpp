@@ -752,7 +752,14 @@ namespace MSG_Utils {
 
                 if (check15SegBuffer(lastReceivedPacket.sender, lastReceivedPacket.payload)) {
 
-                    if (digipeaterActive && lastReceivedPacket.addressee != currentBeacon->callsign) {
+                    // Refuse when the alias already appears in used form (ALIAS*): the
+                    // library's replace is global, so a path carrying both the used and
+                    // the free form would be rewritten twice, emitting "CALL**".
+                    int digiColon = packet.text.indexOf(':');
+                    String digiHeader = (digiColon > 0) ? packet.text.substring(0, digiColon) : packet.text;
+                    bool aliasAlreadyUsed = (digiHeader.indexOf(Config.lora.digipeatAlias + "*") != -1);
+
+                    if (digipeaterActive && lastReceivedPacket.addressee != currentBeacon->callsign && !aliasAlreadyUsed) {
                         String digipeatedPacket = APRSPacketLib::generateDigipeatedPacket(packet.text, currentBeacon->callsign, Config.lora.digipeatAlias);
                         if (digipeatedPacket == "X") {
                             ESP_LOGW(TAG, "Packet won't be Repeated (Missing WIDEn-N)");
