@@ -417,7 +417,7 @@ void loop() {
 
         // Repeater mode: retransmit received packet with proper APRS digipeating
         if (Config.lora.repeaterMode) {
-            String digipeatedPacket = APRSPacketLib::generateDigipeatedPacket(packet.text, currentBeacon->callsign, Config.path);
+            String digipeatedPacket = APRSPacketLib::generateDigipeatedPacket(packet.text, currentBeacon->callsign, Config.lora.digipeatAlias);
             if (digipeatedPacket != "X") {
                 ESP_LOGI(TAG, "Digipeating: %s", digipeatedPacket.c_str());
                 delay(random(100, 500)); // Random delay to avoid collisions

@@ -128,6 +128,7 @@ class Lora {
 public:
     bool    sendInfo;
     bool    repeaterMode;
+    String  digipeatAlias;      // alias matched when repeating (fill-in = WIDE1-1)
 };
 
 class PTT {

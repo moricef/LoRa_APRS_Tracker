@@ -753,7 +753,7 @@ namespace MSG_Utils {
                 if (check15SegBuffer(lastReceivedPacket.sender, lastReceivedPacket.payload)) {
 
                     if (digipeaterActive && lastReceivedPacket.addressee != currentBeacon->callsign) {
-                        String digipeatedPacket = APRSPacketLib::generateDigipeatedPacket(packet.text, currentBeacon->callsign, Config.path);
+                        String digipeatedPacket = APRSPacketLib::generateDigipeatedPacket(packet.text, currentBeacon->callsign, Config.lora.digipeatAlias);
                         if (digipeatedPacket == "X") {
                             ESP_LOGW(TAG, "Packet won't be Repeated (Missing WIDEn-N)");
                         } else {

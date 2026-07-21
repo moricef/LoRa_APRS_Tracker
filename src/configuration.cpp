@@ -120,6 +120,7 @@ bool Configuration::writeFile() {
 
         data["loraConfig"]["sendInfo"]              = lora.sendInfo;
         data["loraConfig"]["repeaterMode"]          = lora.repeaterMode;
+        data["loraConfig"]["digipeatAlias"]         = lora.digipeatAlias;
 
         data["telemetry"]["active"]                 = telemetry.active;
         data["telemetry"]["sendTelemetry"]          = telemetry.sendTelemetry;
@@ -291,6 +292,8 @@ bool Configuration::readFile() {
         lora.sendInfo                   = data["loraConfig"]["sendInfo"] | true;
         if (!data["loraConfig"].containsKey("repeaterMode")) needsRewrite = true;
         lora.repeaterMode               = data["loraConfig"]["repeaterMode"] | false;
+        if (!data["loraConfig"].containsKey("digipeatAlias")) needsRewrite = true;
+        lora.digipeatAlias              = data["loraConfig"]["digipeatAlias"] | "WIDE1-1";
 
         if (!data["telemetry"].containsKey("active") ||
             !data["telemetry"].containsKey("sendTelemetry") ||
@@ -507,6 +510,7 @@ void Configuration::setDefaultValues() {
 
     lora.sendInfo                   = true;
     lora.repeaterMode               = false;
+    lora.digipeatAlias              = "WIDE1-1";   // fill-in role: relay trackers not yet repeated
 
     telemetry.active                 = false;
     telemetry.sendTelemetry          = false;

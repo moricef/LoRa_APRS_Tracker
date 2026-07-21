@@ -1260,6 +1260,15 @@ static void repeater_switch_changed(lv_event_t *e) {
     ESP_LOGI(TAG, "Repeater mode: %s", Config.lora.repeaterMode ? "ON" : "OFF");
 }
 
+static void digipeat_alias_changed(lv_event_t *e) {
+    lv_obj_t *dd = lv_event_get_target(e);
+    char buf[16];
+    lv_dropdown_get_selected_str(dd, buf, sizeof(buf));
+    Config.lora.digipeatAlias = String(buf);
+    Config.writeFile();
+    ESP_LOGI(TAG, "Digipeat alias: %s", Config.lora.digipeatAlias.c_str());
+}
+
 void UISettings::createRepeaterScreen() {
     screen_repeater = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(screen_repeater, lv_color_hex(UIColors::BG_DARK), 0);
@@ -1325,13 +1334,37 @@ void UISettings::createRepeaterScreen() {
     }
     lv_obj_add_event_cb(repeater_switch, repeater_switch_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
+    // Digipeat alias row
+    lv_obj_t *alias_row = lv_obj_create(content);
+    lv_obj_set_size(alias_row, lv_pct(100), 40);
+    lv_obj_set_style_bg_opa(alias_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(alias_row, 0, 0);
+    lv_obj_set_style_pad_all(alias_row, 0, 0);
+
+    lv_obj_t *alias_label = lv_label_create(alias_row);
+    lv_label_set_text(alias_label, "Digipeat Alias");
+    lv_obj_set_style_text_color(alias_label, lv_color_hex(UIColors::TEXT_WHITE), 0);
+    lv_obj_set_style_text_font(alias_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(alias_label, LV_ALIGN_LEFT_MID, 0, 0);
+
+    lv_obj_t *alias_dropdown = lv_dropdown_create(alias_row);
+    lv_dropdown_set_options(alias_dropdown, "WIDE1-1\nWIDE2-1");
+    lv_obj_set_size(alias_dropdown, 110, 30);
+    lv_obj_align(alias_dropdown, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(alias_dropdown, lv_color_hex(UIColors::BG_HEADER), 0);
+    lv_obj_set_style_text_color(alias_dropdown, lv_color_hex(UIColors::TEXT_WHITE), 0);
+    lv_dropdown_set_selected(alias_dropdown, (Config.lora.digipeatAlias == "WIDE2-1") ? 1 : 0);
+    lv_obj_add_event_cb(alias_dropdown, digipeat_alias_changed, LV_EVENT_VALUE_CHANGED, NULL);
+
     // Description
     lv_obj_t *desc_label = lv_label_create(content);
     lv_label_set_long_mode(desc_label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(desc_label, lv_pct(95));
     lv_label_set_text(desc_label,
-        "When enabled, received LoRa packets will be automatically retransmitted.\n\n"
-        "This allows the tracker to act as a digipeater, extending the range of the APRS network.");
+        "When enabled, received LoRa packets are retransmitted (digipeating).\n\n"
+        "WIDE1-1 (fill-in): relays trackers not yet repeated by any digi. Use this "
+        "for a local tracker network when no digi/igate is in range.\n\n"
+        "WIDE2-1: role of hilltop wide digis. Avoid on a mobile tracker.");
     lv_obj_set_style_text_color(desc_label, lv_color_hex(0xaaaaaa), 0);
     lv_obj_set_style_text_font(desc_label, &lv_font_montserrat_12, 0);
 
