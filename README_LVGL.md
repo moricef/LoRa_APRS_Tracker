@@ -10,9 +10,9 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 
 ## Screenshots
 
-|<img src="docs/tdeck_dashboard.jpg" width="250">|<img src="docs/tdeck_vector_map.jpg" width="250">|<img src="docs/tdeck_messaging.jpg" width="250">|
-|:-:|:-:|:-:|
-| **Dashboard** | **Vector Map** | **Messaging** |
+|<img src="docs/t-deck_dashboard.png" width="220">|<img src="docs/tdeck_vector_map.png" width="220">|<img src="docs/tdeck_messaging_conversation.png" width="220">|<img src="docs/tdeck_messaging_frames.png" width="220">|
+|:-:|:-:|:-:|:-:|
+| **Dashboard** | **Vector Map** | **Messaging** | **Frames** |
 
 ---
 ## What's New in v2.9.5
