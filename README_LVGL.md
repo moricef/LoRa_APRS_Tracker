@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.9.2-blue)
+![Version](https://img.shields.io/badge/version-2.9.5-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus and CrowPanel Advance 3.5", plus classic OLED tracker for T-Beam V1.2**
@@ -15,11 +15,17 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 | **Dashboard** | **Vector Map** | **Messaging** |
 
 ---
+## What's New in v2.9.5
+- **Digipeater fill-in mode** - New `digipeatAlias` setting (default `WIDE1-1`), separate from the beacon path, with a selector in the Repeater screen. The tracker relays stations not yet repeated by any digi, consuming `WIDE1-1` while preserving `WIDE2-1` for the next hop — useful to form a local tracker network when no digi/igate is in range
+- **Digipeat safety guards** - Self-echo protection (never repeat our own beacon sent back by a neighbour) and refusal to repeat when the alias is already consumed (`ALIAS*`), which previously produced malformed `CALL**` paths
+- **MAX17048 fuel gauge on CrowPanel** - Read through the LovyanGFX I2C driver, fixing the conflict with the GT911 touch controller sharing the same bus (battery monitoring was reported as "not found")
+- **Touch wake-up fix** - The touch that wakes the screen from eco mode is now absorbed and no longer triggers the button underneath
+- **Map station tap fix** - Station hit zones are converted to the live canvas position (pan and NAV sub-tile offsets), making taps reliable at any map offset
+
 ## What's New in v2.9.4
 - **Web Flasher Multi-Board** - Single-page web installer with board selector: T-Deck Plus 433, CrowPanel 3.5", T-Beam V1.2
 - **T-Beam V1.2 support** - Classic OLED tracker firmware with GNSS quality filtering and SmartBeacon advanced web config
 - **Strict 3D Fix (PDOP)** - New configurable mode to enforce PDOP filtering for altitude reliability, with a visual indicator on the dashboard.
-- **Persistent Map State** - Map's NAV memory pool and zoom/pan state are preserved across sessions to avoid PSRAM fragmentation and improve user experience.
 - **Persistent Map State** - Map's NAV memory pool and zoom/pan state are preserved across sessions to avoid PSRAM fragmentation and improve user experience.
 - **NeoGPS migration** - Replaced TinyGPS++ (legacy 2013) with NeoGPS: coherent fix merging, HDOP from GGA, configurable sentence parsing
 - **GPS Doppler cross-check filter** - New jitter rejection: when GPS reports low speed (< 8 km/h) but position barely moved (< 25m), the update is rejected. Fixes L76K Doppler noise at rest
