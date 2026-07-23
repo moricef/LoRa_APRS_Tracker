@@ -43,8 +43,6 @@ static bool contactsLoaded = false;
 // Root directory for all tracker data on SD card
 static const char* ROOT_DIR = "/LoRa_Tracker";
 static const char* MESSAGES_DIR = "/LoRa_Tracker/Messages";
-static const char* INBOX_DIR = "/LoRa_Tracker/Messages/inbox";
-static const char* OUTBOX_DIR = "/LoRa_Tracker/Messages/outbox";
 static const char* CONTACTS_DIR = "/LoRa_Tracker/Contacts";
 static const char* CONTACTS_FILE = "/LoRa_Tracker/Contacts/contacts.json";
 static const char* MAPS_DIR = "/LoRa_Tracker/Maps";
@@ -65,14 +63,6 @@ namespace STORAGE_Utils {
         if (!SD.exists(MESSAGES_DIR)) {
             SD.mkdir(MESSAGES_DIR);
             ESP_LOGI(TAG, "Created %s", MESSAGES_DIR);
-        }
-        if (!SD.exists(INBOX_DIR)) {
-            SD.mkdir(INBOX_DIR);
-            ESP_LOGI(TAG, "Created %s", INBOX_DIR);
-        }
-        if (!SD.exists(OUTBOX_DIR)) {
-            SD.mkdir(OUTBOX_DIR);
-            ESP_LOGI(TAG, "Created %s", OUTBOX_DIR);
         }
 
         // Create Contacts directory
@@ -186,30 +176,6 @@ namespace STORAGE_Utils {
         return sdAvailable;
     }
 
-    // Get paths to different directories
-    String getRootPath() {
-        return sdAvailable ? String(ROOT_DIR) : "";
-    }
-
-    String getMessagesPath() {
-        return sdAvailable ? String(MESSAGES_DIR) : "";
-    }
-
-    String getInboxPath() {
-        return sdAvailable ? String(INBOX_DIR) : "";
-    }
-
-    String getOutboxPath() {
-        return sdAvailable ? String(OUTBOX_DIR) : "";
-    }
-
-    String getContactsPath() {
-        return sdAvailable ? String(CONTACTS_DIR) : "";
-    }
-
-    String getMapsPath() {
-        return sdAvailable ? String(MAPS_DIR) : "";
-    }
 
     bool fileExists(const String& path) {
         if (sdAvailable) {
