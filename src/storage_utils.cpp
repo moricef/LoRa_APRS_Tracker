@@ -19,9 +19,9 @@
 #include <SPIFFS.h>
 #include <SD.h>
 #include <SPI.h>
+#if defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include "board_pinout.h"
 #include "display.h"
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include "esp_io_expander.hpp"
 #endif
 #include <vector>
