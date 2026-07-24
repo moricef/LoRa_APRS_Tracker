@@ -42,12 +42,16 @@ namespace UIMessaging {
 
 static lv_obj_t *screen_msg = nullptr;
 static lv_obj_t *msg_tabview = nullptr;
+static lv_obj_t *screen_frames = nullptr;
+static lv_obj_t *frames_tabview = nullptr;
 static lv_obj_t *list_aprs_global = nullptr;
 static lv_obj_t *list_wlnk_global = nullptr;
 static lv_obj_t *list_contacts_global = nullptr;
 static lv_obj_t *list_frames_global = nullptr;
 static lv_obj_t *cont_stats_global = nullptr;
-static int current_msg_type = 0; // 0 = APRS, 1 = Winlink, 2 = Contacts, 3 = Frames, 4 = Stats
+static lv_obj_t *badge_aprs_unread = nullptr;
+static lv_obj_t *badge_wlnk_unread = nullptr;
+static int current_msg_type = 0; // 0 = APRS, 1 = Winlink, 2 = Contacts
 
 // Compose screen variables
 static lv_obj_t *screen_compose = nullptr;
@@ -131,6 +135,8 @@ static void show_contact_edit_screen(const Contact *contact);
 static void show_message_detail(const char *msg);
 static void show_delete_confirmation(const char *message, int msg_index);
 static void frame_item_clicked(lv_event_t *e);
+static lv_obj_t *create_tab_badge(lv_obj_t *parent, int tab_index);
+static void update_badge_label(lv_obj_t *badge, int count);
 
 // =============================================================================
 // Module Initialization
@@ -170,6 +176,61 @@ static void show_message_detail(const char *msg) {
     lv_obj_add_event_cb(detail_msgbox, detail_msgbox_deleted_cb, LV_EVENT_DELETE, NULL);
 }
 
+static lv_obj_t *create_tab_badge(lv_obj_t *parent, int tab_index) {
+    lv_obj_t *badge = lv_obj_create(parent);
+    lv_obj_set_size(badge, 14, 12);
+    int tabWidth = SCREEN_WIDTH / 3;
+    lv_obj_set_pos(badge, (tab_index * tabWidth) + tabWidth - 16, 44);
+    lv_obj_set_style_radius(badge, 6, 0);
+    lv_obj_set_style_bg_color(badge, lv_color_hex(0xff4444), 0);
+    lv_obj_set_style_border_width(badge, 0, 0);
+    lv_obj_set_style_pad_all(badge, 0, 0);
+    lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(badge, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *label = lv_label_create(badge);
+    lv_obj_set_style_text_color(label, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_12, 0);
+    lv_obj_center(label);
+
+    return badge;
+}
+
+static void update_badge_label(lv_obj_t *badge, int count) {
+    if (!badge) {
+        return;
+    }
+
+    if (count <= 0) {
+        lv_obj_add_flag(badge, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    char text[5];
+    if (count > 99) {
+        strncpy(text, "99+", sizeof(text));
+    } else {
+        snprintf(text, sizeof(text), "%d", count);
+    }
+
+    lv_obj_t *label = lv_obj_get_child(badge, 0);
+    if (label) {
+        lv_label_set_text(label, text);
+        lv_obj_center(label);
+    }
+    lv_obj_clear_flag(badge, LV_OBJ_FLAG_HIDDEN);
+}
+
+void refreshUnreadBadges() {
+    update_badge_label(badge_aprs_unread, MSG_Utils::getUnreadAPRSCount());
+    update_badge_label(badge_wlnk_unread, MSG_Utils::getUnreadWLNKCount());
+
+    if (screen_msg && lv_scr_act() == screen_msg &&
+        current_msg_type == 0 && list_aprs_global) {
+        populate_msg_list(list_aprs_global, 0);
+    }
+}
+
 // =============================================================================
 // Delete Confirmation System
 // =============================================================================
@@ -193,6 +254,7 @@ static void delete_confirm_msgbox_timer_cb(lv_timer_t *timer) {
         if (list_wlnk_global) {
             populate_msg_list(list_wlnk_global, 1);
         }
+        refreshUnreadBadges();
         need_aprs_list_refresh = false;
     }
 
@@ -257,6 +319,9 @@ static void msg_item_clicked(lv_event_t *e) {
     if (label) {
         const char *text = lv_label_get_text(label);
         show_message_detail(text);
+        if (current_msg_type == 1) {
+            MSG_Utils::markWLNKRead();
+        }
     }
 }
 
@@ -278,6 +343,7 @@ static void conversation_item_clicked(lv_event_t *e) {
         return;
 
     ESP_LOGD(TAG, "Conversation clicked: %s", callsign);
+    MSG_Utils::markConversationRead(String(callsign));
     create_conversation_screen(String(callsign));
 }
 
@@ -311,6 +377,7 @@ static void populate_msg_list(lv_obj_t *list, int type) {
 
             for (size_t i = 0; i < conversations.size(); i++) {
                 std::vector<String> messages = MSG_Utils::getMessagesForContact(conversations[i]);
+                int unreadCount = MSG_Utils::getUnreadConversationCount(conversations[i]);
                 const char* callsign = conversations[i].c_str();
                 size_t callLen = strlen(callsign);
                 if (callLen > 15) callLen = 15;
@@ -344,6 +411,36 @@ static void populate_msg_list(lv_obj_t *list, int type) {
                 previewBuf[pos] = '\0';
 
                 lv_obj_t *btn = lv_list_add_btn(list, LV_SYMBOL_ENVELOPE, previewBuf);
+                if (unreadCount > 0) {
+                    lv_obj_set_style_border_width(btn, 2, 0);
+                    lv_obj_set_style_border_color(btn, lv_color_hex(0xff4444), 0);
+                    lv_obj_t *label = lv_obj_get_child(btn, 0);
+                    if (label) {
+                        lv_obj_set_style_text_color(label, lv_color_hex(0xff4444), 0);
+                    }
+
+                    lv_obj_t *badge = lv_obj_create(btn);
+                    lv_obj_set_size(badge, 18, 14);
+                    lv_obj_align(badge, LV_ALIGN_TOP_RIGHT, -2, 2);
+                    lv_obj_set_style_radius(badge, 7, 0);
+                    lv_obj_set_style_bg_color(badge, lv_color_hex(0xff4444), 0);
+                    lv_obj_set_style_border_width(badge, 0, 0);
+                    lv_obj_set_style_pad_all(badge, 0, 0);
+                    lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
+
+                    char countText[5];
+                    if (unreadCount > 99) {
+                        strncpy(countText, "99+", sizeof(countText));
+                    } else {
+                        snprintf(countText, sizeof(countText), "%d", unreadCount);
+                    }
+
+                    lv_obj_t *countLabel = lv_label_create(badge);
+                    lv_label_set_text(countLabel, countText);
+                    lv_obj_set_style_text_color(countLabel, lv_color_hex(0xffffff), 0);
+                    lv_obj_set_style_text_font(countLabel, &lv_font_montserrat_12, 0);
+                    lv_obj_center(countLabel);
+                }
                 lv_obj_add_event_cb(btn, conversation_item_clicked, LV_EVENT_CLICKED,
                                     (void *)callsign_storage[i].c_str());
             }
@@ -1232,7 +1329,7 @@ static void msg_tab_changed(lv_event_t *e) {
 
     uint16_t tab_idx = lv_tabview_get_tab_act(tabview);
 
-    if (tab_idx > 4 || tab_idx == 0xFFFF) {
+    if (tab_idx > 2 || tab_idx == 0xFFFF) {
         return;
     }
 
@@ -1246,14 +1343,24 @@ static void msg_tab_changed(lv_event_t *e) {
         if (current_msg_type == 2 && list_contacts_global) {
             populate_contacts_list(list_contacts_global);
         }
-        if (current_msg_type == 3 && list_frames_global) {
-            populate_frames_list(list_frames_global);
-            STORAGE_Utils::clearFramesDirty();  // Data is now up-to-date
-        }
-        if (current_msg_type == 4 && cont_stats_global) {
-            populate_stats(cont_stats_global);
-            STORAGE_Utils::clearStatsDirty();  // Data is now up-to-date
-        }
+        refreshUnreadBadges();
+    }
+}
+
+static void frames_tab_changed(lv_event_t *e) {
+    lv_obj_t *tabview = lv_event_get_target(e);
+
+    if (!tabview || tabview != frames_tabview) {
+        return;
+    }
+
+    uint16_t tab_idx = lv_tabview_get_tab_act(tabview);
+    if (tab_idx == 0 && list_frames_global) {
+        populate_frames_list(list_frames_global);
+        STORAGE_Utils::clearFramesDirty();
+    } else if (tab_idx == 1 && cont_stats_global) {
+        populate_stats(cont_stats_global);
+        STORAGE_Utils::clearStatsDirty();
     }
 }
 
@@ -1604,8 +1711,64 @@ void createMsgScreen() {
         }
     }
 
-    // Frames Tab
-    lv_obj_t *tab_frames = lv_tabview_add_tab(msg_tabview, "Frames");
+    badge_aprs_unread = create_tab_badge(screen_msg, 0);
+    badge_wlnk_unread = create_tab_badge(screen_msg, 1);
+    refreshUnreadBadges();
+
+    ESP_LOGD(TAG, "Messages screen created with tabs");
+}
+
+static void createFramesScreen() {
+    screen_frames = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(screen_frames, lv_color_hex(0x1a1a2e), 0);
+
+    lv_obj_t *title_bar = lv_obj_create(screen_frames);
+    lv_obj_set_size(title_bar, SCREEN_WIDTH, 35);
+    lv_obj_set_pos(title_bar, 0, 0);
+    lv_obj_set_style_bg_color(title_bar, lv_color_hex(0x444466), 0);
+    lv_obj_set_style_border_width(title_bar, 0, 0);
+    lv_obj_set_style_radius(title_bar, 0, 0);
+    lv_obj_set_style_pad_all(title_bar, 5, 0);
+
+    lv_obj_t *btn_back = lv_btn_create(title_bar);
+    lv_obj_set_size(btn_back, 50, 25);
+    lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x16213e), 0);
+    lv_obj_add_event_cb(btn_back, btn_back_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_back = lv_label_create(btn_back);
+    lv_label_set_text(lbl_back, LV_SYMBOL_LEFT);
+    lv_obj_center(lbl_back);
+
+    lv_obj_t *title = lv_label_create(title_bar);
+    lv_label_set_text(title, "Frames");
+    lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+
+    frames_tabview = lv_tabview_create(screen_frames, LV_DIR_TOP, 30);
+    if (!frames_tabview) {
+        ESP_LOGE(TAG, "Failed to create frames_tabview!");
+        return;
+    }
+    lv_obj_set_size(frames_tabview, SCREEN_WIDTH, SCREEN_HEIGHT - 35);
+    lv_obj_set_pos(frames_tabview, 0, 35);
+    lv_obj_set_style_bg_color(frames_tabview, lv_color_hex(0x0f0f23), 0);
+    lv_obj_add_event_cb(frames_tabview, frames_tab_changed, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *tab_bar = lv_tabview_get_tab_btns(frames_tabview);
+    if (tab_bar) {
+        lv_obj_set_style_pad_column(tab_bar, 0, 0);
+        lv_obj_set_style_text_color(tab_bar, lv_color_hex(0xFF8C00), LV_PART_ITEMS);
+        lv_obj_set_style_border_color(tab_bar, lv_color_hex(0x9DB2CC), LV_PART_ITEMS);
+        lv_obj_set_style_border_width(tab_bar, 1, LV_PART_ITEMS);
+        lv_obj_set_style_border_side(tab_bar, LV_BORDER_SIDE_RIGHT, LV_PART_ITEMS);
+        lv_obj_set_style_bg_color(tab_bar, lv_color_hex(0x86B8F7), LV_PART_ITEMS | LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(tab_bar, lv_color_hex(0x0952AD), LV_PART_ITEMS | LV_STATE_CHECKED);
+        lv_obj_set_style_border_color(tab_bar, lv_color_hex(0x0952AD), LV_PART_ITEMS | LV_STATE_CHECKED);
+        lv_obj_set_style_border_width(tab_bar, 3, LV_PART_ITEMS | LV_STATE_CHECKED);
+        lv_obj_set_style_border_side(tab_bar, LV_BORDER_SIDE_BOTTOM, LV_PART_ITEMS | LV_STATE_CHECKED);
+    }
+
+    lv_obj_t *tab_frames = lv_tabview_add_tab(frames_tabview, "Frames");
     if (tab_frames) {
         lv_obj_set_style_bg_color(tab_frames, lv_color_hex(0x0f0f23), 0);
         lv_obj_set_style_pad_all(tab_frames, 5, 0);
@@ -1615,14 +1778,15 @@ void createMsgScreen() {
             lv_obj_set_size(list_frames_global, lv_pct(100), lv_pct(100));
             lv_obj_set_style_bg_color(list_frames_global, lv_color_hex(0x0f0f23), 0);
             lv_obj_set_style_border_width(list_frames_global, 0, 0);
+            populate_frames_list(list_frames_global);
+            STORAGE_Utils::clearFramesDirty();
         }
     }
 
-    // Stats Tab
-    lv_obj_t *tab_stats = lv_tabview_add_tab(msg_tabview, "Stats");
+    lv_obj_t *tab_stats = lv_tabview_add_tab(frames_tabview, "Stats");
     if (tab_stats) {
         lv_obj_set_style_bg_color(tab_stats, lv_color_hex(0x0f0f23), 0);
-        lv_obj_set_style_pad_all(tab_stats, 5, 0); // Reduce padding to increase usable width
+        lv_obj_set_style_pad_all(tab_stats, 5, 0);
 
         cont_stats_global = lv_obj_create(tab_stats);
         if (cont_stats_global) {
@@ -1635,7 +1799,7 @@ void createMsgScreen() {
         }
     }
 
-    ESP_LOGD(TAG, "Messages screen created with tabs");
+    ESP_LOGD(TAG, "Frames screen created with Frames/Stats tabs");
 }
 
 // =============================================================================
@@ -1649,8 +1813,26 @@ void openMessagesScreen() {
         if (list_aprs_global) {
             populate_msg_list(list_aprs_global, 0);
         }
+        refreshUnreadBadges();
     }
     lv_scr_load_anim(screen_msg, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+}
+
+void openFramesScreen() {
+    if (!screen_frames) {
+        createFramesScreen();
+    } else if (frames_tabview) {
+        uint16_t tab_idx = lv_tabview_get_tab_act(frames_tabview);
+        if (tab_idx == 0 && list_frames_global) {
+            populate_frames_list(list_frames_global);
+            lv_obj_scroll_to_y(list_frames_global, 0, LV_ANIM_ON);
+            STORAGE_Utils::clearFramesDirty();
+        } else if (tab_idx == 1 && cont_stats_global) {
+            populate_stats(cont_stats_global);
+            STORAGE_Utils::clearStatsDirty();
+        }
+    }
+    lv_scr_load_anim(screen_frames, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 void openComposeWithCallsign(const String& callsign) {
@@ -1685,8 +1867,8 @@ void refreshFramesList() {
     // Only refresh if data changed AND Messages screen is active AND Frames tab is visible
     if (!STORAGE_Utils::isFramesDirty()) return;
 
-    if (screen_msg && lv_scr_act() == screen_msg && msg_tabview) {
-        if (lv_tabview_get_tab_act(msg_tabview) == 3 && list_frames_global) {
+    if (screen_frames && lv_scr_act() == screen_frames && frames_tabview) {
+        if (lv_tabview_get_tab_act(frames_tabview) == 0 && list_frames_global) {
             // With object pooling, just update all items (no alloc/dealloc)
             populate_frames_list(list_frames_global);
             lv_obj_scroll_to_y(list_frames_global, 0, LV_ANIM_ON);
@@ -1699,8 +1881,8 @@ void refreshStatsIfActive() {
     // Only refresh if data changed AND Stats tab is currently active
     if (!STORAGE_Utils::isStatsDirty()) return;
 
-    if (screen_msg && lv_scr_act() == screen_msg && msg_tabview) {
-        if (lv_tabview_get_tab_act(msg_tabview) == 4 && cont_stats_global) {
+    if (screen_frames && lv_scr_act() == screen_frames && frames_tabview) {
+        if (lv_tabview_get_tab_act(frames_tabview) == 1 && cont_stats_global) {
             populate_stats(cont_stats_global);
             STORAGE_Utils::clearStatsDirty();
         }

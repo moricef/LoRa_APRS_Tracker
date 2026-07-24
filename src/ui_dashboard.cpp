@@ -9,6 +9,7 @@ static const char *TAG = "Dashboard";
 
 #include "ui_dashboard.h"
 #include "ui_common.h"
+#include "ui_messaging.h"
 #include "ui_settings.h"
 #include "ui_popups.h"
 #include "ui_map_manager.h"
@@ -23,6 +24,7 @@ static const char *TAG = "Dashboard";
 #include "ble_utils.h"
 #include "configuration.h"
 #include "custom_characters.h"
+#include "msg_utils.h"
 #include "storage_utils.h"
 #include "utils.h"
 #include <TimeLib.h>
@@ -61,6 +63,8 @@ static lv_obj_t *label_lora = nullptr;
 static lv_obj_t *label_time = nullptr;
 static lv_obj_t *aprs_symbol_canvas = nullptr;
 static lv_color_t *aprs_symbol_buf = nullptr;
+static lv_obj_t *btn_msg_obj = nullptr;
+static lv_obj_t *badge_msg_unread = nullptr;
 
 // RX station table
 static lv_obj_t *label_last_rx = nullptr;
@@ -76,6 +80,7 @@ static lv_obj_t *label_battery_pct = nullptr;
 static void btn_beacon_clicked(lv_event_t *e);
 static void btn_setup_clicked(lv_event_t *e);
 static void btn_msg_clicked(lv_event_t *e);
+static void btn_frames_clicked(lv_event_t *e);
 static void btn_map_clicked(lv_event_t *e);
 
 void init() {
@@ -152,6 +157,12 @@ static void btn_msg_clicked(lv_event_t *e) {
     LVGL_UI::openMessagesScreen();
 }
 
+static void btn_frames_clicked(lv_event_t *e) {
+    ESP_LOGD(TAG, "FRM button pressed");
+    UIPopups::closeAll();
+    UIMessaging::openFramesScreen();
+}
+
 static void btn_map_clicked(lv_event_t *e) {
     ESP_LOGD(TAG, "MAP button pressed");
     ESP_LOGI(TAG, "Before MAP - DRAM: %u  PSRAM: %u  Largest DRAM block: %u",
@@ -184,6 +195,7 @@ static void btn_map_clicked(lv_event_t *e) {
 // Public button action functions
 void onBeaconClicked() { btn_beacon_clicked(nullptr); }
 void onMsgClicked() { btn_msg_clicked(nullptr); }
+void onFramesClicked() { btn_frames_clicked(nullptr); }
 void onMapClicked() { btn_map_clicked(nullptr); }
 void onSetupClicked() { btn_setup_clicked(nullptr); }
 
@@ -309,7 +321,7 @@ void createDashboard() {
 
     // Beacon button (APRS red)
     lv_obj_t *btn_beacon = lv_btn_create(btn_bar);
-    lv_obj_set_size(btn_beacon, 70, 30);
+    lv_obj_set_size(btn_beacon, 58, 30);
     lv_obj_set_style_bg_color(btn_beacon, lv_color_hex(0xcc0000), 0);
     lv_obj_add_event_cb(btn_beacon, btn_beacon_clicked, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_beacon = lv_label_create(btn_beacon);
@@ -318,18 +330,38 @@ void createDashboard() {
     lv_obj_set_style_text_color(lbl_beacon, lv_color_hex(0xffffff), 0);
 
     // Messages button (APRS blue)
-    lv_obj_t *btn_msg = lv_btn_create(btn_bar);
-    lv_obj_set_size(btn_msg, 70, 30);
-    lv_obj_set_style_bg_color(btn_msg, lv_color_hex(0x0066cc), 0);
-    lv_obj_add_event_cb(btn_msg, btn_msg_clicked, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *lbl_msg = lv_label_create(btn_msg);
+    btn_msg_obj = lv_btn_create(btn_bar);
+    lv_obj_set_size(btn_msg_obj, 58, 30);
+    lv_obj_set_style_bg_color(btn_msg_obj, lv_color_hex(0x0066cc), 0);
+    lv_obj_add_event_cb(btn_msg_obj, btn_msg_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_msg = lv_label_create(btn_msg_obj);
     lv_label_set_text(lbl_msg, "MSG");
     lv_obj_center(lbl_msg);
     lv_obj_set_style_text_color(lbl_msg, lv_color_hex(0xffffff), 0);
 
+    badge_msg_unread = lv_obj_create(btn_msg_obj);
+    lv_obj_set_size(badge_msg_unread, 8, 8);
+    lv_obj_add_flag(badge_msg_unread, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_align(badge_msg_unread, LV_ALIGN_TOP_RIGHT, -2, 2);
+    lv_obj_set_style_radius(badge_msg_unread, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(badge_msg_unread, lv_color_hex(0xff4444), 0);
+    lv_obj_set_style_border_width(badge_msg_unread, 0, 0);
+    lv_obj_clear_flag(badge_msg_unread, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(badge_msg_unread, LV_OBJ_FLAG_HIDDEN);
+
+    // Frames button
+    lv_obj_t *btn_frames = lv_btn_create(btn_bar);
+    lv_obj_set_size(btn_frames, 58, 30);
+    lv_obj_set_style_bg_color(btn_frames, lv_color_hex(0x555577), 0);
+    lv_obj_add_event_cb(btn_frames, btn_frames_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_frames = lv_label_create(btn_frames);
+    lv_label_set_text(lbl_frames, "FRM");
+    lv_obj_center(lbl_frames);
+    lv_obj_set_style_text_color(lbl_frames, lv_color_hex(0xffffff), 0);
+
     // Map button (green)
     lv_obj_t *btn_map = lv_btn_create(btn_bar);
-    lv_obj_set_size(btn_map, 70, 30);
+    lv_obj_set_size(btn_map, 58, 30);
     lv_obj_set_style_bg_color(btn_map, lv_color_hex(0x009933), 0);
     lv_obj_add_event_cb(btn_map, btn_map_clicked, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_map = lv_label_create(btn_map);
@@ -339,13 +371,15 @@ void createDashboard() {
 
     // Settings button
     lv_obj_t *btn_settings = lv_btn_create(btn_bar);
-    lv_obj_set_size(btn_settings, 70, 30);
+    lv_obj_set_size(btn_settings, 58, 30);
     lv_obj_set_style_bg_color(btn_settings, lv_color_hex(0xc792ea), 0);
     lv_obj_add_event_cb(btn_settings, btn_setup_clicked, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_settings = lv_label_create(btn_settings);
     lv_label_set_text(lbl_settings, "SET");
     lv_obj_center(lbl_settings);
     lv_obj_set_style_text_color(lbl_settings, lv_color_hex(0x000000), 0);
+
+    refreshMessageBadge();
 
     // Load the screen
     lv_scr_load(screen_main);
@@ -448,6 +482,20 @@ void updateLastRx() {
     }
     lv_label_set_text(label_last_rx, text.c_str());
     }
+
+void refreshMessageBadge() {
+    if (!badge_msg_unread) {
+        return;
+    }
+
+    if (MSG_Utils::getUnreadMessagesCount() > 0) {
+        lv_obj_align(badge_msg_unread, LV_ALIGN_TOP_RIGHT, -2, 2);
+        lv_obj_move_foreground(badge_msg_unread);
+        lv_obj_clear_flag(badge_msg_unread, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(badge_msg_unread, LV_OBJ_FLAG_HIDDEN);
+    }
+}
 
     void updateGPSStrictIcon() {
     if (icon_gps_strict) {

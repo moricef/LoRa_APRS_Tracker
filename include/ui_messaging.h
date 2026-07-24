@@ -26,11 +26,13 @@ namespace UIMessaging {
 
     // Navigation
     void openMessagesScreen();
+    void openFramesScreen();
     void openComposeWithCallsign(const String& callsign);
 
     // Refresh functions
     void refreshConversationsList();
     void refreshContactsList();
+    void refreshUnreadBadges();
     void refreshFramesList();
     void refreshStatsIfActive();  // Called from main loop to update stats tab
 

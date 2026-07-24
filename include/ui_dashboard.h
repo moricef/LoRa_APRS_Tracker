@@ -29,6 +29,7 @@ namespace UIDashboard {
     void updateLoRa(const char* lastRx, int rssi);
     void refreshLoRaInfo();
     void updateLastRx();
+    void refreshMessageBadge();
     void updateGPSStrictIcon();
     void updateWiFi(bool connected, int rssi);
     void updateCallsign(const char* callsign);
@@ -41,6 +42,7 @@ namespace UIDashboard {
     // Button callbacks (public for external use if needed)
     void onBeaconClicked();
     void onMsgClicked();
+    void onFramesClicked();
     void onMapClicked();
     void onSetupClicked();
 

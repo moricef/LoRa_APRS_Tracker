@@ -35,6 +35,8 @@
 #include "display.h"
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
+#include "ui_dashboard.h"
+#include "ui_messaging.h"
 #endif
 
 
@@ -71,6 +73,14 @@ int     numWLNKMessages         = 0;
 bool    noAPRSMsgWarning        = false;
 bool    noWLNKMsgWarning        = false;
 String  lastHeardTracker        = "NONE";
+bool    unreadStateLoaded       = false;
+int     unreadWLNKMessages      = 0;
+
+struct UnreadConversation {
+    String callsign;
+    int count;
+};
+std::vector<UnreadConversation> unreadAPRSConversations;
 
 // Duplicate message detection buffer (30 second window)
 struct RecentMessage {
@@ -99,6 +109,173 @@ uint32_t    messageLedTime      = millis();
 
 
 namespace MSG_Utils {
+
+    static void notifyUnreadChanged() {
+        #ifdef USE_LVGL_UI
+        UIDashboard::refreshMessageBadge();
+        UIMessaging::refreshUnreadBadges();
+        #endif
+    }
+
+    static void saveUnreadAPRSState() {
+        STORAGE_Utils::removeFile("/unread_aprs.txt");
+
+        File file = STORAGE_Utils::openFile("/unread_aprs.txt", FILE_WRITE);
+        if (!file) {
+            ESP_LOGW(TAG, "Failed to save APRS unread state");
+            return;
+        }
+
+        for (const auto& entry : unreadAPRSConversations) {
+            if (entry.count > 0) {
+                file.println(entry.callsign + "," + String(entry.count));
+            }
+        }
+        file.close();
+    }
+
+    static void saveUnreadWLNKState() {
+        STORAGE_Utils::removeFile("/unread_wlnk.txt");
+
+        if (unreadWLNKMessages <= 0) {
+            return;
+        }
+
+        File file = STORAGE_Utils::openFile("/unread_wlnk.txt", FILE_WRITE);
+        if (!file) {
+            ESP_LOGW(TAG, "Failed to save Winlink unread state");
+            return;
+        }
+
+        file.println(String(unreadWLNKMessages));
+        file.close();
+    }
+
+    static void loadUnreadState() {
+        if (unreadStateLoaded) {
+            return;
+        }
+
+        unreadAPRSConversations.clear();
+        unreadWLNKMessages = 0;
+
+        File aprsFile = STORAGE_Utils::openFile("/unread_aprs.txt", "r");
+        if (aprsFile) {
+            while (aprsFile.available()) {
+                String line = aprsFile.readStringUntil('\n');
+                line.trim();
+                int comma = line.indexOf(',');
+                if (comma > 0) {
+                    String callsign = line.substring(0, comma);
+                    int count = line.substring(comma + 1).toInt();
+                    callsign.trim();
+                    if (callsign.length() > 0 && count > 0) {
+                        unreadAPRSConversations.push_back({callsign, count});
+                    }
+                }
+            }
+            aprsFile.close();
+        }
+
+        File wlnkFile = STORAGE_Utils::openFile("/unread_wlnk.txt", "r");
+        if (wlnkFile) {
+            String line = wlnkFile.readStringUntil('\n');
+            line.trim();
+            unreadWLNKMessages = std::max(0, (int)line.toInt());
+            wlnkFile.close();
+        }
+
+        unreadStateLoaded = true;
+    }
+
+    static int countIncomingMessagesForContact(const String& callsign) {
+        std::vector<String> messages = getMessagesForContact(callsign);
+        int count = 0;
+
+        for (const auto& message : messages) {
+            int firstComma = message.indexOf(',');
+            int secondComma = message.indexOf(',', firstComma + 1);
+            if (firstComma > 0 && secondComma > firstComma) {
+                String direction = message.substring(firstComma + 1, secondComma);
+                if (direction == "IN") {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    static void clampUnreadConversation(const String& callsign) {
+        loadUnreadState();
+        int availableIncoming = countIncomingMessagesForContact(callsign);
+
+        for (auto it = unreadAPRSConversations.begin(); it != unreadAPRSConversations.end(); ++it) {
+            if (it->callsign == callsign) {
+                if (availableIncoming <= 0) {
+                    unreadAPRSConversations.erase(it);
+                } else if (it->count > availableIncoming) {
+                    it->count = availableIncoming;
+                }
+                saveUnreadAPRSState();
+                notifyUnreadChanged();
+                return;
+            }
+        }
+    }
+
+    static void incrementUnreadConversation(const String& callsign) {
+        loadUnreadState();
+
+        for (auto& entry : unreadAPRSConversations) {
+            if (entry.callsign == callsign) {
+                entry.count++;
+                saveUnreadAPRSState();
+                notifyUnreadChanged();
+                return;
+            }
+        }
+
+        unreadAPRSConversations.push_back({callsign, 1});
+        saveUnreadAPRSState();
+        notifyUnreadChanged();
+    }
+
+    static void incrementUnreadWLNK() {
+        loadUnreadState();
+        unreadWLNKMessages++;
+        saveUnreadWLNKState();
+        notifyUnreadChanged();
+    }
+
+    static void touchConversationOrder(const String& callsign) {
+        std::vector<String> ordered;
+        ordered.push_back(callsign);
+
+        File readFile = STORAGE_Utils::openFile("/conversations_order.txt", "r");
+        if (readFile) {
+            while (readFile.available()) {
+                String line = readFile.readStringUntil('\n');
+                line.trim();
+                if (line.length() > 0 && line != callsign) {
+                    ordered.push_back(line);
+                }
+            }
+            readFile.close();
+        }
+
+        STORAGE_Utils::removeFile("/conversations_order.txt");
+        File writeFile = STORAGE_Utils::openFile("/conversations_order.txt", FILE_WRITE);
+        if (!writeFile) {
+            ESP_LOGW(TAG, "Failed to save conversation order");
+            return;
+        }
+
+        for (const auto& entry : ordered) {
+            writeFile.println(entry);
+        }
+        writeFile.close();
+    }
 
     // Clean old entries from deduplication buffer
     static void cleanRecentMessagesBuffer() {
@@ -148,6 +325,68 @@ namespace MSG_Utils {
 
     int getNumWLNKMails() {
         return numWLNKMessages;
+    }
+
+    int getUnreadAPRSCount() {
+        loadUnreadState();
+        int count = 0;
+        for (const auto& entry : unreadAPRSConversations) {
+            count += entry.count;
+        }
+        return count;
+    }
+
+    int getUnreadWLNKCount() {
+        loadUnreadState();
+        return unreadWLNKMessages;
+    }
+
+    int getUnreadMessagesCount() {
+        return getUnreadAPRSCount() + getUnreadWLNKCount();
+    }
+
+    int getUnreadConversationCount(const String& callsign) {
+        loadUnreadState();
+        for (const auto& entry : unreadAPRSConversations) {
+            if (entry.callsign == callsign) {
+                return entry.count;
+            }
+        }
+        return 0;
+    }
+
+    void markConversationRead(const String& callsign) {
+        loadUnreadState();
+        bool changed = false;
+
+        for (auto it = unreadAPRSConversations.begin(); it != unreadAPRSConversations.end();) {
+            if (it->callsign == callsign) {
+                it = unreadAPRSConversations.erase(it);
+                changed = true;
+            } else {
+                ++it;
+            }
+        }
+
+        if (changed) {
+            saveUnreadAPRSState();
+            if (Config.notification.ledMessage && getUnreadMessagesCount() == 0) {
+                messageLed = false;
+            }
+            notifyUnreadChanged();
+        }
+    }
+
+    void markWLNKRead() {
+        loadUnreadState();
+        if (unreadWLNKMessages > 0) {
+            unreadWLNKMessages = 0;
+            saveUnreadWLNKState();
+            if (Config.notification.ledMessage && getUnreadMessagesCount() == 0) {
+                messageLed = false;
+            }
+            notifyUnreadChanged();
+        }
     }
 
     std::vector<String>& getLoadedAPRSMessages() {
@@ -227,6 +466,7 @@ namespace MSG_Utils {
 
         conversationFile.println(line);
         conversationFile.close();
+        touchConversationOrder(callsign);
         ESP_LOGI(TAG, "Saved %s message to %s", direction.c_str(), filename.c_str());
     }
 
@@ -276,9 +516,28 @@ namespace MSG_Utils {
                 return a.second > b.second;  // Descending order
             });
 
-        // Extract sorted callsigns
+        File orderFile = STORAGE_Utils::openFile("/conversations_order.txt", "r");
+        if (orderFile) {
+            while (orderFile.available()) {
+                String callsign = orderFile.readStringUntil('\n');
+                callsign.trim();
+                if (callsign.length() > 0 &&
+                    std::find_if(conversationsWithTime.begin(), conversationsWithTime.end(),
+                        [&callsign](const std::pair<String, time_t>& conv) {
+                            return conv.first == callsign;
+                        }) != conversationsWithTime.end() &&
+                    std::find(callsigns.begin(), callsigns.end(), callsign) == callsigns.end()) {
+                    callsigns.push_back(callsign);
+                }
+            }
+            orderFile.close();
+        }
+
+        // Append conversations not yet present in the persisted order.
         for (const auto& conv : conversationsWithTime) {
-            callsigns.push_back(conv.first);
+            if (std::find(callsigns.begin(), callsigns.end(), conv.first) == callsigns.end()) {
+                callsigns.push_back(conv.first);
+            }
         }
 
         ESP_LOGD(TAG, "Found %d conversations (sorted by recent)", callsigns.size());
@@ -342,6 +601,7 @@ namespace MSG_Utils {
             numWLNKMessages = v2.size();
         }
         ESP_LOGD(TAG, "Winlink Mails: %d", numWLNKMessages);
+        loadUnreadState();
     }
 
     void loadMessagesFromMemory(uint8_t typeOfMessage) {
@@ -423,12 +683,18 @@ namespace MSG_Utils {
             }
             numAPRSMessages = 0;
             loadedAPRSMessages.clear();
+            STORAGE_Utils::removeFile("/conversations_order.txt");
+            STORAGE_Utils::removeFile("/unread_aprs.txt");
+            unreadAPRSConversations.clear();
         } else if (typeOfFile == 1) {   //WLNK
             STORAGE_Utils::removeFile("/winlinkMails.txt");
             numWLNKMessages = 0;
             loadedWLNKMails.clear();
+            STORAGE_Utils::removeFile("/unread_wlnk.txt");
+            unreadWLNKMessages = 0;
         }
         if (Config.notification.ledMessage) messageLed = false;
+        notifyUnreadChanged();
         ESP_LOGI(TAG, "Deleted messages file type %d", typeOfFile);
     }
 
@@ -475,6 +741,14 @@ namespace MSG_Utils {
         }
 
         ESP_LOGI(TAG, "Deleted message %d, %d remaining", index, messages->size());
+        if (typeOfMessage == 1) {
+            loadUnreadState();
+            if (unreadWLNKMessages > (int)messages->size()) {
+                unreadWLNKMessages = messages->size();
+                saveUnreadWLNKState();
+                notifyUnreadChanged();
+            }
+        }
         return true;
     }
 
@@ -513,6 +787,7 @@ namespace MSG_Utils {
 
         ESP_LOGI(TAG, "Deleted message %d from conversation with %s, %d remaining",
                    index, callsign.c_str(), messages.size());
+        clampUnreadConversation(callsign);
         return true;
     }
 
@@ -541,6 +816,7 @@ namespace MSG_Utils {
 
             // Also save to per-contact conversation file
             saveToConversation(station, message, false);  // false = incoming
+            incrementUnreadConversation(station);
 
             ESP_LOGI(TAG, "APRS msg saved to %s", STORAGE_Utils::getStorageType().c_str());
             if (Config.notification.ledMessage) {
@@ -576,6 +852,7 @@ namespace MSG_Utils {
             }
             numWLNKMessages++;
             fileToAppendWLNK.close();
+            incrementUnreadWLNK();
             ESP_LOGI(TAG, "Winlink mail saved to %s", STORAGE_Utils::getStorageType().c_str());
             if (Config.notification.ledMessage) {
                 messageLed = true;

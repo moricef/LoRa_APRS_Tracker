@@ -36,7 +36,13 @@ namespace MSG_Utils {
     const String getLastHeardTracker();
     int     getNumAPRSMessages();
     int     getNumWLNKMails();
+    int     getUnreadAPRSCount();
+    int     getUnreadWLNKCount();
+    int     getUnreadMessagesCount();
+    int     getUnreadConversationCount(const String& callsign);
     void    loadNumMessages();
+    void    markConversationRead(const String& callsign);
+    void    markWLNKRead();
     std::vector<String>& getLoadedAPRSMessages();
     std::vector<String>& getLoadedWLNKMails();
     std::vector<String> getMessagesForContact(const String& callsign);
