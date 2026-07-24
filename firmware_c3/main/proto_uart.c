@@ -125,6 +125,6 @@ void proto_send_status(const status_t *st)
 
 void proto_send_error(uint16_t code, uint16_t detail)
 {
-    error_t err = { .code = code, .detail = detail };
+    proto_error_t err = { .code = code, .detail = detail };
     proto_send(MSG_ERROR, (const uint8_t *)&err, sizeof(err));
 }

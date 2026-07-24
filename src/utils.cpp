@@ -155,8 +155,6 @@ namespace Utils {
     }
 
     void i2cScannerForPeripherals() {
-        uint8_t err, addr;
-
         // Telemetry sensor scan (BME280/BME680 at 0x76 or 0x77)
         // Skip full bus scan when LVGL manages the GT911 touch on the same I2C bus
         // — scanning 0x14/0x5D while LovyanGFX owns the GT911 causes I2C lockup
@@ -172,7 +170,8 @@ namespace Utils {
                     }
                 }
             #else
-                for (addr = 1; addr < 0x7F; addr++) {
+                for (uint8_t addr = 1; addr < 0x7F; addr++) {
+                    uint8_t err;
                     #if defined(HELTEC_V3_GPS) || defined(HELTEC_V3_2_GPS)
                         Wire1.beginTransmission(addr);
                         err = Wire1.endTransmission();
@@ -217,9 +216,9 @@ namespace Utils {
                 ESP_LOGW(TAG, "T-Deck Keyboard not detected at I2C 0x%02X", keyboardAddr);
             }
         #else
-            for (addr = 1; addr < 0x7F; addr++) {
+            for (uint8_t addr = 1; addr < 0x7F; addr++) {
                 Wire.beginTransmission(addr);
-                err = Wire.endTransmission();
+                uint8_t err = Wire.endTransmission();
                 if (err == 0 && addr == 0x5F) { // CARDKB from m5stack.com (YEL - SDA / WTH SCL)
                     keyboardAddress = addr;
                     ESP_LOGI(TAG, "CARDKB Keyboard Connected to I2C");
@@ -229,9 +228,9 @@ namespace Utils {
 
         // Touch scan not needed when LovyanGFX manages the touchscreen natively
         #if defined(HAS_TOUCHSCREEN) && !defined(USE_LVGL_UI)
-            for (addr = 1; addr < 0x7F; addr++) {
+            for (uint8_t addr = 1; addr < 0x7F; addr++) {
                 Wire.beginTransmission(addr);
-                err = Wire.endTransmission();
+                uint8_t err = Wire.endTransmission();
                 if (err == 0) {
                     if (addr == 0x14 || addr == 0x5D ) {
                         touchModuleAddress = addr;

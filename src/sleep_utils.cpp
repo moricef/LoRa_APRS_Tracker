@@ -21,7 +21,9 @@
 #include "sleep_utils.h"
 #include "power_utils.h"
 
+#ifdef HAS_GPS_CTRL
 static const char *TAG = "Sleep";
+#endif
 
 
 extern uint32_t         lastGPSTime;

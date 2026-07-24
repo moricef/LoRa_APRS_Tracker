@@ -13,6 +13,7 @@
 #include <SD.h>
 #include <LovyanGFX.hpp>
 #include <lvgl.h>           // Must precede PNGdec (lv_meter.h uses 'local' as param name)
+#include "map_state.h"      // Must precede PNGdec (zconf.h leaks a GCC optimize pragma)
 #include <JPEGDEC.h>
 // Undefine macros that conflict between PNGdec and JPEGDEC
 #undef INTELSHORT
@@ -27,7 +28,6 @@
 #include <freertos/queue.h>
 #include <esp_log.h>
 
-#include "map_state.h"
 #include "map_tiles.h"
 #include "map_engine.h"
 #include "map_coordinate_math.h"

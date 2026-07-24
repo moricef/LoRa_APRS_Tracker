@@ -24,9 +24,8 @@
 #include "power_utils.h"
 #include "display.h"
 
-static const char *TAG = "BATT";
-
 #ifdef HAS_FUEL_GAUGE_I2C
+    static const char *TAG = "BATT";
     #if defined(CROWPANEL_ADVANCE_35)
         // CrowPanel: GT911 touch and MAX17048 share I2C_NUM_0 via LovyanGFX bare-metal driver.
         // Arduino Wire cannot coexist with lgfx::i2c on the same peripheral, so we talk to

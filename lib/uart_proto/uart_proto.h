@@ -107,7 +107,7 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
     uint16_t code;
     uint16_t detail;
-} error_t;                  // 4 bytes
+} proto_error_t;            // 4 bytes
 
 // --- Parser ---
 
