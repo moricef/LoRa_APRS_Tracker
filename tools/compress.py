@@ -18,6 +18,7 @@
 import gzip
 import os
 import datetime
+import re
 Import("env")
 
 files = [
@@ -27,19 +28,21 @@ files = [
   'data_embed/bootstrap.js',
   'data_embed/bootstrap.css',
   'data_embed/favicon.png',
+  'data_embed/github-sponsors.png',
+  'data_embed/paypalme.png',
 ]
 
-string_to_find_str = "String"
-string_to_find_ver = "versionDate"
+# Historical upstream CA2RXU firmware date restored from this fork's commits.
+# Keep fixed: do not update it when bumping this fork/LVGL UI versions.
+ca2rxu_firmware_version_date = "2026-01-12"
+ui_version = "unknown"
 
-with open('src/LoRa_APRS_Tracker.cpp', encoding='utf-8') as cpp_file:
-  for line in cpp_file:
-    if string_to_find_str in line and string_to_find_ver in line:
-      start = line.find('"') + 1
-      end = line.find('"', start)
-      if start > 0 and end > start:
-        versionDate = line[start:end]
-        break
+with open('include/ui_common.h', encoding='utf-8') as header_file:
+  for line in header_file:
+    match = re.match(r'\s*#define\s+UI_VERSION\s+"([^"]+)"', line)
+    if match:
+      ui_version = match.group(1)
+      break
        
 for src in files:
   out = src + ".gz"
@@ -49,9 +52,15 @@ for src in files:
     content = f.read()
     
   if src == 'data_embed/index.html':
-    env_vars = env["BOARD"] + "<br>" + ','.join(env["BUILD_FLAGS"]).replace('-Werror -Wall,', '').replace(',-DELEGANTOTA_USE_ASYNC_WEBSERVER=1', '') + "<br>" + "Version date: " + versionDate
+    board_name = env.get("PIOENV", env["BOARD"])
     current_date = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S') + " UTC"
-    build_info = f'{env_vars}<br>Build date: {current_date}'.encode()
+    build_info = (
+      f'Board / Environment = {board_name}<br>'
+      f'Firmware (CA2RXU) version date: {ca2rxu_firmware_version_date}<br>'
+      f'LVGL UI<br>'
+      f'Version: {ui_version}<br>'
+      f'Build date: {current_date}'
+    ).encode()
     
     content = content.replace(b'%BUILD_INFO%', build_info)
       
