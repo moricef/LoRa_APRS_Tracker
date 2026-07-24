@@ -18,7 +18,7 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 
 ---
 ## What's New in v2.10.0
-- **Tracker WebConf SPA** - Web configuration is now organized as a sidebar/topbar SPA adapted from the CA2RXU iGate WebConf shell, with Tracker-specific fields and visual identity.
+- **Tracker WebConf SPA** - Web configuration is now organized as a sidebar/topbar SPA with Tracker-specific fields and visual identity.
 - **LoRa profiles** - WebConf and LVGL settings share configurable LoRa profiles, including the default EU/WORLD, Poland, and UK profiles.
 - **WiFi STA profiles** - Station WiFi settings support a multi-profile list instead of a single fixed configuration.
 - **Messaging unread state** - APRS and Winlink unread counters are persisted, conversations with new messages are highlighted, and recent conversations move to the top when new traffic arrives.

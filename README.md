@@ -61,7 +61,7 @@ ____________________________________________________
 ## Timeline (Versions):
 
 - 2026.07.24 **v2.10.0 Stable Release**:
-    - Tracker WebConf rebuilt as a SPA configuration UI based on the CA2RXU iGate WebConf shell.
+    - Tracker WebConf rebuilt as a SPA configuration UI with Tracker-specific settings.
     - LoRa profiles are configurable from WebConf and shared with LVGL settings on supported touchscreen boards.
     - WiFi station profiles can be managed as a multi-profile list.
     - LVGL messaging adds unread counters, per-conversation unread state, recent conversation ordering, and a separate Frames screen.
