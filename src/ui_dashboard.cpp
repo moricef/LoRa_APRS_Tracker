@@ -62,7 +62,7 @@ static lv_obj_t *label_time = nullptr;
 static lv_obj_t *aprs_symbol_canvas = nullptr;
 static lv_color_t *aprs_symbol_buf = nullptr;
 
-// Last RX stations
+// RX station table
 static lv_obj_t *label_last_rx = nullptr;
 
 // Status bar icons
@@ -277,22 +277,23 @@ void createDashboard() {
 
     // LoRa info
     label_lora = lv_label_create(content);
-    char lora_init[64];
+    char lora_init[96];
+    const char *profileName = Config.loraTypes[loraIndex].profileName.c_str();
     float freq = Config.loraTypes[loraIndex].frequency / 1000000.0;
     int rate = Config.loraTypes[loraIndex].dataRate;
-    snprintf(lora_init, sizeof(lora_init), "LoRa: %.4f MHz  %d bps", freq, rate);
+    snprintf(lora_init, sizeof(lora_init), "LoRa profile: %s\nFreq: %.4f MHz  Speed: %d bps", profileName, freq, rate);
     lv_label_set_text(label_lora, lora_init);
     lv_obj_set_style_text_color(label_lora, lv_color_hex(0xff6b6b), 0);
     lv_obj_set_style_text_font(label_lora, &lv_font_mono_14, 0);
     lv_obj_set_pos(label_lora, 0, 55);
 
-    // Last RX stations (4 max)
+    // RX stations (4 max)
     label_last_rx = lv_label_create(content);
     lv_label_set_recolor(label_last_rx, true);
-    lv_label_set_text(label_last_rx, "Last RX:\nSOURCE    RSSI   SNR   RF-TX\n---");
+    lv_label_set_text(label_last_rx, "SOURCE    RSSI   SNR   RF-TX\n---");
     lv_obj_set_style_text_color(label_last_rx, lv_color_hex(0xffcc00), 0);
     lv_obj_set_style_text_font(label_last_rx, &lv_font_mono_12, 0);
-    lv_obj_set_pos(label_last_rx, 0, 80);
+    lv_obj_set_pos(label_last_rx, 0, 95);
 
     // Bottom button bar
     lv_obj_t *btn_bar = lv_obj_create(screen_main);
@@ -417,10 +418,11 @@ void updateLoRa(const char *lastRx, int rssi) {
 
 void refreshLoRaInfo() {
     if (label_lora) {
-        char buf[64];
+        char buf[96];
+        const char *profileName = Config.loraTypes[loraIndex].profileName.c_str();
         float freq = Config.loraTypes[loraIndex].frequency / 1000000.0;
         int rate = Config.loraTypes[loraIndex].dataRate;
-        snprintf(buf, sizeof(buf), "LoRa: %.4f MHz  %d bps", freq, rate);
+        snprintf(buf, sizeof(buf), "LoRa profile: %s\nFreq: %.4f MHz  Speed: %d bps", profileName, freq, rate);
         lv_label_set_text(label_lora, buf);
     }
 }
@@ -429,11 +431,11 @@ void updateLastRx() {
     if (!label_last_rx) return;
     const std::vector<DashboardRxEntry> &entries = STORAGE_Utils::getDashboardLastRx();
     if (entries.empty()) {
-        lv_label_set_text(label_last_rx, "Last RX:\nSOURCE    RSSI   SNR   RF-TX\n---");
+        lv_label_set_text(label_last_rx, "SOURCE    RSSI   SNR   RF-TX\n---");
         return;
     }
 
-    String text = "Last RX:\nSOURCE    RSSI   SNR   RF-TX";
+    String text = "SOURCE    RSSI   SNR   RF-TX";
     char line[128];
 
     for (size_t i = 0; i < entries.size() && i < 4; i++) {

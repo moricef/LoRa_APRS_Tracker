@@ -184,8 +184,6 @@ void setup() {
         displaySetup();  // Skip for LVGL - it does its own TFT init
     #endif
 
-    STATION_Utils::loadIndex(0);    // callsign Index
-    STATION_Utils::loadIndex(1);    // lora freq settins Index
     STATION_Utils::nearStationInit();
     STATION_Utils::mapStationsInit();
     #ifdef USE_LVGL_UI
@@ -201,10 +199,22 @@ void setup() {
     #endif
     STORAGE_Utils::setup();        // Formats SPIFFS on first boot
     Config.init();                 // Now SPIFFS is ready, load or create config
+
+    STATION_Utils::loadIndex(0);    // callsign index
+    STATION_Utils::loadIndex(1);    // LoRa profile index
+    myBeaconsSize = Config.beacons.size();
+    if (myBeaconsIndex >= myBeaconsSize) {
+        ESP_LOGW(TAG, "Saved callsign profile index %d is invalid, using profile 0", myBeaconsIndex);
+        myBeaconsIndex = 0;
+        STATION_Utils::saveIndex(0, myBeaconsIndex);
+    }
+    currentBeacon = &Config.beacons[myBeaconsIndex];
+
     loraIndexSize = Config.loraTypes.size();
     if (loraIndex >= loraIndexSize) {
         ESP_LOGW(TAG, "Saved LoRa profile index %d is invalid, using profile 0", loraIndex);
         loraIndex = 0;
+        STATION_Utils::saveIndex(1, loraIndex);
     }
     POWER_Utils::externalPinSetup();  // After Config.init — needs valid GPIO pins
     STORAGE_Utils::loadStats();
