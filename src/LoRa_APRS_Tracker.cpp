@@ -90,7 +90,9 @@ static const char *TAG = "Main";
 #endif
 
 
-String      versionDate             = "2026-07-16";
+// Historical upstream CA2RXU firmware date restored from this fork's commits.
+// Keep fixed: do not update it when bumping this fork/LVGL UI versions.
+String      versionDate             = "2026-01-12";
 String      versionNumber           = "2.4.1";
 Configuration                       Config;
 HardwareSerial                      gpsSerial(1);
