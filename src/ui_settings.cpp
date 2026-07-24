@@ -61,7 +61,6 @@ extern uint32_t last_tick;
 
 static lv_obj_t *screen_setup = nullptr;
 static lv_obj_t *screen_freq = nullptr;
-static lv_obj_t *screen_speed = nullptr;
 static lv_obj_t *screen_callsign = nullptr;
 static lv_obj_t *screen_display = nullptr;
 static lv_obj_t *screen_sound = nullptr;
@@ -90,7 +89,6 @@ static lv_timer_t *bluetooth_update_timer = nullptr;
 
 // Selection tracking (for highlight updates)
 static lv_obj_t *current_freq_btn = nullptr;
-static lv_obj_t *current_speed_btn = nullptr;
 static lv_obj_t *current_callsign_btn = nullptr;
 
 // Web-conf state
@@ -107,7 +105,6 @@ static void btn_bluetooth_back_clicked(lv_event_t *e);
 
 static void setup_item_callsign(lv_event_t *e);
 static void setup_item_frequency(lv_event_t *e);
-static void setup_item_speed(lv_event_t *e);
 static void setup_item_display(lv_event_t *e);
 static void setup_item_sound(lv_event_t *e);
 static void setup_item_repeater(lv_event_t *e);
@@ -118,7 +115,6 @@ static void setup_item_webconf(lv_event_t *e);
 static void setup_item_reboot(lv_event_t *e);
 
 static void freq_item_clicked(lv_event_t *e);
-static void speed_item_clicked(lv_event_t *e);
 static void callsign_item_clicked(lv_event_t *e);
 static void gps_strict3d_switch_changed(lv_event_t *e);
 
@@ -186,7 +182,7 @@ static void setup_item_callsign(lv_event_t *e) {
 }
 
 static void setup_item_frequency(lv_event_t *e) {
-    ESP_LOGD(TAG, "Frequency selected");
+    ESP_LOGD(TAG, "LoRa profiles selected");
     if (screen_freq) {
         lv_obj_del(screen_freq);
         screen_freq = nullptr;
@@ -194,17 +190,6 @@ static void setup_item_frequency(lv_event_t *e) {
     }
     UISettings::createFreqScreen();
     lv_scr_load_anim(screen_freq, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
-}
-
-static void setup_item_speed(lv_event_t *e) {
-    ESP_LOGD(TAG, "Speed selected");
-    if (screen_speed) {
-        lv_obj_del(screen_speed);
-        screen_speed = nullptr;
-        current_speed_btn = nullptr;
-    }
-    UISettings::createSpeedScreen();
-    lv_scr_load_anim(screen_speed, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
 }
 
 static void setup_item_display(lv_event_t *e) {
@@ -342,11 +327,8 @@ void UISettings::createSetupScreen() {
     btn = lv_list_add_btn(list, LV_SYMBOL_CALL, "Callsign");
     lv_obj_add_event_cb(btn, setup_item_callsign, LV_EVENT_CLICKED, NULL);
 
-    btn = lv_list_add_btn(list, LV_SYMBOL_WIFI, "LoRa Frequency");
+    btn = lv_list_add_btn(list, LV_SYMBOL_WIFI, "LoRa Profiles");
     lv_obj_add_event_cb(btn, setup_item_frequency, LV_EVENT_CLICKED, NULL);
-
-    btn = lv_list_add_btn(list, LV_SYMBOL_SHUFFLE, "LoRa Speed");
-    lv_obj_add_event_cb(btn, setup_item_speed, LV_EVENT_CLICKED, NULL);
 
     btn = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, "Display");
     lv_obj_add_event_cb(btn, setup_item_display, LV_EVENT_CLICKED, NULL);
@@ -379,13 +361,13 @@ void UISettings::createSetupScreen() {
 }
 
 // =============================================================================
-// Frequency Screen
+// LoRa Profiles Screen
 // =============================================================================
 
 static void freq_item_clicked(lv_event_t *e) {
     lv_obj_t *btn = lv_event_get_current_target(e);
     int index = (int)(intptr_t)lv_event_get_user_data(e);
-    ESP_LOGD(TAG, "Frequency %d selected", index);
+    ESP_LOGD(TAG, "LoRa profile %d selected", index);
     LoRa_Utils::requestFrequencyChange(index);
 
     if (current_freq_btn && current_freq_btn != btn) {
@@ -424,12 +406,12 @@ void UISettings::createFreqScreen() {
 
     // Title
     lv_obj_t *title = lv_label_create(title_bar);
-    lv_label_set_text(title, "LoRa Frequency");
+    lv_label_set_text(title, "LoRa Profiles");
     lv_obj_set_style_text_color(title, lv_color_hex(UIColors::TEXT_WHITE), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_18, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 20, 0);
 
-    // Frequency list
+    // Profiles configured and named through WebConf
     lv_obj_t *list = lv_list_create(screen_freq);
     lv_obj_set_size(list, UI_SCREEN_WIDTH - 10, UI_SCREEN_HEIGHT - 45);
     lv_obj_set_pos(list, 5, 40);
@@ -437,23 +419,23 @@ void UISettings::createFreqScreen() {
     lv_obj_set_style_border_color(list, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_set_style_radius(list, 8, 0);
 
-    // Add frequency options from Config (skip US - index 3)
+    // Every profile compatible with this board's radio band is selectable.
     for (int i = 0; i < loraIndexSize && i < (int)Config.loraTypes.size(); i++) {
-        if (i == 3) continue; // Skip US frequency
-
-        char buf[64];
+        #if defined(LORA_FREQ_MIN) && defined(LORA_FREQ_MAX)
+            if (Config.loraTypes[i].frequency < LORA_FREQ_MIN ||
+                Config.loraTypes[i].frequency > LORA_FREQ_MAX) {
+                continue;
+            }
+        #endif
+        char buf[96];
         float freq = Config.loraTypes[i].frequency / 1000000.0;
+        const LoraType &profile = Config.loraTypes[i];
+        snprintf(buf, sizeof(buf), "%s\n%.4f MHz  SF%d CR4:%d  %d bps",
+                 profile.profileName.c_str(), freq, profile.spreadingFactor,
+                 profile.codingRate4, profile.dataRate);
 
-        const char *region;
-        switch (i) {
-            case 0: region = "EU/WORLD"; break;
-            case 1: region = "POLAND"; break;
-            case 2: region = "UK"; break;
-            default: region = "CUSTOM"; break;
-        }
-        snprintf(buf, sizeof(buf), "%s - %.3f MHz", region, freq);
-
-        lv_obj_t *btn = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
+        lv_obj_t *btn = lv_list_add_btn(list, NULL, buf);
+        lv_obj_set_height(btn, 52);
         lv_obj_add_event_cb(btn, freq_item_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
         if (i == loraIndex) {
@@ -467,95 +449,6 @@ void UISettings::createFreqScreen() {
     }
 
     ESP_LOGD(TAG, "Frequency screen created");
-}
-
-// =============================================================================
-// Speed Screen
-// =============================================================================
-
-static void speed_item_clicked(lv_event_t *e) {
-    lv_obj_t *btn = lv_event_get_current_target(e);
-    int dataRate = (int)(intptr_t)lv_event_get_user_data(e);
-    ESP_LOGD(TAG, "Speed %d bps selected", dataRate);
-    LoRa_Utils::requestDataRateChange(dataRate);
-
-    if (current_speed_btn && current_speed_btn != btn) {
-        lv_obj_set_style_bg_color(current_speed_btn, lv_color_hex(UIColors::BG_DARKER), 0);
-        lv_obj_set_style_text_color(current_speed_btn, lv_color_hex(UIColors::TEXT_WHITE), 0);
-    }
-
-    lv_obj_set_style_bg_color(btn, lv_color_hex(UIColors::TEXT_GREEN), 0);
-    lv_obj_set_style_text_color(btn, lv_color_hex(0x000000), 0);
-    current_speed_btn = btn;
-
-    lv_timer_create(nav_to_setup_timer_cb, 600, NULL);
-}
-
-void UISettings::createSpeedScreen() {
-    screen_speed = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(screen_speed, lv_color_hex(UIColors::BG_DARK), 0);
-
-    // Title bar
-    lv_obj_t *title_bar = lv_obj_create(screen_speed);
-    lv_obj_set_size(title_bar, UI_SCREEN_WIDTH, 35);
-    lv_obj_set_pos(title_bar, 0, 0);
-    lv_obj_set_style_bg_color(title_bar, lv_color_hex(UIColors::BTN_BLUE), 0);
-    lv_obj_set_style_border_width(title_bar, 0, 0);
-    lv_obj_set_style_radius(title_bar, 0, 0);
-    lv_obj_set_style_pad_all(title_bar, 5, 0);
-
-    // Back button
-    lv_obj_t *btn_back = lv_btn_create(title_bar);
-    lv_obj_set_size(btn_back, 60, 25);
-    lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
-    lv_obj_add_event_cb(btn_back, btn_back_to_setup_clicked, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *lbl_back = lv_label_create(btn_back);
-    lv_label_set_text(lbl_back, "< BACK");
-    lv_obj_center(lbl_back);
-
-    // Title
-    lv_obj_t *title = lv_label_create(title_bar);
-    lv_label_set_text(title, "LoRa Speed");
-    lv_obj_set_style_text_color(title, lv_color_hex(UIColors::TEXT_WHITE), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_18, 0);
-    lv_obj_align(title, LV_ALIGN_CENTER, 20, 0);
-
-    // Speed list
-    lv_obj_t *list = lv_list_create(screen_speed);
-    lv_obj_set_size(list, UI_SCREEN_WIDTH - 10, UI_SCREEN_HEIGHT - 45);
-    lv_obj_set_pos(list, 5, 40);
-    lv_obj_set_style_bg_color(list, lv_color_hex(UIColors::BG_DARKER), 0);
-    lv_obj_set_style_border_color(list, lv_color_hex(UIColors::BG_HEADER), 0);
-    lv_obj_set_style_radius(list, 8, 0);
-
-    // Speed options with data rates
-    struct SpeedOption { int dataRate; const char *desc; };
-    const SpeedOption speeds[] = {
-        {1200, "1200 bps (SF9, Fast)"},
-        {610, "610 bps (SF10)"},
-        {300, "300 bps (SF12, Long range)"},
-        {244, "244 bps (SF12)"},
-        {209, "209 bps (SF12)"},
-        {183, "183 bps (SF12, Longest)"}
-    };
-
-    int currentDataRate = Config.loraTypes[loraIndex].dataRate;
-
-    for (int i = 0; i < 6; i++) {
-        lv_obj_t *btn = lv_list_add_btn(list, LV_SYMBOL_SHUFFLE, speeds[i].desc);
-        lv_obj_add_event_cb(btn, speed_item_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)speeds[i].dataRate);
-
-        if (speeds[i].dataRate == currentDataRate) {
-            lv_obj_set_style_bg_color(btn, lv_color_hex(UIColors::TEXT_GREEN), 0);
-            lv_obj_set_style_text_color(btn, lv_color_hex(0x000000), 0);
-            current_speed_btn = btn;
-        } else {
-            lv_obj_set_style_bg_color(btn, lv_color_hex(UIColors::BG_DARKER), 0);
-            lv_obj_set_style_text_color(btn, lv_color_hex(UIColors::TEXT_WHITE), 0);
-        }
-    }
-
-    ESP_LOGD(TAG, "Speed screen created");
 }
 
 // =============================================================================
@@ -1656,8 +1549,6 @@ static void ble_setup_timer_cb(lv_timer_t *timer) {
     uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     ESP_LOGI(TAG, "BLE setup timer: Free heap: %u bytes, Largest block: %u bytes",
              currentFreeHeap, largestBlock);
-
-    const uint32_t MIN_CONTIGUOUS_HEAP_FOR_BLE = 40 * 1024;
 
     if (Config.bluetooth.useBLE) {
         // Stop WiFi — mutually exclusive on ESP32-S3

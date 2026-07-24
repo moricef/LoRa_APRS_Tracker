@@ -1,595 +1,226 @@
 // Custom scripts
 
 let currentSettings = null;
+let editableLoraProfiles = [];
+let editableWifiAPs = [];
+let loraFrequencyLimits = { min: 100000000, max: 1000000000 };
+const DEFAULT_LORA_PROFILES = [
+    { profileName: "EU/WORLD", frequency: 433775000, signalBandwidth: 125000, spreadingFactor: 12, codingRate4: 5, power: 20 },
+    { profileName: "Poland", frequency: 434855000, signalBandwidth: 125000, spreadingFactor: 9, codingRate4: 7, power: 20 },
+    { profileName: "UK", frequency: 439912500, signalBandwidth: 125000, spreadingFactor: 12, codingRate4: 5, power: 20 }
+];
+
+function byId(id) { return document.getElementById(id); }
+function setValue(id, value) { const element = byId(id); if (element) element.value = value ?? ""; }
+function setChecked(id, value) { const element = byId(id); if (element) element.checked = Boolean(value); }
+function setDisabled(id, value) { const element = byId(id); if (element) element.disabled = Boolean(value); }
+function escapeHtml(value) { return String(value ?? "").replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"); }
+function numeric(value, fallback) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
+function cloneLoraProfile(profile) { return { ...profile }; }
+function applyBuildInfoPreviewFallback() {
+    const element = byId("buildInfo");
+    if (element && element.textContent.trim() === "%BUILD_INFO%") {
+        // Historical upstream CA2RXU firmware date. Keep fixed; this fork uses LVGL UI versions.
+        element.innerHTML = "Board / Environment = local preview<br>Firmware (CA2RXU) version date: 2026-01-12<br>LVGL UI<br>Version: 2.9.5<br>Build date: generated during firmware build";
+    }
+}
+function defaultLoraProfiles() {
+    const profiles = DEFAULT_LORA_PROFILES.filter((profile) => profile.frequency >= loraFrequencyLimits.min && profile.frequency <= loraFrequencyLimits.max);
+    return (profiles.length ? profiles : DEFAULT_LORA_PROFILES).map(cloneLoraProfile);
+}
 
 function backupSettings() {
-    const data =
-        "data:text/json;charset=utf-8," +
-        encodeURIComponent(JSON.stringify(currentSettings));
+    const data = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(currentSettings));
     const a = document.createElement("a");
     a.setAttribute("href", data);
     a.setAttribute("download", "TrackerConfigurationBackup.json");
     a.click();
 }
 
-document.getElementById("backup").onclick = backupSettings;
-
-document.getElementById("restore").onclick = function (e) {
-    e.preventDefault();
-
-    document.querySelector("input[type=file]").click();
-};
-
-document.querySelector("input[type=file]").onchange = function () {
-    const files = document.querySelector("input[type=file]").files;
-
-    if (!files.length) return;
-
-    const file = files.item(0);
-
-    const reader = new FileReader();
-    reader.readAsText(file);
-    reader.onload = () => {
-        const data = JSON.parse(reader.result);
-
-        loadSettings(data);
-    };
-};
+function showToast(message) {
+    const el = document.querySelector("#toast");
+    el.querySelector(".toast-body").innerHTML = message;
+    (new bootstrap.Toast(el)).show();
+}
 
 function fetchSettings() {
     fetch("/configuration.json")
         .then((response) => response.json())
-        .then((settings) => {
-            console.log(settings);
-            loadSettings(settings);
-        })
-        .catch((err) => {
-            console.error(err);
-
-            alert(`Failed to load configuration`);
-        });
+        .then((settings) => loadSettings(settings))
+        .catch((err) => { console.error(err); loadSettings(defaultPreviewSettings()); });
 }
+
+function defaultPreviewSettings() {
+    return {
+        beacons: [{
+            callsign: "N0CALL-7",
+            profileLabel: "MAIN",
+            comment: "",
+            status: "",
+            symbol: ">",
+            overlay: "/",
+            micE: "",
+            smartBeaconActive: true,
+            gpsEcoMode: false,
+            smartBeaconSetting: 2,
+            sbSlowRate: 120,
+            sbFastRate: 60,
+            sbMinSpeed: 10,
+            sbMaxSpeed: 70,
+            sbMinTurnAngle: 28,
+            sbTurnSlope: 240,
+            sbMinBeaconTime: 10
+        }],
+        other: {},
+        display: {},
+        bluetooth: {},
+        aprs_is: {},
+        loraConfig: {},
+        loraFreqMin: 100000000,
+        loraFreqMax: 1000000000,
+        lora: defaultLoraProfiles(),
+        battery: {},
+        telemetry: {},
+        winlink: {},
+        wifi: { AP: [{}], autoAP: {} },
+        notification: {},
+        pttTrigger: {}
+    };
+}
+
+function renderSmartBeaconInput(index, field, label, value) {
+    return '<div class="col-6 mb-1"><label class="form-label small mb-0">' + label + '</label><input type="number" class="form-control form-control-sm" name="beacons.' + index + '.' + field + '" id="beacons.' + index + '.' + field + '" min="0" step="1" value="' + value + '"></div>';
+}
+
+function renderBeaconProfiles(beacons) {
+    const container = byId("beacon-settings");
+    container.innerHTML = "";
+    const stationProfiles = Array.from({ length: 3 }, (_, index) => {
+        return (beacons || [])[index] || {
+            callsign: "",
+            profileLabel: "PROFILE " + (index + 1),
+            comment: "",
+            status: "",
+            symbol: ">",
+            overlay: "/",
+            micE: "",
+            smartBeaconActive: false,
+            gpsEcoMode: false,
+            smartBeaconSetting: 2
+        };
+    });
+    stationProfiles.forEach((beacon, index) => {
+        const element = document.createElement("div");
+        element.classList.add("row", "beacons", "border-bottom", "py-2");
+        element.innerHTML = '<div class="beacon-row w-100">' +
+            '<div class="list-index"><strong>' + (index + 1) + ')</strong></div>' +
+            '<div class="form-floating field-callsign"><input type="text" class="form-control form-control-sm" name="beacons.' + index + '.callsign" id="beacons.' + index + '.callsign" value="' + escapeHtml(beacon.callsign) + '" oninput="this.value = this.value.toUpperCase();"><label for="beacons.' + index + '.callsign">Callsign</label></div>' +
+            '<div class="form-floating field-profile"><input type="text" class="form-control form-control-sm" name="beacons.' + index + '.profileLabel" id="beacons.' + index + '.profileLabel" value="' + escapeHtml(beacon.profileLabel) + '"><label for="beacons.' + index + '.profileLabel">Profile Label</label></div>' +
+            '<div class="form-floating field-comment"><input type="text" class="form-control form-control-sm" name="beacons.' + index + '.comment" id="beacons.' + index + '.comment" value="' + escapeHtml(beacon.comment) + '"><label for="beacons.' + index + '.comment">Comment</label></div>' +
+            '<div class="form-floating field-status"><input type="text" class="form-control form-control-sm" name="beacons.' + index + '.status" id="beacons.' + index + '.status" value="' + escapeHtml(beacon.status) + '"><label for="beacons.' + index + '.status">Status</label></div>' +
+            '<div class="form-floating field-symbol"><input type="text" class="form-control form-control-sm" name="beacons.' + index + '.symbol" id="beacons.' + index + '.symbol" value="' + escapeHtml(beacon.symbol) + '"><label for="beacons.' + index + '.symbol">Symbol</label></div>' +
+            '<div class="form-floating field-overlay"><input type="text" class="form-control form-control-sm" name="beacons.' + index + '.overlay" id="beacons.' + index + '.overlay" value="' + escapeHtml(beacon.overlay) + '"><label for="beacons.' + index + '.overlay">Overlay</label></div>' +
+            '<div class="form-floating field-mice"><input type="text" class="form-control form-control-sm" name="beacons.' + index + '.micE" id="beacons.' + index + '.micE" value="' + escapeHtml(beacon.micE) + '"><label for="beacons.' + index + '.micE">Mic-E</label></div>' +
+            '<div class="form-check form-switch field-smart-active"><input class="form-check-input" type="checkbox" name="beacons.' + index + '.smartBeaconActive" id="beacons.' + index + '.smartBeaconActive" value="1" ' + (beacon.smartBeaconActive ? "checked" : "") + '><label class="form-check-label" for="beacons.' + index + '.smartBeaconActive">Smart Beacon Active</label></div>' +
+            '<div class="form-check form-switch field-gps-eco"><input class="form-check-input" type="checkbox" name="beacons.' + index + '.gpsEcoMode" id="beacons.' + index + '.gpsEcoMode" value="1" ' + (beacon.gpsEcoMode ? "checked" : "") + '><label class="form-check-label" for="beacons.' + index + '.gpsEcoMode">GPS Eco Mode</label></div>' +
+            '<div class="field-smart-setting"><label for="beacons.' + index + '.smartBeaconSetting" class="form-label"><small>Smart Beacon Setting</small></label><select name="beacons.' + index + '.smartBeaconSetting" id="beacons.' + index + '.smartBeaconSetting" class="form-control"><option value="0" ' + (beacon.smartBeaconSetting == 0 ? "selected" : "") + '>Human/Runner (Slow Speed)</option><option value="1" ' + (beacon.smartBeaconSetting == 1 ? "selected" : "") + '>Bicycle (Mid Speed)</option><option value="2" ' + (beacon.smartBeaconSetting == 2 ? "selected" : "") + '>Car/Motorcycle (Fast Speed)</option></select><button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="resetSmartBeaconDefaults(' + index + ')">Reset to profile defaults</button></div>' +
+            '<div class="smartbeacon-params field-smart-params p-2 bg-light rounded"><small class="text-muted">Custom SmartBeacon parameters</small><div class="row">' +
+            renderSmartBeaconInput(index, "sbSlowRate", "Slow Rate (s)", beacon.sbSlowRate || 120) + renderSmartBeaconInput(index, "sbFastRate", "Fast Rate (s)", beacon.sbFastRate || 60) + renderSmartBeaconInput(index, "sbMinSpeed", "Min Speed (km/h)", beacon.sbMinSpeed || 5) + renderSmartBeaconInput(index, "sbMaxSpeed", "Max Speed (km/h)", beacon.sbMaxSpeed || 70) + renderSmartBeaconInput(index, "sbMinTurnAngle", "Min Turn Angle", beacon.sbMinTurnAngle || 28) + renderSmartBeaconInput(index, "sbTurnSlope", "Turn Slope", beacon.sbTurnSlope || 240) + renderSmartBeaconInput(index, "sbMinBeaconTime", "Min Beacon Time (s)", beacon.sbMinBeaconTime || 60) + '</div></div></div>';
+        container.appendChild(element);
+    });
+}
+
+function renderLoraProfiles() {
+    const container = byId("lora-settings");
+    const freqMinMHz = (loraFrequencyLimits.min / 1000000).toFixed(0);
+    const freqMaxMHz = (loraFrequencyLimits.max / 1000000).toFixed(0);
+    container.innerHTML = '<div class="lora-actions d-flex justify-content-end mb-3"><button type="button" class="btn btn-outline-primary btn-sm" id="add-lora-profile">Add profile</button></div><input type="hidden" name="lora.count" id="lora.count" value="' + editableLoraProfiles.length + '">';
+    editableLoraProfiles.forEach((lora, index) => {
+        const element = document.createElement("div");
+        const bw = numeric(lora.signalBandwidth, 125000);
+        const sf = numeric(lora.spreadingFactor, 12);
+        const cr = numeric(lora.codingRate4, 5);
+        element.classList.add("row", "lora", "border-bottom", "py-2");
+        element.innerHTML = '<div class="list-index mb-2"><strong>' + (index + 1) + ')</strong></div>' +
+            '<div class="form-floating col-12 col-md-3 mb-2"><input type="text" class="form-control form-control-sm" name="lora.' + index + '.profileName" id="lora.' + index + '.profileName" value="' + escapeHtml(lora.profileName || ('PROFILE ' + (index + 1))) + '" maxlength="16" required><label for="lora.' + index + '.profileName">Profile name</label></div>' +
+            '<div class="form-floating col-12 col-md-3 mb-2"><input type="number" class="form-control form-control-sm" name="lora.' + index + '.frequency" id="lora.' + index + '.frequency" value="' + numeric(lora.frequency, loraFrequencyLimits.min) + '" min="' + loraFrequencyLimits.min + '" max="' + loraFrequencyLimits.max + '" required><label for="lora.' + index + '.frequency">Freq (' + freqMinMHz + '-' + freqMaxMHz + ')</label></div>' +
+            '<div class="form-floating col-6 col-md-2 mb-2"><select class="form-select form-select-sm" name="lora.' + index + '.signalBandwidth" id="lora.' + index + '.signalBandwidth"><option value="62500" ' + (bw === 62500 ? "selected" : "") + '>62.5</option><option value="125000" ' + (bw === 125000 ? "selected" : "") + '>125</option></select><label for="lora.' + index + '.signalBandwidth">BW (kHz)</label></div>' +
+            '<div class="form-floating col-6 col-md-1 mb-2"><select class="form-select form-select-sm" name="lora.' + index + '.spreadingFactor" id="lora.' + index + '.spreadingFactor">' + [5,6,7,8,9,10,11,12].map((v) => '<option value="' + v + '" ' + (sf === v ? "selected" : "") + '>SF' + v + '</option>').join("") + '</select><label for="lora.' + index + '.spreadingFactor">SF</label></div>' +
+            '<div class="form-floating col-6 col-md-1 mb-2"><select class="form-select form-select-sm" name="lora.' + index + '.codingRate4" id="lora.' + index + '.codingRate4">' + [5,6,7,8].map((v) => '<option value="' + v + '" ' + (cr === v ? "selected" : "") + '>4:' + v + '</option>').join("") + '</select><label for="lora.' + index + '.codingRate4">CR</label></div>' +
+            '<div class="form-floating col-6 col-md-1 mb-2"><input type="number" class="form-control form-control-sm" name="lora.' + index + '.power" id="lora.' + index + '.power" value="' + numeric(lora.power, 20) + '" min="1" max="22" required><label for="lora.' + index + '.power">Power</label></div>' +
+            '<div class="col-12 col-md-auto mb-2 d-flex align-items-center"><button type="button" class="btn btn-outline-danger" title="Delete profile" onclick="removeLoraProfile(' + index + ')">Delete</button></div>';
+        container.appendChild(element);
+    });
+}
+function removeLoraProfile(index) { if (editableLoraProfiles.length <= 1) { alert("At least one LoRa profile is required."); return; } editableLoraProfiles.splice(index, 1); renderLoraProfiles(); }
+function addLoraProfile() { const template = editableLoraProfiles[0] || defaultLoraProfiles()[0] || {}; editableLoraProfiles.push({ profileName: 'PROFILE ' + (editableLoraProfiles.length + 1), frequency: template.frequency || loraFrequencyLimits.min, signalBandwidth: template.signalBandwidth || 125000, spreadingFactor: template.spreadingFactor || 12, codingRate4: template.codingRate4 || 5, power: template.power || 20 }); renderLoraProfiles(); }
+
+function renderWifiAPs() {
+    const container = byId("wifi-ap-settings");
+    container.innerHTML = '<div class="wifi-actions d-flex justify-content-end mb-3"><button type="button" class="btn btn-outline-primary btn-sm" id="add-wifi-ap">Add profile</button></div><input type="hidden" name="wifi.AP.count" id="wifi.AP.count" value="' + editableWifiAPs.length + '">';
+    editableWifiAPs.forEach((ap, index) => {
+        const element = document.createElement("div");
+        element.classList.add("row", "wifi-ap", "border-bottom", "py-2");
+        element.innerHTML = '<div class="list-index mb-2"><strong>' + (index + 1) + ')</strong></div>' +
+            '<div class="form-floating col-12 col-md-5 mb-2"><input type="text" class="form-control form-control-sm" name="wifi.AP.' + index + '.ssid" id="wifi.AP.' + index + '.ssid" value="' + escapeHtml(ap.ssid || "") + '"><label for="wifi.AP.' + index + '.ssid">SSID</label></div>' +
+            '<div class="form-floating col-12 col-md-5 mb-2"><input type="password" class="form-control form-control-sm" name="wifi.AP.' + index + '.password" id="wifi.AP.' + index + '.password" value="' + escapeHtml(ap.password || "") + '"><label for="wifi.AP.' + index + '.password">Passphrase</label></div>' +
+            '<div class="col-12 col-md-auto mb-2 d-flex align-items-center"><button type="button" class="btn btn-outline-danger" title="Delete profile" onclick="removeWifiAP(' + index + ')">Delete</button></div>';
+        container.appendChild(element);
+    });
+}
+function removeWifiAP(index) { if (editableWifiAPs.length <= 1) { alert("At least one WiFi profile is required."); return; } editableWifiAPs.splice(index, 1); renderWifiAPs(); }
+function addWifiAP() { editableWifiAPs.push({ ssid: "", password: "" }); renderWifiAPs(); }
 
 function loadSettings(settings) {
     currentSettings = settings;
-    
-    // BEACONS
-    const beaconContainer = document.getElementById("beacon-settings");
-    beaconContainer.innerHTML = ""; // Clear previous content
-
-    settings.beacons.forEach((beacons, index) => {
-        const beaconElement = document.createElement("div");
-        beaconElement.classList.add("row", "beacons", "border-bottom", "py-2");
-
-        beaconElement.innerHTML = `
-            <div class="col-1 px-1 mb-2 d-flex align-items-center">
-                <strong>${index + 1})</strong> <!-- Adding numbering here -->
-            </div>
-            <div class="form-floating col-6 col-md-3 px-1 mb-2">
-                <input 
-                    type="text" 
-                    class="form-control form-control-sm" 
-                    name="beacons.${index}.callsign" 
-                    id="beacons.${index}.callsign" 
-                    value="${beacons.callsign}"
-                    oninput="this.value = this.value.toUpperCase();">
-                <label for="beacons.${index}.callsign">Callsign</label>
-            </div>
-            <div class="form-floating col-6 col-md-2 px-1 mb-2">
-                <input 
-                    type="text" 
-                    class="form-control form-control-sm" 
-                    name="beacons.${index}.symbol" 
-                    id="beacons.${index}.symbol" 
-                    value="${beacons.symbol}">
-                <label for="beacons.${index}.symbol">Symbol</label>
-            </div>
-            <div class="form-floating col-6 col-md-2 px-1 mb-2">
-                <input 
-                    type="text" 
-                    class="form-control form-control-sm" 
-                    name="beacons.${index}.overlay" 
-                    id="beacons.${index}.overlay" 
-                    value="${beacons.overlay}">
-                <label for="beacons.${index}.overlay">Overlay</label>
-            </div>
-            <div class="form-floating col-6 col-md-2 px-1 mb-2">
-                <input 
-                    type="text" 
-                    class="form-control form-control-sm" 
-                    name="beacons.${index}.micE" 
-                    id="beacons.${index}.micE" 
-                    value="${beacons.micE}">
-                <label for="beacons.${index}.micE">Mic-E</label>
-            </div>
-            <div class="form-floating col-12 col-md-9 px-1 mb-2" style="margin-left: 50px;">
-                <input 
-                    type="text" 
-                    class="form-control form-control-sm" 
-                    name="beacons.${index}.comment" 
-                    id="beacons.${index}.comment" 
-                    value="${beacons.comment}">
-                <label for="beacons.${index}.comment">Comment</label>
-            </div>
-            <div class="form-check form-switch col-6 col-md-5 px-1 mb-2" style="margin-left: 90px;">
-                <input 
-                    class="form-check-input" 
-                    type="checkbox" 
-                    name="beacons.${index}.smartBeaconActive" 
-                    id="beacons.${index}.smartBeaconActive" 
-                    value="1" 
-                    ${beacons.smartBeaconActive ? 'checked' : ''}>
-                <label class="form-check-label" for="beacons.${index}.smartBeaconActive">
-                    Smart Beacon Active
-                </label>
-            </div>
-            <div class="form-check form-switch col-6 col-md-3 px-1 mb-2">
-                <input 
-                    class="form-check-input" 
-                    type="checkbox" 
-                    name="beacons.${index}.gpsEcoMode" 
-                    id="beacons.${index}.gpsEcoMode"
-                    value="1"
-                    ${beacons.gpsEcoMode ? 'checked' : ''}>
-                <label class="form-check-label" for="beacons.${index}.gpsEcoMode">
-                    GPS Eco Mode
-                </label>
-            </div>
-            <div class="form-check form-switch col-6 col-md-5 px-1 mb-2" style="margin-left: 50px;">
-                <label for="beacons.${index}.smartBeaconSetting" class="form-label"><small>Smart Beacon Setting</small></label>
-                <select name="beacons.${index}.smartBeaconSetting" id="beacons.${index}.smartBeaconSetting" class="form-control">
-                    <option value="0" ${beacons.smartBeaconSetting == 0 ? 'selected' : ''}>Human/Runner (Slow Speed)</option>
-                    <option value="1" ${beacons.smartBeaconSetting == 1 ? 'selected' : ''}>Bicycle (Mid Speed)</option>
-                    <option value="2" ${beacons.smartBeaconSetting == 2 ? 'selected' : ''}>Car/Motorcycle (Fast Speed)</option>
-                </select>
-                <button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="resetSmartBeaconDefaults(${index})">↺ Reset to profile defaults</button>
-            </div>
-            <div class="smartbeacon-params col-12 col-md-11 ms-3 mb-2 p-2 bg-light rounded">
-                <small class="text-muted">Custom SmartBeacon parameters</small>
-                <div class="row">
-                    <div class="col-6 mb-1">
-                        <label class="form-label small mb-0">Slow Rate (s)</label>
-                        <input type="number" class="form-control form-control-sm" placeholder="120" name="beacons.${index}.sbSlowRate" id="beacons.${index}.sbSlowRate" min="0" step="1" value="${beacons.sbSlowRate || 120}">
-                    </div>
-                    <div class="col-6 mb-1">
-                        <label class="form-label small mb-0">Fast Rate (s)</label>
-                        <input type="number" class="form-control form-control-sm" placeholder="60" name="beacons.${index}.sbFastRate" id="beacons.${index}.sbFastRate" min="0" step="1" value="${beacons.sbFastRate || 60}">
-                    </div>
-                    <div class="col-6 mb-1">
-                        <label class="form-label small mb-0">Min Speed (km/h)</label>
-                        <input type="number" class="form-control form-control-sm" placeholder="5" name="beacons.${index}.sbMinSpeed" id="beacons.${index}.sbMinSpeed" min="0" step="1" value="${beacons.sbMinSpeed || 5}">
-                    </div>
-                    <div class="col-6 mb-1">
-                        <label class="form-label small mb-0">Max Speed (km/h)</label>
-                        <input type="number" class="form-control form-control-sm" placeholder="70" name="beacons.${index}.sbMaxSpeed" id="beacons.${index}.sbMaxSpeed" min="0" step="1" value="${beacons.sbMaxSpeed || 70}">
-                    </div>
-                    <div class="col-6 mb-1">
-                        <label class="form-label small mb-0">Min Turn Angle (&deg;)</label>
-                        <input type="number" class="form-control form-control-sm" placeholder="28" name="beacons.${index}.sbMinTurnAngle" id="beacons.${index}.sbMinTurnAngle" min="0" max="180" step="1" value="${beacons.sbMinTurnAngle || 28}">
-                    </div>
-                    <div class="col-6 mb-1">
-                        <label class="form-label small mb-0">Turn Slope</label>
-                        <input type="number" class="form-control form-control-sm" placeholder="240" name="beacons.${index}.sbTurnSlope" id="beacons.${index}.sbTurnSlope" min="0" step="1" value="${beacons.sbTurnSlope || 240}">
-                    </div>
-                    <div class="col-6 mb-1">
-                        <label class="form-label small mb-0">Min Beacon Time (s)</label>
-                        <input type="number" class="form-control form-control-sm" placeholder="60" name="beacons.${index}.sbMinBeaconTime" id="beacons.${index}.sbMinBeaconTime" min="0" step="1" value="${beacons.sbMinBeaconTime || 60}">
-                    </div>
-                </div>
-            </div>
-            <div class="form-floating col-12 col-md-9 px-1 mb-2" style="margin-left: 50px;">
-                 <input
-                     type="text"
-                     class="form-control form-control-sm"
-                     name="beacons.${index}.status"
-                     id="beacons.${index}.status"
-                     value="${beacons.status || ''}">
-                 <label for="beacons.${index}.status">Status</label>
-             </div>
-            <div class="form-floating col-12 col-md-9 px-1 mb-2" style="margin-left: 50px;">
-                 <input 
-                     type="text" 
-                     class="form-control form-control-sm" 
-                     name="beacons.${index}.profileLabel" 
-                     id="beacons.${index}.profileLabel" 
-                     value="${beacons.profileLabel || ''}">
-                 <label for="beacons.${index}.profileLabel">Profile Label</label>
-             </div>
-        `;
-        beaconContainer.appendChild(beaconElement);
-    });
-
-    // ADITIONAL STATION CONFIG
-    document.getElementById("simplifiedTrackerMode").checked            = settings.other.simplifiedTrackerMode;
-    document.getElementById("sendCommentAfterXBeacons").value           = settings.other.sendCommentAfterXBeacons;
-    document.getElementById("path").value                               = settings.other.path;
-    document.getElementById("nonSmartBeaconRate").value                 = settings.other.nonSmartBeaconRate;
-    document.getElementById("rememberStationTime").value                = settings.other.rememberStationTime;
-    document.getElementById("standingUpdateTime").value                 = settings.other.standingUpdateTime;
-    document.getElementById("sendAltitude").checked                     = settings.other.sendAltitude ;
-    document.getElementById("disableGPS").checked                       = settings.other.disableGPS;
-    document.getElementById("email").value                              = settings.other.email;
-
-    // DISPLAY
-    document.getElementById("display.turn180").checked                  = settings.display.turn180;
-    document.getElementById("display.showSymbol").checked               = settings.display.showSymbol;
-
-    // BLUETOOTH
-    document.getElementById("bluetooth.active").checked                 = settings.bluetooth.active;
-    document.getElementById("bluetooth.deviceName").value               = settings.bluetooth.deviceName;
-    document.getElementById("bluetooth.useBLE").checked                 = settings.bluetooth.useBLE;
-    document.getElementById("bluetooth.useKISS").checked                = settings.bluetooth.useKISS;
-    // Hide BLE/BT Classic option if board doesn't support BT Classic
-    if (!settings.bluetooth.hasBTClassic) {
-        document.getElementById("btClassicOption").style.display = "none";
-    }
-    BluetoothActiveCheckbox.checked = settings.bluetooth.active;
-    BluetoothDeviceName.disabled    = !BluetoothActiveCheckbox.checked;
-    BluetoothUseBle.disabled        = !BluetoothActiveCheckbox.checked;
-    BluetoothUseKiss.disabled       = !BluetoothActiveCheckbox.checked;
-
-    // APRS-IS
-    document.getElementById("aprs_is.active").checked                   = settings.aprs_is.active;
-    document.getElementById("aprs_is.server").value                     = settings.aprs_is.server;
-    document.getElementById("aprs_is.port").value                       = settings.aprs_is.port;
-    document.getElementById("aprs_is.passcode").value                   = settings.aprs_is.passcode;
-    AprsIsActiveCheckbox.checked    = settings.aprs_is.active;
-    AprsIsServer.disabled           = !AprsIsActiveCheckbox.checked;
-    AprsIsPort.disabled             = !AprsIsActiveCheckbox.checked;
-    AprsIsPasscode.disabled         = !AprsIsActiveCheckbox.checked;
-
-    // LORA
-    const loraContainer = document.getElementById("lora-settings");
-    loraContainer.innerHTML = ""; // Clear previous content
-
-    // Frequency limits from board configuration
-    const loraFreqMin = settings.loraFreqMin || 100000000;
-    const loraFreqMax = settings.loraFreqMax || 1000000000;
-    const freqMinMHz = (loraFreqMin / 1000000).toFixed(0);
-    const freqMaxMHz = (loraFreqMax / 1000000).toFixed(0);
-
-    // Filter and renumber LoRa configs to only show valid frequencies for this board
-    let displayIndex = 0;
-    settings.lora.forEach((lora, index) => {
-        // Skip frequencies outside the valid range for this board
-        if (lora.frequency < loraFreqMin || lora.frequency > loraFreqMax) {
-            return;
-        }
-        displayIndex++;
-
-        const loraElement = document.createElement("div");
-        loraElement.classList.add("row", "lora", "border-bottom", "py-2");
-
-        const bw = lora.signalBandwidth || 125000;
-        const sf = lora.spreadingFactor || 12;
-        const cr = lora.codingRate4 || 5;
-
-        loraElement.innerHTML = `
-            <div class="col-1 px-1 mb-2 d-flex align-items-center">
-                <strong>${displayIndex})</strong>
-            </div>
-            <div class="form-floating col-5 col-md-3 px-1 mb-2">
-                <input
-                    type="number"
-                    class="form-control form-control-sm"
-                    name="lora.${index}.frequency"
-                    id="lora.${index}.frequency"
-                    value="${lora.frequency}"
-                    min="${loraFreqMin}"
-                    max="${loraFreqMax}"
-                    title="${freqMinMHz}-${freqMaxMHz} MHz">
-                <label for="lora.${index}.frequency">Freq (${freqMinMHz}-${freqMaxMHz})</label>
-            </div>
-            <div class="form-floating col-4 col-md-2 px-1 mb-2">
-                <select
-                    class="form-select form-select-sm"
-                    name="lora.${index}.signalBandwidth"
-                    id="lora.${index}.signalBandwidth">
-                    <option value="62500"  ${bw === 62500  ? "selected" : ""}>62.5</option>
-                    <option value="125000" ${bw === 125000 ? "selected" : ""}>125</option>
-                </select>
-                <label for="lora.${index}.signalBandwidth">BW (kHz)</label>
-            </div>
-            <div class="form-floating col-3 col-md-2 px-1 mb-2">
-                <select
-                    class="form-select form-select-sm"
-                    name="lora.${index}.spreadingFactor"
-                    id="lora.${index}.spreadingFactor">
-                    ${[5,6,7,8,9,10,11,12].map(v => `<option value="${v}" ${sf === v ? "selected" : ""}>SF${v}</option>`).join("\n                    ")}
-                </select>
-                <label for="lora.${index}.spreadingFactor">SF</label>
-            </div>
-            <div class="form-floating col-3 col-md-2 px-1 mb-2">
-                <select
-                    class="form-select form-select-sm"
-                    name="lora.${index}.codingRate4"
-                    id="lora.${index}.codingRate4">
-                    <option value="5" ${cr === 5 ? "selected" : ""}>4:5</option>
-                    <option value="6" ${cr === 6 ? "selected" : ""}>4:6</option>
-                    <option value="7" ${cr === 7 ? "selected" : ""}>4:7</option>
-                    <option value="8" ${cr === 8 ? "selected" : ""}>4:8</option>
-                </select>
-                <label for="lora.${index}.codingRate4">CR</label>
-            </div>
-            <div class="form-floating col-3 col-md-2 px-1 mb-2">
-                <input
-                    type="number"
-                    class="form-control form-control-sm"
-                    name="lora.${index}.power"
-                    id="lora.${index}.power"
-                    value="${lora.power}"
-                    min="1"
-                    max="22">
-                <label for="lora.${index}.power">Power (dBm)</label>
-            </div>
-        `;
-        loraContainer.appendChild(loraElement);
-    });
-
-    // BATTERY
-    document.getElementById("battery.sendVoltage").checked              = settings.battery.sendVoltage;
-    document.getElementById("battery.voltageAsTelemetry").checked       = settings.battery.voltageAsTelemetry;
-    document.getElementById("battery.sendVoltageAlways").checked        = settings.battery.sendVoltageAlways;
-    BatterySendVoltageCheckbox.checked  = settings.battery.sendVoltage;
-    BatteryVoltageAsTelemetry.disabled  = !BatterySendVoltageCheckbox.checked;
-    BatteryForceSendVoltage.disabled    = !BatterySendVoltageCheckbox.checked;
-
-    document.getElementById("battery.monitorVoltage").checked           = settings.battery.monitorVoltage;
-    document.getElementById("battery.sleepVoltage").value               = settings.battery.sleepVoltage.toFixed(1);
-    BatteryMonitorVoltageCheckbox.checked   = settings.battery.monitorVoltage;
-    BatteryMonitorSleepVoltage.disabled     = !BatteryMonitorVoltageCheckbox.checked;
-
-    // TELEMETRY (WX Sensor)
-    document.getElementById("telemetry.active").checked                  = settings.telemetry.active;
-    document.getElementById("telemetry.sendTelemetry").checked           = settings.telemetry.sendTelemetry;
-    document.getElementById("telemetry.temperatureCorrection").value     = settings.telemetry.temperatureCorrection.toFixed(1);
-    TelemetryCheckbox.checked           = settings.telemetry.active;
-    TelemetrySendCheckbox.disabled      = !TelemetryCheckbox.checked;
-    TelemetryTempCorrection.disabled    = !TelemetryCheckbox.checked;
-
-    // WINLINK
-    document.getElementById("winlink.password").value                   = settings.winlink.password;
-
-    // WiFi Network
-    if (settings.wifi && settings.wifi.AP && settings.wifi.AP[0]) {
-        document.getElementById("wifi.AP.0.ssid").value                 = settings.wifi.AP[0].ssid || "";
-        document.getElementById("wifi.AP.0.password").value             = settings.wifi.AP[0].password || "";
-    }
-    if (settings.wifi && settings.wifi.AP && settings.wifi.AP[1]) {
-        document.getElementById("wifi.AP.1.ssid").value                 = settings.wifi.AP[1].ssid || "";
-        document.getElementById("wifi.AP.1.password").value             = settings.wifi.AP[1].password || "";
-    }
-
-    // WiFi Auto AP
-    document.getElementById("wifi.autoAP.password").value               = settings.wifi.autoAP.password;
-
-    // NOTIFICATION
-    document.getElementById("notification.ledTx").checked               = settings.notification.ledTx;
-    document.getElementById("notification.ledTxPin").value              = settings.notification.ledTxPin;
-    NotificationLedTxCheckbox.checked   = settings.notification.ledTx;
-    NotificationLedTxPin.disabled       = !NotificationLedTxCheckbox.checked;
-
-    document.getElementById("notification.ledMessage").checked          = settings.notification.ledMessage;
-    document.getElementById("notification.ledMessagePin").value         = settings.notification.ledMessagePin;
-    NotificationLedMessageCheckbox.checked  = settings.notification.ledMessage;
-    NotificationLedMessagePin.disabled      = !NotificationLedMessageCheckbox.checked;
-    
-    document.getElementById("notification.buzzerActive").checked        = settings.notification.buzzerActive;
-    document.getElementById("notification.buzzerPinTone").value         = settings.notification.buzzerPinTone;
-    document.getElementById("notification.buzzerPinVcc").value          = settings.notification.buzzerPinVcc;
-    document.getElementById("notification.volume").value                = settings.notification.volume || 50;
-    document.getElementById("volumeValue").textContent                  = settings.notification.volume || 50;
-    document.getElementById("notification.bootUpBeep").checked          = settings.notification.bootUpBeep;
-    document.getElementById("notification.txBeep").checked              = settings.notification.txBeep;
-    document.getElementById("notification.messageRxBeep").checked       = settings.notification.messageRxBeep;
-    document.getElementById("notification.stationBeep").checked         = settings.notification.stationBeep;
-    document.getElementById("notification.lowBatteryBeep").checked      = settings.notification.lowBatteryBeep;
-    document.getElementById("notification.shutDownBeep").checked        = settings.notification.shutDownBeep;
-    NotificationBuzzerCheckbox.checked          = settings.notification.buzzerActive;
-    NotificationBuzzerTonePin.disabled          = !NotificationBuzzerCheckbox.checked;
-    NotificationBuzzerVccPin.disabled           = !NotificationBuzzerCheckbox.checked;
-    NotificationBuzzerBootUpBeep.disabled       = !NotificationBuzzerCheckbox.checked;
-    NotificationBuzzerTxBeep.disabled           = !NotificationBuzzerCheckbox.checked;
-    NotificationBuzzerMessageBeep.disabled      = !NotificationBuzzerCheckbox.checked;
-    NotificationBuzzerStationBeep.disabled      = !NotificationBuzzerCheckbox.checked;
-    NotificationBuzzerLowBatteryBeep.disabled   = !NotificationBuzzerCheckbox.checked;
-    NotificationBuzzerShutDownBeep.disabled     = !NotificationBuzzerCheckbox.checked;
-
-    document.getElementById("notification.ledFlashlight").checked       = settings.notification.ledFlashlight;
-    document.getElementById("notification.ledFlashlightPin").value      = settings.notification.ledFlashlightPin;
-    NotificationLedFlashlightCheckbox.checked   = settings.notification.ledFlashlight;
-    NotificationLedFlashlightPin.disabled       = !NotificationLedFlashlightCheckbox.checked;
-    
-    //  PTT Trigger
-    document.getElementById("ptt.active").checked                       = settings.pttTrigger.active;
-    document.getElementById("ptt.reverse").checked                      = settings.pttTrigger.reverse;
-    document.getElementById("ptt.preDelay").value                       = settings.pttTrigger.preDelay;
-    document.getElementById("ptt.postDelay").value                      = settings.pttTrigger.postDelay;
-    document.getElementById("ptt.io_pin").value                         = settings.pttTrigger.io_pin;
-    pttTriggerCheckbox.checked  = settings.pttTrigger.active;
-    pttReverseCheckbox.disabled = !pttTriggerCheckbox.checked;
-    pttPreDelayInput.disabled   = !pttTriggerCheckbox.checked;
-    pttPostDelayInput.disabled  = !pttTriggerCheckbox.checked;
-    pttPinInput.disabled        = !pttTriggerCheckbox.checked;
-
+    renderBeaconProfiles(settings.beacons || []);
+    const other = settings.other || {};
+    setChecked("simplifiedTrackerMode", other.simplifiedTrackerMode); setValue("sendCommentAfterXBeacons", other.sendCommentAfterXBeacons ?? 10); setValue("path", other.path ?? "WIDE1-1"); setValue("nonSmartBeaconRate", other.nonSmartBeaconRate ?? 15); setValue("rememberStationTime", other.rememberStationTime ?? 30); setValue("standingUpdateTime", other.standingUpdateTime ?? 15); setChecked("sendAltitude", other.sendAltitude); setChecked("disableGPS", other.disableGPS); setValue("email", other.email ?? "");
+    const display = settings.display || {}; setChecked("display.turn180", display.turn180); setChecked("display.showSymbol", display.showSymbol); setChecked("display.ecoMode", display.ecoMode); setValue("display.timeout", display.timeout ?? 4);
+    const bluetooth = settings.bluetooth || {}; setChecked("bluetooth.active", bluetooth.active); setValue("bluetooth.deviceName", bluetooth.deviceName ?? "LoRaTracker"); setChecked("bluetooth.useBLE", bluetooth.useBLE); setChecked("bluetooth.useKISS", bluetooth.useKISS); if (bluetooth.hasBTClassic === false && byId("btClassicOption")) byId("btClassicOption").style.display = "none"; updateBluetoothFields();
+    const aprsIs = settings.aprs_is || {}; setChecked("aprs_is.active", aprsIs.active); setValue("aprs_is.server", aprsIs.server ?? "euro.aprs2.net"); setValue("aprs_is.port", aprsIs.port ?? 14580); setValue("aprs_is.passcode", aprsIs.passcode ?? "-1"); updateAprsIsFields();
+    const loraConfig = settings.loraConfig || {}; setChecked("loraConfig.repeaterMode", loraConfig.repeaterMode); setChecked("loraConfig.sendInfo", loraConfig.sendInfo ?? true); setValue("loraConfig.digipeatAlias", loraConfig.digipeatAlias ?? "WIDE1-1"); updateDigipeaterFields();
+    loraFrequencyLimits.min = settings.loraFreqMin || 100000000; loraFrequencyLimits.max = settings.loraFreqMax || 1000000000; editableLoraProfiles = (settings.lora || []).filter((profile) => profile.frequency >= loraFrequencyLimits.min && profile.frequency <= loraFrequencyLimits.max); if (!editableLoraProfiles.length) editableLoraProfiles = defaultLoraProfiles(); renderLoraProfiles();
+    const battery = settings.battery || {}; setChecked("battery.sendVoltage", battery.sendVoltage); setChecked("battery.voltageAsTelemetry", battery.voltageAsTelemetry); setChecked("battery.sendVoltageAlways", battery.sendVoltageAlways); setChecked("battery.monitorVoltage", battery.monitorVoltage); setValue("battery.sleepVoltage", numeric(battery.sleepVoltage, 2.9).toFixed(1)); updateBatteryFields();
+    const telemetry = settings.telemetry || {}; setChecked("telemetry.active", telemetry.active); setChecked("telemetry.sendTelemetry", telemetry.sendTelemetry); setValue("telemetry.temperatureCorrection", numeric(telemetry.temperatureCorrection, 0).toFixed(1)); updateTelemetryFields();
+    const winlink = settings.winlink || {}; setValue("winlink.password", winlink.password ?? "");
+    const wifi = settings.wifi || {}; editableWifiAPs = (wifi.AP && wifi.AP.length ? wifi.AP : [{}]).map((ap) => ({ ssid: ap.ssid || "", password: ap.password || "" })); renderWifiAPs(); setValue("wifi.autoAP.password", wifi.autoAP?.password ?? "1234567890");
+    const notification = settings.notification || {}; setChecked("notification.ledTx", notification.ledTx); setValue("notification.ledTxPin", notification.ledTxPin ?? 13); setChecked("notification.ledMessage", notification.ledMessage); setValue("notification.ledMessagePin", notification.ledMessagePin ?? 2); setChecked("notification.ledFlashlight", notification.ledFlashlight); setValue("notification.ledFlashlightPin", notification.ledFlashlightPin ?? 14); setChecked("notification.buzzerActive", notification.buzzerActive); setValue("notification.buzzerPinTone", notification.buzzerPinTone ?? 33); setValue("notification.buzzerPinVcc", notification.buzzerPinVcc ?? 25); setValue("notification.volume", notification.volume ?? 50); byId("volumeValue").textContent = notification.volume ?? 50; setChecked("notification.bootUpBeep", notification.bootUpBeep); setChecked("notification.txBeep", notification.txBeep); setChecked("notification.messageRxBeep", notification.messageRxBeep); setChecked("notification.stationBeep", notification.stationBeep); setChecked("notification.lowBatteryBeep", notification.lowBatteryBeep); setChecked("notification.shutDownBeep", notification.shutDownBeep); updateNotificationFields();
+    const ptt = settings.pttTrigger || {}; setChecked("ptt.active", ptt.active); setChecked("ptt.reverse", ptt.reverse); setValue("ptt.preDelay", ptt.preDelay ?? 0); setValue("ptt.postDelay", ptt.postDelay ?? 0); setValue("ptt.io_pin", ptt.io_pin ?? 4); updatePttFields();
 }
+function updateBluetoothFields() { const active = byId("bluetooth.active").checked; setDisabled("bluetooth.deviceName", !active); setDisabled("bluetooth.useBLE", !active); setDisabled("bluetooth.useKISS", !active); }
+function updateAprsIsFields() { const active = byId("aprs_is.active").checked; setDisabled("aprs_is.server", !active); setDisabled("aprs_is.port", !active); setDisabled("aprs_is.passcode", !active); }
+function updateDigipeaterFields() { const active = byId("loraConfig.repeaterMode").checked; setDisabled("loraConfig.digipeatAlias", !active); }
+function updateBatteryFields() { const sendVoltage = byId("battery.sendVoltage").checked; const monitorVoltage = byId("battery.monitorVoltage").checked; setDisabled("battery.voltageAsTelemetry", !sendVoltage); setDisabled("battery.sendVoltageAlways", !sendVoltage); setDisabled("battery.sleepVoltage", !monitorVoltage); }
+function updateTelemetryFields() { const active = byId("telemetry.active").checked; setDisabled("telemetry.sendTelemetry", !active); setDisabled("telemetry.temperatureCorrection", !active); }
+function updateNotificationFields() { const ledTx = byId("notification.ledTx").checked; const ledMessage = byId("notification.ledMessage").checked; const ledFlashlight = byId("notification.ledFlashlight").checked; const buzzer = byId("notification.buzzerActive").checked; setDisabled("notification.ledTxPin", !ledTx); setDisabled("notification.ledMessagePin", !ledMessage); setDisabled("notification.ledFlashlightPin", !ledFlashlight); setDisabled("notification.buzzerPinTone", !buzzer); setDisabled("notification.buzzerPinVcc", !buzzer); setDisabled("notification.volume", !buzzer); ["notification.bootUpBeep", "notification.txBeep", "notification.messageRxBeep", "notification.stationBeep", "notification.lowBatteryBeep", "notification.shutDownBeep"].forEach((id) => setDisabled(id, !buzzer)); }
+function updatePttFields() { const active = byId("ptt.active").checked; setDisabled("ptt.reverse", !active); setDisabled("ptt.preDelay", !active); setDisabled("ptt.postDelay", !active); setDisabled("ptt.io_pin", !active); }
+function resetSmartBeaconDefaults(index) { const defaults = [[120, 60, 5, 15, 28, 240, 12], [120, 60, 5, 40, 28, 240, 12], [120, 60, 10, 70, 28, 240, 10]]; const setting = parseInt(byId('beacons.' + index + '.smartBeaconSetting').value, 10) || 0; const selected = defaults[setting] || defaults[0]; ["sbSlowRate", "sbFastRate", "sbMinSpeed", "sbMaxSpeed", "sbMinTurnAngle", "sbTurnSlope", "sbMinBeaconTime"].forEach((field, fieldIndex) => { const element = byId('beacons.' + index + '.' + field); if (element) element.value = selected[fieldIndex]; }); }
 
-function showToast(message) {
-    const el = document.querySelector('#toast');
-
-    el.querySelector('.toast-body').innerHTML = message;
-
-    (new bootstrap.Toast(el)).show();
-}
-
-document.getElementById('reboot').addEventListener('click', function (e) {
-    e.preventDefault();
-
-    fetch("/action?type=reboot", { method: "POST" });
-
-    showToast("Your device will be rebooted in a while");
-});
-
-
-// Bluetooth Switches
-const BluetoothActiveCheckbox   = document.querySelector('input[name="bluetooth.active"]');
-const BluetoothDeviceName       = document.querySelector('input[name="bluetooth.deviceName"]');
-const BluetoothUseBle           = document.querySelector('input[name="bluetooth.useBLE"]');
-const BluetoothUseKiss          = document.querySelector('input[name="bluetooth.useKISS"]');
-BluetoothActiveCheckbox.addEventListener("change", function () {
-    BluetoothDeviceName.disabled    = !this.checked;
-    BluetoothUseBle.disabled        = !this.checked;
-    BluetoothUseKiss.disabled       = !this.checked;
-});
-
-// APRS-IS Switches
-const AprsIsActiveCheckbox      = document.querySelector('input[name="aprs_is.active"]');
-const AprsIsServer              = document.querySelector('input[name="aprs_is.server"]');
-const AprsIsPort                = document.querySelector('input[name="aprs_is.port"]');
-const AprsIsPasscode            = document.querySelector('input[name="aprs_is.passcode"]');
-AprsIsActiveCheckbox.addEventListener("change", function () {
-    AprsIsServer.disabled           = !this.checked;
-    AprsIsPort.disabled             = !this.checked;
-    AprsIsPasscode.disabled         = !this.checked;
-});
-
-// Battery Switches
-const BatterySendVoltageCheckbox    = document.querySelector('input[name="battery.sendVoltage"]');
-const BatteryVoltageAsTelemetry     = document.querySelector('input[name="battery.voltageAsTelemetry"]');
-const BatteryForceSendVoltage       = document.querySelector('input[name="battery.sendVoltageAlways"]');
-BatterySendVoltageCheckbox.addEventListener("change", function () {
-    BatteryVoltageAsTelemetry.disabled  = !this.checked;
-    BatteryForceSendVoltage.disabled    = !this.checked;
-});
-
-const BatteryMonitorVoltageCheckbox = document.querySelector('input[name="battery.monitorVoltage"]');
-const BatteryMonitorSleepVoltage    = document.querySelector('input[name="battery.sleepVoltage"]');
-BatteryMonitorVoltageCheckbox.addEventListener("change", function () {
-    BatteryMonitorSleepVoltage.disabled = !this.checked;
-});
-
-// Telemetry Switches
-const TelemetryCheckbox         = document.querySelector('input[name="telemetry.active"]');
-const TelemetrySendCheckbox     = document.querySelector('input[name="telemetry.sendTelemetry"]');
-const TelemetryTempCorrection   = document.querySelector('input[name="telemetry.temperatureCorrection"]');
-TelemetryCheckbox.addEventListener("change", function () {
-    TelemetrySendCheckbox.disabled      = !this.checked;
-    TelemetryTempCorrection.disabled    = !this.checked;
-});
-
-// Notifications Switches
-const NotificationLedTxCheckbox         = document.querySelector('input[name="notification.ledTx"]');
-const NotificationLedTxPin              = document.querySelector('input[name="notification.ledTxPin"]');
-NotificationLedTxCheckbox.addEventListener("change", function () {
-    NotificationLedTxPin.disabled       = !this.checked;
-});
-
-const NotificationLedMessageCheckbox    = document.querySelector('input[name="notification.ledMessage"]');
-const NotificationLedMessagePin         = document.querySelector('input[name="notification.ledMessagePin"]');
-NotificationLedMessageCheckbox.addEventListener("change", function () {
-    NotificationLedMessagePin.disabled  = !this.checked;
-});
-
-const NotificationBuzzerCheckbox        = document.querySelector('input[name="notification.buzzerActive"]');
-const NotificationBuzzerTonePin         = document.querySelector('input[name="notification.buzzerPinTone"]');
-const NotificationBuzzerVccPin          = document.querySelector('input[name="notification.buzzerPinVcc"]');
-const NotificationBuzzerBootUpBeep      = document.querySelector('input[name="notification.bootUpBeep"]');
-const NotificationBuzzerTxBeep          = document.querySelector('input[name="notification.txBeep"]');
-const NotificationBuzzerMessageBeep     = document.querySelector('input[name="notification.messageRxBeep"]');
-const NotificationBuzzerStationBeep     = document.querySelector('input[name="notification.stationBeep"]');
-const NotificationBuzzerLowBatteryBeep  = document.querySelector('input[name="notification.lowBatteryBeep"]');
-const NotificationBuzzerShutDownBeep    = document.querySelector('input[name="notification.shutDownBeep"]');
-NotificationBuzzerCheckbox.addEventListener("change", function () {
-    NotificationBuzzerTonePin.disabled          = !this.checked;
-    NotificationBuzzerVccPin.disabled           = !this.checked;
-    NotificationBuzzerBootUpBeep.disabled       = !this.checked;
-    NotificationBuzzerTxBeep.disabled           = !this.checked;
-    NotificationBuzzerMessageBeep.disabled      = !this.checked;
-    NotificationBuzzerStationBeep.disabled      = !this.checked;
-    NotificationBuzzerLowBatteryBeep.disabled   = !this.checked;
-    NotificationBuzzerShutDownBeep.disabled     = !this.checked;
-});
-
-const NotificationLedFlashlightCheckbox = document.querySelector('input[name="notification.ledFlashlight"]');
-const NotificationLedFlashlightPin      = document.querySelector('input[name="notification.ledFlashlightPin"]');
-NotificationLedFlashlightCheckbox.addEventListener("change", function () {
-    NotificationLedFlashlightPin.disabled  = !this.checked;
-});
-
-// PTT Switches
-const pttTriggerCheckbox    = document.querySelector('input[name="ptt.active"]');
-const pttReverseCheckbox    = document.querySelector('input[name="ptt.reverse"]');
-const pttPreDelayInput      = document.querySelector('input[name="ptt.preDelay"]');
-const pttPostDelayInput     = document.querySelector('input[name="ptt.postDelay"]');
-const pttPinInput           = document.querySelector('input[name="ptt.io_pin"]');
-pttTriggerCheckbox.addEventListener("change", function () {
-    pttReverseCheckbox.disabled = !this.checked;
-    pttPreDelayInput.disabled   = !this.checked;
-    pttPostDelayInput.disabled  = !this.checked;
-    pttPinInput.disabled        = !this.checked;
-});
-
-
-
+document.getElementById("backup").onclick = backupSettings;
+document.getElementById("restore").onclick = function (event) { event.preventDefault(); document.querySelector("input[type=file]").click(); };
+document.querySelector("input[type=file]").onchange = function () { const files = document.querySelector("input[type=file]").files; if (!files.length) return; const reader = new FileReader(); reader.readAsText(files.item(0)); reader.onload = () => { try { loadSettings(JSON.parse(reader.result)); } catch (err) { console.error(err); alert("Invalid configuration backup"); } }; };
+document.getElementById("reboot").addEventListener("click", function (event) { event.preventDefault(); fetch("/action?type=reboot", { method: "POST" }); showToast("Your device will be rebooted in a while"); });
+document.addEventListener("click", function (event) { if (event.target && event.target.id === "add-lora-profile") addLoraProfile(); });
+document.addEventListener("click", function (event) { if (event.target && event.target.id === "add-wifi-ap") addWifiAP(); });
+document.getElementById("bluetooth.active").addEventListener("change", updateBluetoothFields);
+document.getElementById("aprs_is.active").addEventListener("change", updateAprsIsFields);
+document.getElementById("loraConfig.repeaterMode").addEventListener("change", updateDigipeaterFields);
+document.getElementById("loraConfig.digipeatAlias").addEventListener("input", function () { this.value = this.value.toUpperCase(); });
+document.getElementById("battery.sendVoltage").addEventListener("change", updateBatteryFields);
+document.getElementById("battery.monitorVoltage").addEventListener("change", updateBatteryFields);
+document.getElementById("telemetry.active").addEventListener("change", updateTelemetryFields);
+document.getElementById("notification.ledTx").addEventListener("change", updateNotificationFields);
+document.getElementById("notification.ledMessage").addEventListener("change", updateNotificationFields);
+document.getElementById("notification.ledFlashlight").addEventListener("change", updateNotificationFields);
+document.getElementById("notification.buzzerActive").addEventListener("change", updateNotificationFields);
+document.getElementById("notification.volume").addEventListener("input", function () { byId("volumeValue").textContent = this.value; });
+document.getElementById("ptt.active").addEventListener("change", updatePttFields);
 
 const form = document.querySelector("form");
-
-const saveModal = new bootstrap.Modal(document.getElementById("saveModal"), {
-    backdrop: "static",
-    keyboard: false,
-});
-
-const savedModal = new bootstrap.Modal(
-    document.getElementById("savedModal"),
-    {}
-);
-
-function checkConnection() {
-    const controller = new AbortController();
-
-    setTimeout(() => controller.abort(), 2000);
-
-    fetch("/status?_t=" + Date.now(), { signal: controller.signal })
-        .then(() => {
-            saveModal.hide();
-
-            savedModal.show();
-
-            setTimeout(function () {
-                savedModal.hide();
-            }, 3000);
-
-            fetchSettings();
-        })
-        .catch((err) => {
-            setTimeout(checkConnection, 0);
-        });
-}
-
-form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-
-    fetch(form.action, {
-        method: form.method,
-        body: new FormData(form),
-    });
-    saveModal.show();
-    setTimeout(checkConnection, 2000);
-});
-function resetSmartBeaconDefaults(index) {
-    const defaults = [
-        [120, 60,  5, 15, 28, 240, 12],  // Runner
-        [120, 60,  5, 40, 28, 240, 12],  // Bike
-        [120, 60, 10, 70, 28, 240, 10],  // Car
-    ];
-    const setting = parseInt(document.getElementById(`beacons.${index}.smartBeaconSetting`).value) || 0;
-    const d = defaults[setting];
-    const fields = ['sbSlowRate','sbFastRate','sbMinSpeed','sbMaxSpeed','sbMinTurnAngle','sbTurnSlope','sbMinBeaconTime'];
-    fields.forEach((f, i) => {
-        const el = document.getElementById(`beacons.${index}.${f}`);
-        if (el) el.value = d[i];
-    });
-}
-
-
+const saveModal = new bootstrap.Modal(document.getElementById("saveModal"), { backdrop: "static", keyboard: false });
+const savedModal = new bootstrap.Modal(document.getElementById("savedModal"), {});
+function checkConnection() { const controller = new AbortController(); setTimeout(() => controller.abort(), 2000); fetch("/status?_t=" + Date.now(), { signal: controller.signal }).then(() => { saveModal.hide(); savedModal.show(); setTimeout(function () { savedModal.hide(); }, 3000); fetchSettings(); }).catch(() => { setTimeout(checkConnection, 0); }); }
+form.addEventListener("submit", async (event) => { event.preventDefault(); fetch(form.action, { method: form.method, body: new FormData(form) }); saveModal.show(); setTimeout(checkConnection, 2000); });
 fetchSettings();
+applyBuildInfoPreviewFallback();

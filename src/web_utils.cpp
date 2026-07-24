@@ -53,6 +53,14 @@ extern const unsigned char favicon_data[] asm("_binary_data_embed_favicon_png_gz
 extern const unsigned char favicon_data_end[] asm("_binary_data_embed_favicon_png_gz_end");
 extern const size_t favicon_data_len = favicon_data_end - favicon_data;
 
+extern const unsigned char github_sponsors_data[] asm("_binary_data_embed_github_sponsors_png_gz_start");
+extern const unsigned char github_sponsors_data_end[] asm("_binary_data_embed_github_sponsors_png_gz_end");
+extern const size_t github_sponsors_data_len = github_sponsors_data_end - github_sponsors_data;
+
+extern const unsigned char paypal_data[] asm("_binary_data_embed_paypalme_png_gz_start");
+extern const unsigned char paypal_data_end[] asm("_binary_data_embed_paypalme_png_gz_end");
+extern const size_t paypal_data_len = paypal_data_end - paypal_data;
+
 namespace WEB_Utils {
 
     AsyncWebServer server(80);
@@ -80,6 +88,18 @@ namespace WEB_Utils {
         request->send(response);
     }
 
+    void handleGithubSponsorsImage(AsyncWebServerRequest *request) {
+        AsyncWebServerResponse *response = request->beginResponse(200, "image/png", (const uint8_t*)github_sponsors_data, github_sponsors_data_len);
+        response->addHeader("Content-Encoding", "gzip");
+        request->send(response);
+    }
+
+    void handlePaypalImage(AsyncWebServerRequest *request) {
+        AsyncWebServerResponse *response = request->beginResponse(200, "image/png", (const uint8_t*)paypal_data, paypal_data_len);
+        response->addHeader("Content-Encoding", "gzip");
+        request->send(response);
+    }
+
     void handleReadConfiguration(AsyncWebServerRequest *request) {
         File file = SPIFFS.open("/tracker_conf.json");
         if (!file) {
@@ -91,7 +111,7 @@ namespace WEB_Utils {
         file.close();
 
         // Add board-specific frequency limits dynamically
-        DynamicJsonDocument doc(8192);
+        DynamicJsonDocument doc(24576);
         DeserializationError error = deserializeJson(doc, fileContent);
         if (!error) {
             #if defined(LORA_FREQ_MIN) && defined(LORA_FREQ_MAX)
@@ -206,15 +226,59 @@ namespace WEB_Utils {
             Config.aprs_is.passcode             = getParamStringSafe("aprs_is.passcode", Config.aprs_is.passcode);
         }
 
-        // LORA
-        for (int i = 0; i < (int)Config.loraTypes.size(); i++) {
-            Config.loraTypes[i].frequency       = getParamDoubleSafe("lora." + String(i) + ".frequency", Config.loraTypes[i].frequency);
-            Config.loraTypes[i].spreadingFactor = getParamIntSafe("lora." + String(i) + ".spreadingFactor", Config.loraTypes[i].spreadingFactor);
-            Config.loraTypes[i].codingRate4     = getParamIntSafe("lora." + String(i) + ".codingRate4", Config.loraTypes[i].codingRate4);
-            Config.loraTypes[i].signalBandwidth = getParamIntSafe("lora." + String(i) + ".signalBandwidth", Config.loraTypes[i].signalBandwidth);
-            Config.loraTypes[i].dataRate        = LoRa_Utils::calculateDataRate(Config.loraTypes[i].spreadingFactor, Config.loraTypes[i].codingRate4, Config.loraTypes[i].signalBandwidth);
-            Config.loraTypes[i].power           = getParamIntSafe("lora." + String(i) + ".power", Config.loraTypes[i].power);
+        // LoRa profiles are posted as a compact, variable-length array.
+        int loraProfileCount = getParamIntSafe("lora.count", 0);
+        loraProfileCount = constrain(loraProfileCount, 1, 64);
+        std::vector<LoraType> postedLoraProfiles;
+        postedLoraProfiles.reserve(loraProfileCount);
+
+        for (int i = 0; i < loraProfileCount; i++) {
+            const String prefix = "lora." + String(i) + ".";
+            LoraType profile;
+            profile.profileName = getParamStringSafe(
+                prefix + "profileName", "PROFILE " + String(i + 1)
+            );
+            profile.profileName.trim();
+            if (profile.profileName.isEmpty()) {
+                profile.profileName = "PROFILE " + String(i + 1);
+            } else if (profile.profileName.length() > 16) {
+                profile.profileName.remove(16);
+            }
+
+            profile.frequency = getParamDoubleSafe(prefix + "frequency", 433775000);
+            #if defined(LORA_FREQ_MIN) && defined(LORA_FREQ_MAX)
+                profile.frequency = constrain(
+                    profile.frequency, (long)LORA_FREQ_MIN, (long)LORA_FREQ_MAX
+                );
+            #endif
+            profile.spreadingFactor = constrain(
+                getParamIntSafe(prefix + "spreadingFactor", 12), 5, 12
+            );
+            profile.codingRate4 = constrain(
+                getParamIntSafe(prefix + "codingRate4", 5), 5, 8
+            );
+            profile.signalBandwidth =
+                getParamIntSafe(prefix + "signalBandwidth", 125000) == 62500
+                    ? 62500 : 125000;
+            profile.power = constrain(
+                getParamIntSafe(prefix + "power", 20), 1, 22
+            );
+            profile.dataRate = LoRa_Utils::calculateDataRate(
+                profile.spreadingFactor,
+                profile.codingRate4,
+                profile.signalBandwidth
+            );
+            postedLoraProfiles.push_back(profile);
         }
+        Config.loraTypes = std::move(postedLoraProfiles);
+
+        //  LoRa digipeater options
+        Config.lora.sendInfo              = request->hasParam("loraConfig.sendInfo", true);
+        Config.lora.repeaterMode          = request->hasParam("loraConfig.repeaterMode", true);
+        Config.lora.digipeatAlias         = getParamStringSafe("loraConfig.digipeatAlias", Config.lora.digipeatAlias);
+        Config.lora.digipeatAlias.trim();
+        Config.lora.digipeatAlias.toUpperCase();
+        if (Config.lora.digipeatAlias.isEmpty()) Config.lora.digipeatAlias = "WIDE1-1";
 
         //  Battery
         Config.battery.sendVoltage              = request->hasParam("battery.sendVoltage", true);
@@ -235,15 +299,21 @@ namespace WEB_Utils {
         //  Winlink
         Config.winlink.password                 = getParamStringSafe("winlink.password", Config.winlink.password);
 
-        //  WiFi Network
-        while (Config.wifiAPs.size() < 2) {
+        // WiFi STA profiles are posted as a compact, variable-length array.
+        int wifiAPCount = getParamIntSafe("wifi.AP.count", Config.wifiAPs.size());
+        wifiAPCount = constrain(wifiAPCount, 1, 64);
+        std::vector<WiFi_AP> postedWifiAPs;
+        postedWifiAPs.reserve(wifiAPCount);
+
+        for (int i = 0; i < wifiAPCount; i++) {
+            const String prefix = "wifi.AP." + String(i) + ".";
             WiFi_AP wifiap;
-            Config.wifiAPs.push_back(wifiap);
+            wifiap.ssid = getParamStringSafe(prefix + "ssid", "");
+            wifiap.ssid.trim();
+            wifiap.password = getParamStringSafe(prefix + "password", "");
+            postedWifiAPs.push_back(wifiap);
         }
-        Config.wifiAPs[0].ssid                  = getParamStringSafe("wifi.AP.0.ssid", Config.wifiAPs[0].ssid);
-        Config.wifiAPs[0].password              = getParamStringSafe("wifi.AP.0.password", Config.wifiAPs[0].password);
-        Config.wifiAPs[1].ssid                  = getParamStringSafe("wifi.AP.1.ssid", Config.wifiAPs[1].ssid);
-        Config.wifiAPs[1].password              = getParamStringSafe("wifi.AP.1.password", Config.wifiAPs[1].password);
+        Config.wifiAPs = std::move(postedWifiAPs);
 
         //  WiFi Auto AP
         Config.wifiAutoAP.password              = getParamStringSafe("wifi.autoAP.password", Config.wifiAutoAP.password);
@@ -357,6 +427,8 @@ namespace WEB_Utils {
             server.on("/bootstrap.css", HTTP_GET, handleBootstrapStyle);
             server.on("/bootstrap.js", HTTP_GET, handleBootstrapScript);
             server.on("/favicon.png", HTTP_GET, handleFavicon);
+            server.on("/github-sponsors.png", HTTP_GET, handleGithubSponsorsImage);
+            server.on("/paypalme.png", HTTP_GET, handlePaypalImage);
 
             server.onNotFound(handleNotFound);
 

@@ -30,7 +30,7 @@ bool Configuration::writeFile() {
 
     ESP_LOGI(TAG, "Saving config..");
 
-    DynamicJsonDocument data(8192);
+    DynamicJsonDocument data(24576);
     File configFile = SPIFFS.open("/tracker_conf.json", "w");
 
     if (!configFile) {
@@ -95,6 +95,7 @@ bool Configuration::writeFile() {
         data["aprs_is"]["passcode"]                 = aprs_is.passcode;
 
         for (int i = 0; i < loraTypes.size(); i++) {
+            data["lora"][i]["profileName"]              = loraTypes[i].profileName;
             data["lora"][i]["frequency"]                = loraTypes[i].frequency;
             data["lora"][i]["spreadingFactor"]          = loraTypes[i].spreadingFactor;
             data["lora"][i]["signalBandwidth"]          = loraTypes[i].signalBandwidth;
@@ -183,7 +184,7 @@ bool Configuration::readFile() {
 
     if (configFile) {
         bool needsRewrite = false;
-        DynamicJsonDocument data(8192);
+        DynamicJsonDocument data(24576);
 
         DeserializationError error = deserializeJson(data, configFile);
         if (error) {
@@ -267,6 +268,19 @@ bool Configuration::readFile() {
             LoraType loraType;
 
             loraType.frequency          = LoraTypesArray[j]["frequency"] | 433775000;
+            if (!LoraTypesArray[j].containsKey("profileName")) needsRewrite = true;
+            String defaultProfileName = "PROFILE " + String(j + 1);
+            if (loraType.frequency == 433775000)      defaultProfileName = "EU/WORLD";
+            else if (loraType.frequency == 434855000) defaultProfileName = "Poland";
+            else if (loraType.frequency == 439912500) defaultProfileName = "UK";
+            else if (loraType.frequency == 868200000) defaultProfileName = "EU868";
+            else if (loraType.frequency == 915000000) defaultProfileName = "US915";
+            loraType.profileName        = LoraTypesArray[j]["profileName"] | defaultProfileName.c_str();
+            loraType.profileName.trim();
+            if (loraType.profileName.isEmpty()) {
+                loraType.profileName = defaultProfileName;
+                needsRewrite = true;
+            }
             loraType.spreadingFactor    = LoraTypesArray[j]["spreadingFactor"] | 12;
             loraType.signalBandwidth    = LoraTypesArray[j]["signalBandwidth"] | 125000;
             loraType.codingRate4        = LoraTypesArray[j]["codingRate4"] | 5;
@@ -393,6 +407,7 @@ bool Configuration::readFile() {
         }
         if (loraTypes.size() == 0) {
             LoraType loraType;
+            loraType.profileName = "EU/WORLD";
             loraType.frequency = 433775000;
             loraType.spreadingFactor = 12;
             loraType.signalBandwidth = 125000;
@@ -477,8 +492,9 @@ void Configuration::setDefaultValues() {
     aprs_is.port                    = 14580;
     aprs_is.passcode                = "-1";
 
-    auto addLoraType = [&](long freq, int sf, int cr4, int dataRate) {
+    auto addLoraType = [&](const char *name, long freq, int sf, int cr4, int dataRate) {
         LoraType lt;
+        lt.profileName      = name;
         lt.frequency        = freq;
         lt.spreadingFactor  = sf;
         lt.codingRate4      = cr4;
@@ -490,16 +506,16 @@ void Configuration::setDefaultValues() {
 
     #if defined(LORA_FREQ_MIN) && LORA_FREQ_MIN < 500000000
         // 433 MHz boards: EU, PL, UK
-        addLoraType(433775000, 12, 5, 300);   // EU  — SF12 CR4:5
-        addLoraType(434855000,  9, 7, 1200);  // PL  — SF9  CR4:7
-        addLoraType(439912500, 12, 5, 300);   // UK  — SF12 CR4:5
+        addLoraType("EU/WORLD", 433775000, 12, 5, 300);   // EU  — SF12 CR4:5
+        addLoraType("Poland",   434855000,  9, 7, 1200);  // PL  — SF9  CR4:7
+        addLoraType("UK",       439912500, 12, 5, 300);   // UK  — SF12 CR4:5
     #elif defined(LORA_FREQ_MIN) && LORA_FREQ_MIN >= 800000000
         // 868/915 MHz boards: EU868, US915
-        addLoraType(868200000, 12, 5, 300);   // EU868
-        addLoraType(915000000, 12, 5, 300);   // US915
+        addLoraType("EU868", 868200000, 12, 5, 300);
+        addLoraType("US915", 915000000, 12, 5, 300);
     #else
         // Fallback: EU 433
-        addLoraType(433775000, 12, 5, 300);
+        addLoraType("EU/WORLD", 433775000, 12, 5, 300);
     #endif
 
     battery.sendVoltage             = false;
