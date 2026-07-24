@@ -20,8 +20,8 @@ function cloneLoraProfile(profile) { return { ...profile }; }
 function applyBuildInfoPreviewFallback() {
     const element = byId("buildInfo");
     if (element && element.textContent.trim() === "%BUILD_INFO%") {
-        // Historical upstream CA2RXU firmware date. Keep fixed; this fork uses LVGL UI versions.
-        element.innerHTML = "Board / Environment = local preview<br>Firmware (CA2RXU) version date: 2026-01-12<br>LVGL UI<br>Version: 2.9.5<br>Build date: generated during firmware build";
+        // Historical upstream CA2RXU firmware version. Keep fixed; this fork uses LVGL UI versions.
+        element.innerHTML = "Board / Environment = local preview<br>Firmware (CA2RXU)<br>Version: 2.4.1<br>Date: 2026-01-12<br>LVGL UI<br>Version: 2.9.6<br>Build date: generated during firmware build";
     }
 }
 function defaultLoraProfiles() {

@@ -32,8 +32,9 @@ files = [
   'data_embed/paypalme.png',
 ]
 
-# Historical upstream CA2RXU firmware date restored from this fork's commits.
+# Historical upstream CA2RXU firmware version restored from this fork's commits.
 # Keep fixed: do not update it when bumping this fork/LVGL UI versions.
+ca2rxu_firmware_version = "2.4.1"
 ca2rxu_firmware_version_date = "2026-01-12"
 ui_version = "unknown"
 
@@ -56,7 +57,9 @@ for src in files:
     current_date = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S') + " UTC"
     build_info = (
       f'Board / Environment = {board_name}<br>'
-      f'Firmware (CA2RXU) version date: {ca2rxu_firmware_version_date}<br>'
+      f'Firmware (CA2RXU)<br>'
+      f'Version: {ca2rxu_firmware_version}<br>'
+      f'Date: {ca2rxu_firmware_version_date}<br>'
       f'LVGL UI<br>'
       f'Version: {ui_version}<br>'
       f'Build date: {current_date}'

@@ -2081,7 +2081,7 @@ void UISettings::createAboutScreen() {
     lv_obj_set_style_text_font(lbl_fw_title, &lv_font_montserrat_14, 0);
 
     lv_obj_t *lbl_fw_version = lv_label_create(content);
-    String fwVersion = "v" + versionNumber + " (" + versionDate + ")";
+    String fwVersion = "Version: " + versionNumber + "\nDate: " + versionDate;
     lv_label_set_text(lbl_fw_version, fwVersion.c_str());
     lv_obj_set_style_text_color(lbl_fw_version, lv_color_hex(UIColors::TEXT_WHITE), 0);
     lv_obj_set_style_text_font(lbl_fw_version, &lv_font_montserrat_14, 0);
