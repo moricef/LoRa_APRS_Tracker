@@ -51,6 +51,7 @@ namespace MSG_Utils {
     void    ledNotification();
     void    deleteFile(uint8_t typeOfFile);
     bool    deleteMessageByIndex(uint8_t typeOfMessage, int index);
+    bool    deleteConversation(const String& callsign);
     bool    deleteMessageFromConversation(const String& callsign, int index);
     void    saveToConversation(const String& callsign, const String& message, bool outgoing);
     void    saveNewMessage(uint8_t typeMessage, const String& station, const String& newMessage);
