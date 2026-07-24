@@ -21,7 +21,7 @@ body{background:var(--msh-bg);color:var(--msh-text);font-family:"Inter",system-u
 .btn-save:hover{background:#f0eaea;color:#1d2630;}
 .app-shell{display:flex;align-items:flex-start;min-height:calc(100vh - 56px);}
 .app-sidebar{position:sticky;top:56px;width:250px;height:calc(100vh - 56px);overflow-y:auto;background:var(--msh-panel);border-right:1px solid var(--msh-border);padding:16px 12px;flex-shrink:0;}
-.app-main{flex:1;padding:20px 26px;width:100%;}
+.app-main{flex:1 1 auto;min-width:0;padding:20px 26px;}
 .nav-group-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--msh-text-dim);padding:8px 12px 4px;}
 .side-link{display:flex;align-items:center;gap:11px;width:100%;padding:9px 12px;border-radius:8px;color:var(--msh-text);text-decoration:none;font-size:.92rem;border:none;background:transparent;text-align:left;transition:background .12s;}
 .side-link:hover{background:var(--msh-panel-2);color:var(--msh-text);}
@@ -65,7 +65,7 @@ body{background:var(--msh-bg);color:var(--msh-text);font-family:"Inter",system-u
 .list-beacon .field-smart-params{grid-column:2 / 7;grid-row:4;}
 .list-beacon .smartbeacon-params{background:var(--msh-panel-2)!important;color:var(--msh-text);border:1px solid var(--msh-border);border-radius:8px!important;margin-left:0!important;}
 .list-beacon .form-check,.list-lora .form-check{min-height:58px;display:flex;align-items:center;}
-@media(max-width:992px){.list-beacon .beacon-row{grid-template-columns:1fr;}.list-beacon .beacon-row>*{grid-column:1 / -1!important;}.list-index{text-align:left;padding-top:0;}}
+@media(max-width:992px){.list-beacon .beacon-row{grid-template-columns:1fr;}.list-beacon .beacon-row>*{grid-column:1 / -1!important;grid-row:auto!important;}.list-index{text-align:left;padding-top:0;}}
 @media(max-width:768px){.app-sidebar{width:60px;padding:12px 6px;}.side-link .label,.nav-group-label{display:none;}.app-main{padding:14px;}}
 /* Tracker visual identity: keep the SPA/sidebar mechanics, change the visible shell. */
 :root,[data-bs-theme="dark"]{--msh-bg:#101419;--msh-panel:#171d24;--msh-panel-2:#202832;--msh-border:#34414d;--msh-accent:#f0a020;--msh-accent-soft:rgba(240,160,32,.15);--msh-text-dim:#9ca9b3;--msh-text:#eef3f6;}
@@ -92,7 +92,8 @@ body{background:var(--msh-bg);color:var(--msh-text);font-family:"Inter",system-u
 .app-main .row.my-5{border-radius:4px;border-left:4px solid var(--msh-accent);padding:20px 22px;}
 .about-card{border-radius:4px;border-left:4px solid var(--msh-accent);}
 .form-control,.form-select,.input-group-text{border-radius:4px;}
-@media(max-width:768px){.app-topbar{height:50px;}.app-shell{min-height:calc(100vh - 50px);}.app-sidebar{top:50px;width:76px;height:calc(100vh - 50px);}.side-link{padding:12px 0;border-left-width:3px;justify-content:center;flex-direction:column;gap:4px;}.side-ico{margin-right:0;}.side-link .label{display:block;font-size:.68rem;line-height:1.05;text-align:center;max-width:68px;overflow-wrap:anywhere;}.nav-group-label{display:none;}.app-main{padding:12px;}}
+@media(max-width:768px){.app-topbar{height:50px;}.app-shell{min-height:calc(100vh - 50px);width:100%;overflow-x:hidden;}.app-sidebar{top:50px;width:76px;height:calc(100vh - 50px);}.side-link{padding:12px 0;border-left-width:3px;justify-content:center;flex-direction:column;gap:4px;}.side-ico{margin-right:0;}.side-link .label{display:block;font-size:.68rem;line-height:1.05;text-align:center;max-width:68px;overflow-wrap:anywhere;}.nav-group-label{display:none;}.app-main{width:auto;min-width:0;max-width:calc(100vw - 76px);padding:10px 8px;}.app-main .row.my-5{padding:14px 12px;margin-bottom:14px!important;}.app-main .row.my-5 .col-lg-3{padding-right:0;margin-bottom:14px;}.list-beacon .beacons{padding-top:.75rem!important;padding-bottom:1rem!important;}.list-beacon .beacon-row{gap:.85rem;}.list-beacon .form-check,.list-lora .form-check{min-height:auto;align-items:flex-start;padding-top:.25rem;padding-bottom:.25rem;}.list-beacon .field-smart-setting{margin-top:.15rem;}.list-beacon .smartbeacon-params{padding:.75rem!important;}.list-beacon .smartbeacon-params .col-6{width:100%;}.form-floating,.form-check,.input-group,.form-select,.form-control{min-width:0;}}
+@media(max-width:576px){.app-topbar{padding-left:.75rem!important;padding-right:.75rem!important;}.app-topbar .brand{font-size:.9rem;letter-spacing:.035em;}.app-topbar .gap-2{gap:.35rem!important;}.btn-icon,.btn-save{padding:.25rem .45rem;}.app-main [class*="col-"]:not(.list-index){width:100%;flex:0 0 100%;max-width:100%;}.list-lora .form-floating.col-6,.list-wifi .form-floating.col-6{width:50%;flex:0 0 50%;}.input-group{flex-wrap:nowrap;}.input-group-text{font-size:.85rem;padding-left:.45rem;padding-right:.45rem;}}
 </style>
 </head>
     <body>
