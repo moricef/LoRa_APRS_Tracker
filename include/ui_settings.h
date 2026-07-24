@@ -1,5 +1,5 @@
 /* LVGL UI Settings Module
- * Setup menu, frequency, speed, callsign, display, sound, WiFi, Bluetooth screens
+ * Setup menu, LoRa profiles, callsign, display, sound, WiFi, Bluetooth screens
  */
 
 #ifndef UI_SETTINGS_H
@@ -17,7 +17,6 @@ namespace UISettings {
     // Screen creation functions
     void createSetupScreen();
     void createFreqScreen();
-    void createSpeedScreen();
     void createCallsignScreen();
     void createDisplayScreen();
     void createGPSScreen();
@@ -30,7 +29,6 @@ namespace UISettings {
     // Navigation functions (called from dashboard buttons)
     void openSetup();
     void openFrequency();
-    void openSpeed();
     void openCallsign();
     void openDisplay();
     void openSound();

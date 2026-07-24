@@ -435,9 +435,10 @@ void displayShow(const String& header, const String& line1, const String& line2,
 }
 
 void drawSymbol(int symbolIndex, bool bluetoothActive) {
-    const uint8_t *bitMap = symbolsAPRS[symbolIndex];
     #ifdef HAS_TFT
-        if (bluetoothActive) bitMap = bluetoothSymbol;
+        #if defined(HELTEC_WIRELESS_TRACKER) || defined(TTGO_T_DECK_GPS) || defined(TTGO_T_DECK_PLUS)
+            const uint8_t *bitMap = bluetoothActive ? bluetoothSymbol : symbolsAPRS[symbolIndex];
+        #endif
         #if defined(HELTEC_WIRELESS_TRACKER)
             sprite.drawBitmap(128 - SYMBOL_WIDTH, 3, bitMap, SYMBOL_WIDTH, SYMBOL_HEIGHT, TFT_WHITE);
         #endif
@@ -445,6 +446,7 @@ void drawSymbol(int symbolIndex, bool bluetoothActive) {
             sprite.drawBitmap(280, 70, bitMap, SYMBOL_WIDTH, SYMBOL_HEIGHT, TFT_WHITE);
         #endif
     #else
+        const uint8_t *bitMap = bluetoothActive ? bluetoothSymbol : symbolsAPRS[symbolIndex];
         display.drawBitmap((display.width() - SYMBOL_WIDTH), 0, bitMap, SYMBOL_WIDTH, SYMBOL_HEIGHT, 1);
     #endif
 }
@@ -595,13 +597,11 @@ void displayShow(const String& header, const String& line1, const String& line2,
 }
 
 void startupScreen(uint8_t index, const String& version) {
-    String workingFreq = "    LoRa Freq [";
-    switch (index) {
-        case 0: workingFreq += "EU]"; break;
-        case 1: workingFreq += "PL]"; break;
-        case 2: workingFreq += "UK]"; break;
-        case 3: workingFreq += "US]"; break;
-    }
+    String workingFreq = " LoRa [";
+    workingFreq += index < Config.loraTypes.size()
+                       ? Config.loraTypes[index].profileName
+                       : "??";
+    workingFreq += "]";
     displayShow(" LoRa APRS", "      (TRACKER)", workingFreq, "", "", "  CA2RXU  " + version, 4000);
     ESP_LOGI(TAG, "RichonGuzman (CA2RXU) --> LoRa APRS Tracker/Station");
     ESP_LOGI(TAG, "Version: %s", version);

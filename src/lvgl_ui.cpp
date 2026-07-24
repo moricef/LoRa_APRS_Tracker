@@ -388,27 +388,13 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 115);
 #endif
 
-    // LoRa Frequency
-    const char *region;
-    switch (loraIndex) {
-    case 0:
-      region = "EU";
-      break;
-    case 1:
-      region = "PL";
-      break;
-    case 2:
-      region = "UK";
-      break;
-    case 3:
-      region = "US";
-      break;
-    default:
-      region = "??";
-      break;
-    }
-    char freqBuf[32];
-    snprintf(freqBuf, sizeof(freqBuf), "LoRa Freq [%s]", region);
+    // Active LoRa profile
+    const char *profileName =
+        (loraIndex < Config.loraTypes.size())
+            ? Config.loraTypes[loraIndex].profileName.c_str()
+            : "??";
+    char freqBuf[40];
+    snprintf(freqBuf, sizeof(freqBuf), "LoRa [%s]", profileName);
     lv_obj_t *freq_label = lv_label_create(screen_splash);
     lv_label_set_text(freq_label, freqBuf);
     lv_obj_set_style_text_color(freq_label, lv_color_hex(0x0033cc),

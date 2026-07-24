@@ -199,6 +199,11 @@ void setup() {
     #endif
     STORAGE_Utils::setup();        // Formats SPIFFS on first boot
     Config.init();                 // Now SPIFFS is ready, load or create config
+    loraIndexSize = Config.loraTypes.size();
+    if (loraIndex >= loraIndexSize) {
+        ESP_LOGW(TAG, "Saved LoRa profile index %d is invalid, using profile 0", loraIndex);
+        loraIndex = 0;
+    }
     POWER_Utils::externalPinSetup();  // After Config.init — needs valid GPIO pins
     STORAGE_Utils::loadStats();
 

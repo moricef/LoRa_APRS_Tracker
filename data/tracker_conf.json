@@ -91,6 +91,7 @@
 	},
 	"lora": [
 		{
+			"profileName": "EU/WORLD",
 			"frequency": 433775000,
 			"spreadingFactor": 12,
 			"signalBandwidth": 125000,
@@ -99,6 +100,7 @@
 			"dataRate": 300
 		},
 		{
+			"profileName": "Poland",
 			"frequency": 434855000,
 			"spreadingFactor": 9,
 			"signalBandwidth": 125000,
@@ -107,6 +109,7 @@
 			"dataRate": 1200
 		},
 		{
+			"profileName": "UK",
 			"frequency": 439912500,
 			"spreadingFactor": 12,
 			"signalBandwidth": 125000,
@@ -115,6 +118,7 @@
 			"dataRate": 300
 		},
 		{
+			"profileName": "US",
 			"frequency": 915000000,
 			"spreadingFactor": 12,
 			"signalBandwidth": 125000,

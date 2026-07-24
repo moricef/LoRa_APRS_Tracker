@@ -126,18 +126,12 @@ namespace LoRa_Utils {
         if (pendingFrequencyChange) {
             pendingFrequencyChange = false;
             if (pendingLoraIndex >= 0 && pendingLoraIndex < loraIndexSize) {
-                String loraCountryFreq;
-                switch (pendingLoraIndex) {
-                    case 0: loraCountryFreq = "EU/WORLD"; break;
-                    case 1: loraCountryFreq = "POLAND"; break;
-                    case 2: loraCountryFreq = "UK"; break;
-                    case 3: loraCountryFreq = "US"; break;
-                }
+                String profileName = Config.loraTypes[pendingLoraIndex].profileName;
 
                 if (pendingLoraIndex != loraIndex) {
                     loraIndex = pendingLoraIndex;
                     #ifndef USE_LVGL_UI
-                        displayShow("LORA FREQ>", "", "CHANGED TO: " + loraCountryFreq, "", "", "", 2000);
+                        displayShow("LORA PROFILE>", "", "CHANGED TO: " + profileName, "", "", "", 2000);
                     #else
                         LVGL_UI::refreshLoRaInfo();
                     #endif
@@ -146,7 +140,7 @@ namespace LoRa_Utils {
                 } else {
                     // Already on this frequency, just show confirmation
                     #ifndef USE_LVGL_UI
-                        displayShow("LORA FREQ>", "", "ALREADY ON: " + loraCountryFreq, "", "", "", 2000);
+                        displayShow("LORA PROFILE>", "", "ALREADY ON: " + profileName, "", "", "", 2000);
                     #endif
                 }
             }
@@ -297,15 +291,8 @@ namespace LoRa_Utils {
         loraSpiEnd();
         if (spiMutex) xSemaphoreGiveRecursive(spiMutex);
 
-        String loraCountryFreq;
-        switch (loraIndex) {
-            case 0: loraCountryFreq = "EU/WORLD"; break;
-            case 1: loraCountryFreq = "POLAND"; break;
-            case 2: loraCountryFreq = "UK"; break;
-            case 3: loraCountryFreq = "US"; break;
-        }
         String currentLoRainfo = "LoRa ";
-        currentLoRainfo += loraCountryFreq;
+        currentLoRainfo += currentLoRaType->profileName;
         currentLoRainfo += " / Freq: ";
         currentLoRainfo += String(currentLoRaType->frequency);
         currentLoRainfo += " / SF:";

@@ -116,6 +116,7 @@ public:
 
 class LoraType {
 public:
+    String  profileName;
     long    frequency;
     int     spreadingFactor;
     long    signalBandwidth;
