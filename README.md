@@ -60,6 +60,12 @@ ____________________________________________________
 ____________________________________________________
 ## Timeline (Versions):
 
+- 2026.07.24 **v2.10.0 Stable Release**:
+    - Tracker WebConf rebuilt as a SPA configuration UI based on the CA2RXU iGate WebConf shell.
+    - LoRa profiles are configurable from WebConf and shared with LVGL settings on supported touchscreen boards.
+    - WiFi station profiles can be managed as a multi-profile list.
+    - LVGL messaging adds unread counters, per-conversation unread state, recent conversation ordering, and a separate Frames screen.
+    - Stable web flasher updated for T-Deck Plus 433MHz and CrowPanel Advance 3.5".
 - 2026.03.04 **v2.7.4 Stable Release**:
     - Robust GPS Jitter filtering to prevent fake beacons.
     - Cleaned up OwnStation trace logic on vector maps.

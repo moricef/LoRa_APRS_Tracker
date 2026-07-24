@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.9.5-blue)
+![Version](https://img.shields.io/badge/version-2.10.0-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus and CrowPanel Advance 3.5", plus classic OLED tracker for T-Beam V1.2**
@@ -17,6 +17,14 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 > *Screenshots captured from the Linux port. The UI is identical on device; only the map differs — the T-Deck uses the embedded NAV vector renderer, not the OSM-Bright style shown here.*
 
 ---
+## What's New in v2.10.0
+- **Tracker WebConf SPA** - Web configuration is now organized as a sidebar/topbar SPA adapted from the CA2RXU iGate WebConf shell, with Tracker-specific fields and visual identity.
+- **LoRa profiles** - WebConf and LVGL settings share configurable LoRa profiles, including the default EU/WORLD, Poland, and UK profiles.
+- **WiFi STA profiles** - Station WiFi settings support a multi-profile list instead of a single fixed configuration.
+- **Messaging unread state** - APRS and Winlink unread counters are persisted, conversations with new messages are highlighted, and recent conversations move to the top when new traffic arrives.
+- **Frames screen** - Frames and statistics are now opened from a dedicated dashboard button, leaving the Messages tabs focused on APRS, Winlink, and Contacts.
+- **Stable web flasher** - T-Deck Plus 433MHz and CrowPanel Advance 3.5" stable builds are published as v2.10.0.
+
 ## What's New in v2.9.5
 - **Digipeater fill-in mode** - New `digipeatAlias` setting (default `WIDE1-1`), separate from the beacon path, with a selector in the Repeater screen. The tracker relays stations not yet repeated by any digi, consuming `WIDE1-1` while preserving `WIDE2-1` for the next hop — useful to form a local tracker network when no digi/igate is in range
 - **Digipeat safety guards** - Self-echo protection (never repeat our own beacon sent back by a neighbour) and refusal to repeat when the alias is already consumed (`ALIAS*`), which previously produced malformed `CALL**` paths
