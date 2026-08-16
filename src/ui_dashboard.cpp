@@ -475,9 +475,13 @@ void updateLastRx() {
     for (size_t i = 0; i < entries.size() && i < 4; i++) {
         const DashboardRxEntry &e = entries[i];
 
+        // Same colour code as the Frames tab: direct = green, digipeated = orange
+        // (LV_PALETTE_GREEN 0x4CAF50 / LV_PALETTE_ORANGE 0xFF9800).
+        const char *col = e.isDirect ? "4CAF50" : "FF9800";
+
         // No timestamp - details available in MSG > Frames
-        snprintf(line, sizeof(line), "\n#00ff00 %-9.9s %4d   %3.0f   %-9.9s#",
-                 e.callsign.c_str(), e.rssi, e.snr, e.rfTransmitter.c_str());
+        snprintf(line, sizeof(line), "\n#%s %-9.9s %4d   %3.0f   %-9.9s#",
+                 col, e.callsign.c_str(), e.rssi, e.snr, e.rfTransmitter.c_str());
         text += line;
     }
     lv_label_set_text(label_last_rx, text.c_str());

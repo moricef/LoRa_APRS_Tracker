@@ -1326,15 +1326,19 @@ static void populate_stats(lv_obj_t *cont) {
                 snprintf(buf, sizeof(buf), "%d", s.count);
                 lv_table_set_cell_value(stats_table, row, 1, buf);
 
-                // RSSI (average)
-                float avgRssi = s.count > 0 ? (float)s.rssiTotal / s.count : 0.0f;
-                snprintf(buf, sizeof(buf), "%.1f", avgRssi);
-                lv_table_set_cell_value(stats_table, row, 2, buf);
+                // RSSI / SNR averages are computed over DIRECT receptions only: a
+                // digipeated frame carries the digi's signal level, not this
+                // station's. "--" means never heard directly (not an RF neighbour).
+                if (s.directCount > 0) {
+                    snprintf(buf, sizeof(buf), "%.1f", (float)s.rssiTotal / s.directCount);
+                    lv_table_set_cell_value(stats_table, row, 2, buf);
 
-                // SNR (average)
-                float avgSnr = s.count > 0 ? s.snrTotal / s.count : 0.0f;
-                snprintf(buf, sizeof(buf), "%.1f", avgSnr);
-                lv_table_set_cell_value(stats_table, row, 3, buf);
+                    snprintf(buf, sizeof(buf), "%.1f", s.snrTotal / s.directCount);
+                    lv_table_set_cell_value(stats_table, row, 3, buf);
+                } else {
+                    lv_table_set_cell_value(stats_table, row, 2, "--");
+                    lv_table_set_cell_value(stats_table, row, 3, "--");
+                }
             }
         }
     }

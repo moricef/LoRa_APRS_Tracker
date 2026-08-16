@@ -781,7 +781,7 @@ const std::vector<String>& getLastFrames(int count) {
     static std::vector<DashboardRxEntry> dashboardRx;
 
     static void updateDashboardRx(const String& callsign, int rssi, float snr,
-                                  const String& rfTransmitter) {
+                                  const String& rfTransmitter, bool isDirect) {
         // Add new entry at front
         DashboardRxEntry entry;
         entry.callsign = callsign;
@@ -789,6 +789,7 @@ const std::vector<String>& getLastFrames(int count) {
         entry.rssi = rssi;
         entry.snr = snr;
         entry.timestamp = now(); // Unix timestamp for fixed time display
+        entry.isDirect = isDirect;
 
         dashboardRx.insert(dashboardRx.begin(), entry);
 
@@ -808,18 +809,23 @@ const std::vector<String>& getLastFrames(int count) {
     void updateStationStats(const String& callsign, int rssi, float snr, bool isDirect,
                             const String& rfTransmitter) {
         // Update dashboard Last RX (RAM only, max 4)
-        updateDashboardRx(callsign, rssi, snr, rfTransmitter);
+        updateDashboardRx(callsign, rssi, snr, rfTransmitter, isDirect);
 
         // Check if station already exists
         for (auto& s : stationStats) {
             if (s.callsign.equalsIgnoreCase(callsign)) {
                 s.count++;
-                s.lastRssi = rssi;
-                s.lastSnr = snr;
-                s.rssiTotal += rssi;
-                s.snrTotal += snr;
                 s.lastHeard = now(); // Unix timestamp from GPS/RTC
                 s.lastIsDirect = isDirect;
+                // Averages: direct receptions only (a digipeated frame carries the
+                // digi's signal level, not the originating station's).
+                if (isDirect) {
+                    s.directCount++;
+                    s.lastRssi = rssi;
+                    s.lastSnr = snr;
+                    s.rssiTotal += rssi;
+                    s.snrTotal += snr;
+                }
                 statsDirty = true;
                 statsSaveNeeded = true;
                 return;
@@ -830,20 +836,27 @@ const std::vector<String>& getLastFrames(int count) {
         StationStats newStation;
         newStation.callsign = callsign;
         newStation.count = 1;
-        newStation.lastRssi = rssi;
-        newStation.lastSnr = snr;
-        newStation.rssiTotal = rssi;
-        newStation.snrTotal = snr;
+        newStation.directCount = isDirect ? 1 : 0;
+        newStation.lastRssi = isDirect ? rssi : 0;
+        newStation.lastSnr = isDirect ? snr : 0.0f;
+        newStation.rssiTotal = isDirect ? rssi : 0;
+        newStation.snrTotal = isDirect ? snr : 0.0f;
         newStation.lastHeard = now();
         newStation.lastIsDirect = isDirect;
 
         if (stationStats.size() >= 20) {
-            // Evict the oldest station
-            auto oldest = std::min_element(stationStats.begin(), stationStats.end(),
+            // Eviction favours the RF neighbourhood: drop a station never heard
+            // directly before dropping a direct neighbour; oldest first otherwise.
+            auto victim = std::min_element(stationStats.begin(), stationStats.end(),
                 [](const StationStats& a, const StationStats& b) {
+                    bool aDirect = a.directCount > 0;
+                    bool bDirect = b.directCount > 0;
+                    if (aDirect != bDirect) return !aDirect;  // non-direct evicted first
                     return a.lastHeard < b.lastHeard;
                 });
-            *oldest = newStation;
+            // Never sacrifice a direct neighbour for a station only heard via digi.
+            if (victim->directCount > 0 && !isDirect) return;
+            *victim = newStation;
         } else {
             stationStats.push_back(newStation);
         }
@@ -907,11 +920,15 @@ const std::vector<String>& getLastFrames(int count) {
                 s.snrTotal    = obj["snrTotal"]  | 0.0f;
                 s.lastHeard   = obj["heard"]  | (uint32_t)0;
                 s.lastIsDirect= obj["direct"] | false;
+                s.directCount = obj["dcnt"]   | (uint32_t)0;
 
-                // Migration: initialize totals from last values if missing (old format)
-                if (s.rssiTotal == 0 && s.snrTotal == 0.0f && s.count > 0) {
-                    s.rssiTotal = s.lastRssi * s.count;
-                    s.snrTotal = s.lastSnr * s.count;
+                // Migration from the pre-"dcnt" format: the stored totals mixed direct
+                // and digipeated receptions, so the averages described the digi as much
+                // as the station. Discard them and let the direct-only averages rebuild.
+                if (!obj.containsKey("dcnt")) {
+                    s.rssiTotal = 0;
+                    s.snrTotal  = 0.0f;
+                    s.directCount = 0;
                 }
 
                 if (s.callsign.length() > 0) {
@@ -948,6 +965,7 @@ const std::vector<String>& getLastFrames(int count) {
             JsonObject obj = stations.createNestedObject();
             obj["call"]   = s.callsign;
             obj["cnt"]    = s.count;
+            obj["dcnt"]   = s.directCount;
             obj["rssi"]   = s.lastRssi;
             obj["snr"]    = s.lastSnr;
             obj["rssiTotal"] = s.rssiTotal;

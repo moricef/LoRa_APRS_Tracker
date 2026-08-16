@@ -52,11 +52,15 @@ struct DigiStats {
 // Per-station statistics
 struct StationStats {
     String callsign;
-    uint32_t count;         // Total packets received
+    uint32_t count;         // Total packets observed (direct + digipeated)
+    uint32_t directCount;   // Direct RF receptions only — divisor for the averages
     int lastRssi;
     float lastSnr;
-    int32_t rssiTotal;      // For average calculation
-    float snrTotal;         // For average calculation
+    // RSSI/SNR are OUR local measurements: on a digipeated frame they describe the
+    // digi, not the originating station. Only direct receptions are accumulated so
+    // the averages stay a true RF-neighbourhood figure.
+    int32_t rssiTotal;      // Sum over direct receptions only
+    float snrTotal;         // Sum over direct receptions only
     uint32_t lastHeard;     // Unix timestamp
     bool lastIsDirect;
 };
@@ -68,6 +72,7 @@ struct DashboardRxEntry {
     int rssi;
     float snr;
     uint32_t timestamp;     // millis() when received
+    bool isDirect;          // heard directly (green) vs digipeated (orange)
 };
 
 namespace STORAGE_Utils {
