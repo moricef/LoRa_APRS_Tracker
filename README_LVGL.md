@@ -18,7 +18,10 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 
 ---
 ## What's New in v2.10.0
-- **Tracker WebConf SPA** - Web configuration is now organized as a sidebar/topbar SPA with Tracker-specific fields and visual identity.
+- **Direct vs digipeated, everywhere** - The dashboard Last RX list is colour-coded again (green = heard directly, orange = via a digipeater), matching the Frames screen. The distinction had been lost when the dashboard moved to its RAM cache.
+- **RF neighbourhood statistics** - Per-station RSSI/SNR averages are now computed from direct receptions only. On a digipeated frame those figures describe the digipeater, not the originating station, so a distant station used to inherit its relay's signal level. Stations never heard directly show `--` instead of a misleading value, and the 20-slot table evicts them before dropping a direct neighbour.
+- **Delete APRS conversations** - Long press on a conversation to delete it.
+- **Tracker WebConf SPA** - Web configuration is now organized as a sidebar/topbar SPA with Tracker-specific fields and visual identity, with a mobile layout so the whole configuration can be done from a phone.
 - **LoRa profiles** - WebConf and LVGL settings share configurable LoRa profiles, including the default EU/WORLD, Poland, and UK profiles.
 - **WiFi STA profiles** - Station WiFi settings support a multi-profile list instead of a single fixed configuration.
 - **Messaging unread state** - APRS and Winlink unread counters are persisted, conversations with new messages are highlighted, and recent conversations move to the top when new traffic arrives.
