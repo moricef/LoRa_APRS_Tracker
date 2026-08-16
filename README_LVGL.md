@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.9.5-blue)
+![Version](https://img.shields.io/badge/version-2.10.0-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus and CrowPanel Advance 3.5", plus classic OLED tracker for T-Beam V1.2**
@@ -10,11 +10,24 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 
 ## Screenshots
 
-|<img src="docs/tdeck_dashboard.jpg" width="250">|<img src="docs/tdeck_vector_map.jpg" width="250">|<img src="docs/tdeck_messaging.jpg" width="250">|
-|:-:|:-:|:-:|
-| **Dashboard** | **Vector Map** | **Messaging** |
+|<img src="docs/t-deck_dashboard.png" width="220">|<img src="docs/tdeck_vector_map.png" width="220">|<img src="docs/tdeck_messaging_conversation.png" width="220">|<img src="docs/tdeck_messaging_frames.png" width="220">|
+|:-:|:-:|:-:|:-:|
+| **Dashboard** | **Vector Map** | **Messaging** | **Frames** |
+
+> *Screenshots captured from the Linux port. The UI is identical on device; only the map differs — the T-Deck uses the embedded NAV vector renderer, not the OSM-Bright style shown here.*
 
 ---
+## What's New in v2.10.0
+- **Direct vs digipeated, everywhere** - The dashboard Last RX list is colour-coded again (green = heard directly, orange = via a digipeater), matching the Frames screen. The distinction had been lost when the dashboard moved to its RAM cache.
+- **RF neighbourhood statistics** - Per-station RSSI/SNR averages are now computed from direct receptions only. On a digipeated frame those figures describe the digipeater, not the originating station, so a distant station used to inherit its relay's signal level. Stations never heard directly show `--` instead of a misleading value, and the 20-slot table evicts them before dropping a direct neighbour.
+- **Delete APRS conversations** - Long press on a conversation to delete it.
+- **Tracker WebConf SPA** - Web configuration is now organized as a sidebar/topbar SPA with Tracker-specific fields and visual identity, with a mobile layout so the whole configuration can be done from a phone.
+- **LoRa profiles** - WebConf and LVGL settings share configurable LoRa profiles, including the default EU/WORLD, Poland, and UK profiles.
+- **WiFi STA profiles** - Station WiFi settings support a multi-profile list instead of a single fixed configuration.
+- **Messaging unread state** - APRS and Winlink unread counters are persisted, conversations with new messages are highlighted, and recent conversations move to the top when new traffic arrives.
+- **Frames screen** - Frames and statistics are now opened from a dedicated dashboard button, leaving the Messages tabs focused on APRS, Winlink, and Contacts.
+- **Stable web flasher** - T-Deck Plus 433MHz and CrowPanel Advance 3.5" stable builds are published as v2.10.0.
+
 ## What's New in v2.9.5
 - **Digipeater fill-in mode** - New `digipeatAlias` setting (default `WIDE1-1`), separate from the beacon path, with a selector in the Repeater screen. The tracker relays stations not yet repeated by any digi, consuming `WIDE1-1` while preserving `WIDE2-1` for the next hop — useful to form a local tracker network when no digi/igate is in range
 - **Digipeat safety guards** - Self-echo protection (never repeat our own beacon sent back by a neighbour) and refusal to repeat when the alias is already consumed (`ALIAS*`), which previously produced malformed `CALL**` paths
