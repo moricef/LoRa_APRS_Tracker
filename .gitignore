@@ -8,6 +8,10 @@
 installer/firmware
 installer/*.bin
 **/__pycache__/
+dependencies.lock
+managed_components/
+screenshots/
+sdkconfig.crowpanel_advance_35
 
 # Internal dev documentation (local only)
 LVGL_TODO.md
@@ -27,6 +31,7 @@ update_version.sh
 docs/*.txt
 docs/*.log
 docs/*.kate-swp
+docs/wadamesh_takeaways.md
 docs/restored_files/
 docs/restored_prompts/
 docs/ui_map_manager.cpp_orig
@@ -38,3 +43,6 @@ docs/docs_privees/
 # Unused source stubs
 include/map_touch_controller.h
 src/map_touch_controller.cpp
+
+# Local board experiments
+include/LGFX_Waveshare7.h
