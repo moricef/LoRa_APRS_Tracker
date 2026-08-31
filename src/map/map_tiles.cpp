@@ -237,6 +237,9 @@ namespace MapTiles {
             symbolPNG.decode(nullptr, 0);
             symbolPNG.close();
         } else {
+            // A failed header parse still leaves pngOpenFile's File open —
+            // PNGdec does not call the close callback on that path.
+            if (pngFileOpened) symbolPNG.close();
             if (rc != PNG_SUCCESS)
                 ESP_LOGE(TAG, "PNG open failed rc=%d for %s", rc, path.c_str());
             free(combined);
