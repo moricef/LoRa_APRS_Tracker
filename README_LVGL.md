@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.10.0-blue)
+![Version](https://img.shields.io/badge/version-2.10.1-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus and CrowPanel Advance 3.5", plus classic OLED tracker for T-Beam V1.2**
@@ -15,6 +15,10 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 | **Dashboard** | **Vector Map** | **Messaging** | **Frames** |
 
 > *Screenshots captured from the Linux port. The UI is identical on device; only the map differs — the T-Deck uses the embedded NAV vector renderer, not the OSM-Bright style shown here.*
+
+---
+## What's New in v2.10.1
+- **Raster PNG tiles fixed** - PNG map tiles never rendered and every attempt permanently leaked an SD file descriptor, which eventually broke *all* SD access for the rest of the session (logs, statistics, GPX, station symbols). `renderPNGRaster()` was checking PNGdec's return value with JPEGDEC's convention — the two are opposite (`PNG_SUCCESS` is `0`). The same close-on-failure leak is fixed in the JPEG and symbol paths. Thanks to @cwb for the diagnosis and the fix (#2, #3).
 
 ---
 ## What's New in v2.10.0
