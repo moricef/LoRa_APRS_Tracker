@@ -195,14 +195,23 @@ namespace MapEngine {
     static PNG png;
     static JPEGDEC jpeg;
 
+    // Set by rasterOpenFile when it actually handed a File back to the decoder.
+    // PNGdec's open() returns 0 both for "open callback failed" and for
+    // PNG_SUCCESS, so this flag is what tells the two apart — and it tells us
+    // whether a File is still outstanding and must be closed. Same technique
+    // as pngFileOpened in map_tiles.cpp.
+    static bool rasterFileOpened = false;
+
     // Generic file callbacks for raster decoders
     static void* rasterOpenFile(const char* filename, int32_t* size) {
+        rasterFileOpened = false;
         File* file = new File(SD.open(filename, FILE_READ));
         if (!file || !*file) {
             delete file;
             return nullptr;
         }
         *size = file->size();
+        rasterFileOpened = true;
         return file;
     }
 
@@ -263,9 +272,14 @@ namespace MapEngine {
         targetSprite_ = &map;
         bool success = false;
         if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            // JPEGDEC really does use 1 = success (unlike PNGdec), so this
+            // comparison is correct. The close-on-failure handling is not:
+            // a failed header parse still leaves rasterOpenFile's File open.
             if (jpeg.open(path, rasterOpenFile, rasterCloseFile, rasterReadFileJPEG, rasterSeekFileJPEG, jpegDrawCallback) == 1) {
                 jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
                 if (jpeg.decode(0, 0, 0) == 1) success = true;
+                jpeg.close();
+            } else if (rasterFileOpened) {
                 jpeg.close();
             }
             xSemaphoreGiveRecursive(spiMutex);
@@ -278,9 +292,23 @@ namespace MapEngine {
         targetSprite_ = &map;
         bool success = false;
         if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            if (png.open(path, rasterOpenFile, rasterCloseFile, rasterReadFilePNG, rasterSeekFilePNG, pngDrawCallback) == 1) {
-                if (png.decode(nullptr, 0) == 1) success = true;
+            // PNGdec reports success as PNG_SUCCESS (0) and failure as a
+            // non-zero error code — the opposite of JPEGDEC's 1 = success.
+            // Comparing against 1 here silently skipped every decode (map
+            // always rendered empty) and, because png.close() lives inside
+            // that branch, leaked the File/descriptor opened by
+            // rasterOpenFile on every single tile.
+            int rc = png.open(path, rasterOpenFile, rasterCloseFile,
+                              rasterReadFilePNG, rasterSeekFilePNG, pngDrawCallback);
+            if (rc == PNG_SUCCESS && rasterFileOpened) {
+                success = (png.decode(nullptr, 0) == PNG_SUCCESS);
                 png.close();
+            } else {
+                // open() may have taken a File before failing in the header
+                // parse; it never calls the close callback itself, so close
+                // here or the descriptor is gone for the rest of the session.
+                if (rasterFileOpened) png.close();
+                ESP_LOGE(TAG, "PNG open failed rc=%d for %s", rc, path);
             }
             xSemaphoreGiveRecursive(spiMutex);
         }
