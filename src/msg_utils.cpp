@@ -24,6 +24,7 @@
 #include "notification_utils.h"
 #include "bluetooth_utils.h"
 #include "storage_utils.h"
+#include "nav_types.h"   // PSRAMAllocator (cache d'apercus en PSRAM)
 #include "winlink_utils.h"
 #include "configuration.h"
 #include "board_pinout.h"
@@ -471,7 +472,113 @@ namespace MSG_Utils {
     }
 
     // Get list of callsigns with active conversations, sorted by last message time
-    std::vector<String> getConversationsList() {
+    // ---- Cache d'apercus de conversations (PSRAM) ----------------------------
+    // Construire la liste des conversations lisait chaque fichier en entier pour
+    // n'en garder que la derniere ligne : des centaines d'ouvertures SD et des
+    // milliers d'allocations String a chaque entree d'ecran (~1 min chez un
+    // utilisateur ayant beaucoup de correspondants).
+    //
+    // On garde ici, par conversation, l'apercu deja tronque et le mtime du
+    // fichier. Un fichier inchange n'est plus relu du tout. En cas de miss, seule
+    // la FIN du fichier est lue (seek), pas son integralite.
+    //
+    // POD volontairement : un String allouerait sur le tas DRAM, ce qui annulerait
+    // l'interet de PSRAMAllocator.
+    struct ConvPreview {
+        char callsign[16];
+        char content[32];   // contenu deja tronque a 30 caracteres + nul
+        time_t mtime;
+    };
+    static std::vector<ConvPreview, PSRAMAllocator<ConvPreview>> convPreviewCache;
+
+    static const size_t CONV_TAIL_BYTES = 256;   // suffit largement pour une ligne
+
+    // Lit la derniere ligne non vide d'un fichier de conversation.
+    // On se positionne sur les derniers octets pour eviter de parcourir tout le
+    // fichier ; si ce fragment ne contient aucune ligne complete (message unique
+    // tres long), on relit depuis le debut.
+    static String readLastLine(const String& filename) {
+        File f = STORAGE_Utils::openFile(filename, "r");
+        if (!f) return String();
+
+        size_t sz = f.size();
+        if (sz > CONV_TAIL_BYTES) f.seek(sz - CONV_TAIL_BYTES);
+
+        String line, last;
+        while (f.available()) {
+            line = f.readStringUntil('\n');
+            line.trim();
+            if (line.length() > 0) last = line;
+        }
+
+        // Repli : le fragment de fin etait inexploitable
+        if (last.length() == 0 && sz > CONV_TAIL_BYTES) {
+            f.seek(0);
+            while (f.available()) {
+                line = f.readStringUntil('\n');
+                line.trim();
+                if (line.length() > 0) last = line;
+            }
+        }
+        f.close();
+        return last;
+    }
+
+    // Extrait le contenu (apres la 2e virgule) de la derniere ligne non vide,
+    // tronque a 30 caracteres comme le fait l'affichage.
+    static void extractPreview(const String& line, char* out, size_t outSize) {
+        out[0] = '\0';
+        int c1 = line.indexOf(',');
+        if (c1 < 0) return;
+        int c2 = line.indexOf(',', c1 + 1);
+        if (c2 < 0) return;
+        String content = line.substring(c2 + 1);
+        content.trim();
+        if (content.length() > 30) {
+            content = content.substring(0, 27) + "...";
+        }
+        strncpy(out, content.c_str(), outSize - 1);
+        out[outSize - 1] = '\0';
+    }
+
+    const char* getConversationPreview(const String& callsign, time_t mtime) {
+        // Retourne un buffer statique et non un pointeur dans convPreviewCache :
+        // un push_back peut reallouer le vecteur et invalider les pointeurs rendus.
+        static char previewOut[32];
+        previewOut[0] = '\0';
+
+        String filename = "/conversations/" + callsign + ".txt";
+
+        for (auto& e : convPreviewCache) {
+            if (callsign.equals(e.callsign)) {
+                if (e.mtime != mtime) {   // fichier modifie : relire seulement la fin
+                    String last = readLastLine(filename);
+                    e.content[0] = '\0';
+                    if (last.length() > 0) extractPreview(last, e.content, sizeof(e.content));
+                    e.mtime = mtime;
+                }
+                strncpy(previewOut, e.content, sizeof(previewOut) - 1);
+                previewOut[sizeof(previewOut) - 1] = '\0';
+                return previewOut;
+            }
+        }
+
+        ConvPreview e;
+        strncpy(e.callsign, callsign.c_str(), sizeof(e.callsign) - 1);
+        e.callsign[sizeof(e.callsign) - 1] = '\0';
+        e.content[0] = '\0';
+        e.mtime = mtime;
+
+        String last = readLastLine(filename);
+        if (last.length() > 0) extractPreview(last, e.content, sizeof(e.content));
+
+        convPreviewCache.push_back(e);
+        strncpy(previewOut, e.content, sizeof(previewOut) - 1);
+        previewOut[sizeof(previewOut) - 1] = '\0';
+        return previewOut;
+    }
+
+    std::vector<String> getConversationsList(std::vector<time_t>* outMtimes) {
         std::vector<String> callsigns;
 
         if (!STORAGE_Utils::fileExists("/conversations")) {
@@ -502,7 +609,11 @@ namespace MSG_Utils {
                     String callsign = filename.substring(0, filename.length() - 4);
                     time_t lastWrite = entry.getLastWrite();
                     conversationsWithTime.push_back(std::make_pair(callsign, lastWrite));
-                    ESP_LOGD(TAG, "Found conversation: %s (time: %ld)", callsign.c_str(), lastWrite);
+                    // LOGV et non LOGD : une ligne par conversation coute ~8 ms
+                    // d'ecriture UART bloquante a 115200, soit plusieurs secondes
+                    // par navigation chez un utilisateur ayant des centaines de
+                    // correspondants. Non compile a CORE_DEBUG_LEVEL=4.
+                    ESP_LOGV(TAG, "Found conversation: %s (time: %ld)", callsign.c_str(), lastWrite);
                 }
             }
             entry.close();
@@ -541,6 +652,19 @@ namespace MSG_Utils {
         }
 
         ESP_LOGD(TAG, "Found %d conversations (sorted by recent)", callsigns.size());
+
+        // Expose les mtimes si l'appelant les demande (validation du cache d'apercus)
+        if (outMtimes) {
+            outMtimes->clear();
+            outMtimes->reserve(callsigns.size());
+            for (const auto& cs : callsigns) {
+                time_t m = 0;
+                for (const auto& conv : conversationsWithTime) {
+                    if (conv.first == cs) { m = conv.second; break; }
+                }
+                outMtimes->push_back(m);
+            }
+        }
         return callsigns;
     }
 

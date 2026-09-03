@@ -46,7 +46,10 @@ namespace MSG_Utils {
     std::vector<String>& getLoadedAPRSMessages();
     std::vector<String>& getLoadedWLNKMails();
     std::vector<String> getMessagesForContact(const String& callsign);
-    std::vector<String> getConversationsList();  // Get list of callsigns with conversations
+    std::vector<String> getConversationsList(std::vector<time_t>* outMtimes = nullptr);  // Get list of callsigns with conversations
+    // Apercu de la derniere ligne, mis en cache en PSRAM et invalide par le mtime.
+    // Evite de relire chaque fichier de conversation en entier a chaque affichage.
+    const char* getConversationPreview(const String& callsign, time_t mtime);
     void    loadMessagesFromMemory(uint8_t typeOfMessage);
     void    ledNotification();
     void    deleteFile(uint8_t typeOfFile);

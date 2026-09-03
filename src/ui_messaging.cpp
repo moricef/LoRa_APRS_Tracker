@@ -378,7 +378,8 @@ static void populate_msg_list(lv_obj_t *list, int type) {
 
     if (type == 0) {
         // APRS messages - show conversations
-        std::vector<String> conversations = MSG_Utils::getConversationsList();
+        std::vector<time_t> conversationMtimes;
+        std::vector<String> conversations = MSG_Utils::getConversationsList(&conversationMtimes);
 
         static std::vector<String> callsign_storage;
         callsign_storage.clear();
@@ -398,7 +399,10 @@ static void populate_msg_list(lv_obj_t *list, int type) {
             static char previewBuf[80];
 
             for (size_t i = 0; i < conversations.size(); i++) {
-                std::vector<String> messages = MSG_Utils::getMessagesForContact(conversations[i]);
+                // Apercu via le cache PSRAM : plus de lecture integrale du fichier
+                // de conversation a chaque affichage de la liste.
+                time_t convMtime = (i < conversationMtimes.size()) ? conversationMtimes[i] : 0;
+                const char* lastContent = MSG_Utils::getConversationPreview(conversations[i], convMtime);
                 int unreadCount = MSG_Utils::getUnreadConversationCount(conversations[i]);
                 const char* callsign = conversations[i].c_str();
                 size_t callLen = strlen(callsign);
@@ -407,28 +411,15 @@ static void populate_msg_list(lv_obj_t *list, int type) {
                 memcpy(previewBuf, callsign, callLen);
                 size_t pos = callLen;
 
-                if (messages.size() > 0) {
-                    const String& lastMsg = messages[messages.size() - 1];
-                    const char* msgPtr = lastMsg.c_str();
-                    // Find second comma to get message content
-                    const char* comma1 = strchr(msgPtr, ',');
-                    if (comma1) {
-                        const char* comma2 = strchr(comma1 + 1, ',');
-                        if (comma2) {
-                            const char* content = comma2 + 1;
-                            size_t contentLen = strlen(content);
-                            previewBuf[pos++] = '\n';
-                            if (contentLen > 30) {
-                                memcpy(previewBuf + pos, content, 27);
-                                pos += 27;
-                                memcpy(previewBuf + pos, "...", 3);
-                                pos += 3;
-                            } else {
-                                memcpy(previewBuf + pos, content, contentLen);
-                                pos += contentLen;
-                            }
-                        }
+                if (lastContent && lastContent[0]) {
+                    // Deja tronque a 30 caracteres par getConversationPreview()
+                    size_t contentLen = strlen(lastContent);
+                    if (contentLen > sizeof(previewBuf) - pos - 2) {
+                        contentLen = sizeof(previewBuf) - pos - 2;
                     }
+                    previewBuf[pos++] = '\n';
+                    memcpy(previewBuf + pos, lastContent, contentLen);
+                    pos += contentLen;
                 }
                 previewBuf[pos] = '\0';
 
