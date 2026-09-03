@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.10.1-blue)
+![Version](https://img.shields.io/badge/version-2.10.2-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus and CrowPanel Advance 3.5", plus classic OLED tracker for T-Beam V1.2**
@@ -15,6 +15,10 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 | **Dashboard** | **Vector Map** | **Messaging** | **Frames** |
 
 > *Screenshots captured from the Linux port. The UI is identical on device; only the map differs — the T-Deck uses the embedded NAV vector renderer, not the OSM-Bright style shown here.*
+
+---
+## What's New in v2.10.2
+- **Much faster message navigation** - Building the conversation list re-read every conversation file in full, just to show the last line of each. With hundreds of correspondents this took close to a minute per screen change. Previews are now cached in PSRAM and validated by file mtime: an unchanged conversation is not read at all, and a changed one only has its last 256 bytes read. Thanks to @n7uv for the report.
 
 ---
 ## What's New in v2.10.1
