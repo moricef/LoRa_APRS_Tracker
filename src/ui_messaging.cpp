@@ -66,8 +66,15 @@ static lv_obj_t *compose_return_screen = nullptr;
 // Conversation screen variables
 static lv_obj_t *screen_conversation = nullptr;
 static lv_obj_t *conversation_list = nullptr;
+static lv_obj_t *conversation_title_label = nullptr;
+static lv_obj_t *btn_conversation_reply_global = nullptr;
+static lv_obj_t *lbl_conversation_reply_global = nullptr;
 static String current_conversation_callsign = "";
 static int pending_conversation_msg_delete = -1;
+static bool pending_conversation_batch_delete = false;
+static std::vector<int> pending_conversation_delete_indices;
+static std::vector<int> selected_conversation_msg_indices;
+static bool conversation_selection_mode = false;
 static bool conversation_msg_longpress_handled = false;
 static lv_obj_t *conversation_confirm_msgbox = nullptr;
 static lv_obj_t *msgbox_to_delete = nullptr;
@@ -133,6 +140,7 @@ static void populate_frames_list(lv_obj_t *list);
 static void populate_stats(lv_obj_t *cont);
 static void create_conversation_screen(const String &callsign);
 static void refresh_conversation_messages();
+static void update_conversation_selection_ui();
 static void show_contact_edit_screen(const Contact *contact);
 static void show_message_detail(const char *msg);
 static void show_delete_confirmation(const char *message, int msg_index);
@@ -487,6 +495,68 @@ static void populate_msg_list(lv_obj_t *list, int type) {
 // Conversation Screen
 // =============================================================================
 
+static bool is_conversation_msg_selected(int msg_index) {
+    return std::find(selected_conversation_msg_indices.begin(),
+                     selected_conversation_msg_indices.end(),
+                     msg_index) != selected_conversation_msg_indices.end();
+}
+
+static void set_conversation_msg_selected(lv_obj_t *bubble, int msg_index, bool selected) {
+    if (selected) {
+        if (!is_conversation_msg_selected(msg_index)) {
+            selected_conversation_msg_indices.push_back(msg_index);
+        }
+        lv_obj_set_style_border_width(bubble, 3, 0);
+        lv_obj_set_style_border_color(bubble, lv_color_hex(0xffd166), 0);
+    } else {
+        selected_conversation_msg_indices.erase(
+            std::remove(selected_conversation_msg_indices.begin(),
+                        selected_conversation_msg_indices.end(), msg_index),
+            selected_conversation_msg_indices.end());
+        lv_obj_set_style_border_width(bubble, 0, 0);
+    }
+
+    conversation_selection_mode = !selected_conversation_msg_indices.empty();
+    update_conversation_selection_ui();
+}
+
+static void clear_conversation_selection() {
+    selected_conversation_msg_indices.clear();
+    conversation_selection_mode = false;
+    update_conversation_selection_ui();
+}
+
+static void update_conversation_selection_ui() {
+    if (conversation_title_label) {
+        if (conversation_selection_mode) {
+            char buf[24];
+            snprintf(buf, sizeof(buf), "%d selected",
+                     (int)selected_conversation_msg_indices.size());
+            lv_label_set_text(conversation_title_label, buf);
+        } else {
+            lv_label_set_text(conversation_title_label, current_conversation_callsign.c_str());
+        }
+    }
+
+    if (btn_conversation_reply_global) {
+        lv_obj_set_style_bg_color(btn_conversation_reply_global,
+                                  conversation_selection_mode ? lv_color_hex(0xff4444)
+                                                              : lv_color_hex(0x89ddff),
+                                  0);
+    }
+
+    if (lbl_conversation_reply_global) {
+        lv_label_set_text(lbl_conversation_reply_global,
+                          conversation_selection_mode ? LV_SYMBOL_TRASH : LV_SYMBOL_EDIT);
+        lv_obj_center(lbl_conversation_reply_global);
+        // Le recentrage deplace le label sans invalider la zone qu'il occupait :
+        // sans cela l'ancien glyphe reste affiche sous le nouveau.
+        if (btn_conversation_reply_global) {
+            lv_obj_invalidate(btn_conversation_reply_global);
+        }
+    }
+}
+
 static void delete_msgbox_timer_cb(lv_timer_t *timer) {
     if (msgbox_to_delete && lv_obj_is_valid(msgbox_to_delete)) {
         lv_obj_del(msgbox_to_delete);
@@ -513,14 +583,22 @@ static void confirm_conversation_delete_cb(lv_event_t *e) {
 
     need_conversation_refresh = false;
     if (btn_text && strcmp(btn_text, "Yes") == 0) {
-        MSG_Utils::deleteMessageFromConversation(current_conversation_callsign,
-                                                 pending_conversation_msg_delete);
+        if (pending_conversation_batch_delete) {
+            MSG_Utils::deleteMessagesFromConversation(current_conversation_callsign,
+                                                      pending_conversation_delete_indices);
+        } else {
+            MSG_Utils::deleteMessageFromConversation(current_conversation_callsign,
+                                                     pending_conversation_msg_delete);
+        }
+        clear_conversation_selection();
         need_conversation_refresh = true;
     }
 
     msgbox_to_delete = conversation_confirm_msgbox;
     conversation_confirm_msgbox = nullptr;
     pending_conversation_msg_delete = -1;
+    pending_conversation_batch_delete = false;
+    pending_conversation_delete_indices.clear();
     lv_timer_create(delete_msgbox_timer_cb, 10, NULL);
 }
 
@@ -529,6 +607,8 @@ static void show_conversation_delete_confirmation(int msg_index) {
         return;
 
     pending_conversation_msg_delete = msg_index;
+    pending_conversation_batch_delete = false;
+    pending_conversation_delete_indices.clear();
 
     static const char *btns[] = {"Yes", "No", ""};
     conversation_confirm_msgbox = lv_msgbox_create(
@@ -542,17 +622,50 @@ static void show_conversation_delete_confirmation(int msg_index) {
                         LV_EVENT_VALUE_CHANGED, NULL);
 }
 
+static void show_conversation_delete_selected_confirmation() {
+    if (conversation_confirm_msgbox != nullptr ||
+        selected_conversation_msg_indices.empty()) {
+        return;
+    }
+
+    pending_conversation_msg_delete = -1;
+    pending_conversation_batch_delete = true;
+    pending_conversation_delete_indices = selected_conversation_msg_indices;
+
+    static const char *btns[] = {"Yes", "No", ""};
+    char message[48];
+    snprintf(message, sizeof(message), "Delete %d selected messages?",
+             (int)pending_conversation_delete_indices.size());
+    conversation_confirm_msgbox = lv_msgbox_create(
+        lv_layer_top(), "Delete messages?", message, btns, false);
+    lv_obj_set_style_bg_color(conversation_confirm_msgbox, lv_color_hex(0x1a1a2e), 0);
+    lv_obj_set_style_bg_opa(conversation_confirm_msgbox, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(conversation_confirm_msgbox, lv_color_hex(0xffffff), LV_PART_MAIN);
+    lv_obj_set_width(conversation_confirm_msgbox, 250);
+    lv_obj_center(conversation_confirm_msgbox);
+    lv_obj_add_event_cb(conversation_confirm_msgbox, confirm_conversation_delete_cb,
+                        LV_EVENT_VALUE_CHANGED, NULL);
+}
+
 static void conversation_msg_longpress(lv_event_t *e) {
     int msg_index = (int)(intptr_t)lv_event_get_user_data(e);
     ESP_LOGD(TAG, "Conversation message long-press: index %d", msg_index);
     conversation_msg_longpress_handled = true;
-    show_conversation_delete_confirmation(msg_index);
+    conversation_selection_mode = true;
+    set_conversation_msg_selected(lv_event_get_target(e), msg_index,
+                                  !is_conversation_msg_selected(msg_index));
 }
 
 static void conversation_msg_clicked(lv_event_t *e) {
     if (conversation_msg_longpress_handled) {
         conversation_msg_longpress_handled = false;
         return;
+    }
+
+    if (conversation_selection_mode) {
+        int msg_index = (int)(intptr_t)lv_event_get_user_data(e);
+        set_conversation_msg_selected(lv_event_get_target(e), msg_index,
+                                      !is_conversation_msg_selected(msg_index));
     }
 }
 
@@ -623,6 +736,8 @@ static void refresh_conversation_messages() {
 }
 
 static void btn_conversation_back_clicked(lv_event_t *e) {
+    selected_conversation_msg_indices.clear();
+    conversation_selection_mode = false;
     if (screen_msg) {
         if (list_aprs_global) {
             populate_msg_list(list_aprs_global, 0);
@@ -634,6 +749,12 @@ static void btn_conversation_back_clicked(lv_event_t *e) {
 static void btn_conversation_reply_clicked(lv_event_t *e);
 
 static void create_conversation_screen(const String &callsign) {
+    // Changer de correspondant invalide la selection : les index sont relatifs
+    // au fichier de la conversation affichee.
+    if (current_conversation_callsign != callsign) {
+        selected_conversation_msg_indices.clear();
+        conversation_selection_mode = false;
+    }
     current_conversation_callsign = callsign;
 
     bool isRefresh = (screen_conversation != nullptr && lv_scr_act() == screen_conversation);
@@ -667,6 +788,7 @@ static void create_conversation_screen(const String &callsign) {
     lv_obj_set_style_text_color(title, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_18, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+    conversation_title_label = title;   // affiche "N selected" en mode selection
 
     // Reply button
     lv_obj_t *btn_reply = lv_btn_create(title_bar);
@@ -677,6 +799,12 @@ static void create_conversation_screen(const String &callsign) {
     lv_obj_t *lbl_reply = lv_label_create(btn_reply);
     lv_label_set_text(lbl_reply, LV_SYMBOL_EDIT);
     lv_obj_center(lbl_reply);
+
+    // Memorise le bouton et son label : update_conversation_selection_ui() les
+    // bascule en corbeille rouge des qu'un message est selectionne. Sans ces
+    // affectations les pointeurs restaient nuls et le bouton ne changeait jamais.
+    btn_conversation_reply_global = btn_reply;
+    lbl_conversation_reply_global = lbl_reply;
 
     // Chat container
     conversation_list = lv_obj_create(screen_conversation);
@@ -758,6 +886,10 @@ static void create_conversation_screen(const String &callsign) {
         }
         lv_scr_load_anim(screen_conversation, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
     }
+    // L'ecran vient d'etre reconstruit avec le crayon par defaut : reapplique
+    // l'etat de selection sur les nouveaux objets.
+    update_conversation_selection_ui();
+
     ESP_LOGD(TAG, "Conversation screen created for %s with %d messages",
                   callsign.c_str(), messages.size());
 }
@@ -1578,6 +1710,13 @@ void createComposeScreen() {
 
 // Reply button uses compose
 static void btn_conversation_reply_clicked(lv_event_t *e) {
+    // Bouton unique : crayon en mode normal, corbeille en mode selection.
+    // L'icone changeait mais pas l'action, faute de branchement ici.
+    if (conversation_selection_mode && !selected_conversation_msg_indices.empty()) {
+        show_conversation_delete_selected_confirmation();
+        return;
+    }
+
     if (current_conversation_callsign.length() > 0) {
         createComposeScreen();
         compose_screen_active = true;

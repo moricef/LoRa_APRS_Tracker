@@ -982,8 +982,7 @@ namespace MSG_Utils {
         return changed;
     }
 
-    bool deleteMessageFromConversation(const String& callsign, int index) {
-        // Load messages from conversation file
+    bool deleteMessagesFromConversation(const String& callsign, const std::vector<int>& indices) {
         String filename = "/conversations/" + callsign + ".txt";
 
         if (!STORAGE_Utils::fileExists(filename)) {
@@ -994,22 +993,45 @@ namespace MSG_Utils {
         // Load all messages
         std::vector<String> messages = getMessagesForContact(callsign);
 
-        if (index < 0 || index >= (int)messages.size()) {
-            ESP_LOGW(TAG, "Invalid message index %d for %s", index, callsign.c_str());
+        std::vector<uint8_t> removeMask(messages.size(), 0);
+        int deleteCount = 0;
+        for (int index : indices) {
+            if (index < 0 || index >= (int)messages.size()) {
+                ESP_LOGW(TAG, "Invalid message index %d for %s", index, callsign.c_str());
+                continue;
+            }
+            if (!removeMask[index]) {
+                removeMask[index] = 1;
+                deleteCount++;
+            }
+        }
+
+        if (deleteCount == 0) {
             return false;
         }
 
-        // Remove message at index
-        messages.erase(messages.begin() + index);
+        std::vector<String> kept;
+        kept.reserve(messages.size() - deleteCount);
+        for (size_t i = 0; i < messages.size(); i++) {
+            if (!removeMask[i]) {
+                kept.push_back(messages[i]);
+            }
+        }
 
-        if (!rewriteLinesFile(filename, messages)) {
+        if (!rewriteLinesFile(filename, kept)) {
             ESP_LOGW(TAG, "Conversation delete kept RAM state but failed to persist %s", filename.c_str());
         }
 
-        ESP_LOGI(TAG, "Deleted message %d from conversation with %s, %d remaining",
-                   index, callsign.c_str(), messages.size());
+        ESP_LOGI(TAG, "Deleted %d messages from conversation with %s, %d remaining",
+                 deleteCount, callsign.c_str(), kept.size());
         clampUnreadConversation(callsign);
         return true;
+    }
+
+    bool deleteMessageFromConversation(const String& callsign, int index) {
+        std::vector<int> indices;
+        indices.push_back(index);
+        return deleteMessagesFromConversation(callsign, indices);
     }
 
     void saveNewMessage(uint8_t typeMessage, const String& station, const String& newMessage) {

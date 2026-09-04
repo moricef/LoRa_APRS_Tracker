@@ -55,6 +55,7 @@ namespace MSG_Utils {
     void    deleteFile(uint8_t typeOfFile);
     bool    deleteMessageByIndex(uint8_t typeOfMessage, int index);
     bool    deleteConversation(const String& callsign);
+    bool    deleteMessagesFromConversation(const String& callsign, const std::vector<int>& indices);
     bool    deleteMessageFromConversation(const String& callsign, int index);
     void    saveToConversation(const String& callsign, const String& message, bool outgoing);
     void    saveNewMessage(uint8_t typeMessage, const String& station, const String& newMessage);
