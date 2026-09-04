@@ -91,7 +91,7 @@ static lv_obj_t *confirm_msgbox_to_delete = nullptr;
 static int pending_delete_msg_index = -1;
 static String pending_delete_conversation_callsign = "";
 static bool msg_longpress_handled = false;
-static bool need_aprs_list_refresh = false;
+static int pending_delete_refresh_type = -1;
 
 // Stats tab persistent widgets
 static lv_obj_t *stats_title_lbl = nullptr;
@@ -249,16 +249,17 @@ static void delete_confirm_msgbox_timer_cb(lv_timer_t *timer) {
     lv_obj_invalidate(lv_layer_top());
     lv_refr_now(NULL);
 
-    if (need_aprs_list_refresh) {
-        if (list_aprs_global) {
+    if (pending_delete_refresh_type >= 0) {
+        if (pending_delete_refresh_type == 0 && list_aprs_global) {
             ESP_LOGD(TAG, "Refreshing APRS list after delete");
             populate_msg_list(list_aprs_global, 0);
-        }
-        if (list_wlnk_global) {
+        } else if (pending_delete_refresh_type == 1 && list_wlnk_global) {
+            ESP_LOGD(TAG, "Refreshing Winlink list after delete");
             populate_msg_list(list_wlnk_global, 1);
         }
-        refreshUnreadBadges();
-        need_aprs_list_refresh = false;
+        update_badge_label(badge_aprs_unread, MSG_Utils::getUnreadAPRSCount());
+        update_badge_label(badge_wlnk_unread, MSG_Utils::getUnreadWLNKCount());
+        pending_delete_refresh_type = -1;
     }
 
     lv_timer_del(timer);
@@ -273,22 +274,24 @@ static void confirm_delete_cb(lv_event_t *e) {
     ESP_LOGI(TAG, "confirm_delete_cb: btn=%s, pending_index=%d",
              btn_text ? btn_text : "NULL", pending_delete_msg_index);
 
-    need_aprs_list_refresh = false;
+    pending_delete_refresh_type = -1;
     if (btn_text && strcmp(btn_text, "Yes") == 0) {
         if (pending_delete_msg_index == -2) {
             ESP_LOGI(TAG, "Deleting APRS conversation %s",
                      pending_delete_conversation_callsign.c_str());
             MSG_Utils::deleteConversation(pending_delete_conversation_callsign);
+            pending_delete_refresh_type = 0;
         } else if (pending_delete_msg_index == -1) {
             ESP_LOGI(TAG, "Deleting ALL messages type %d", current_msg_type);
             if (current_msg_type == 1) {
                 MSG_Utils::deleteFile(current_msg_type);
+                pending_delete_refresh_type = 1;
             }
         } else {
             MSG_Utils::deleteMessageByIndex(current_msg_type, pending_delete_msg_index);
+            pending_delete_refresh_type = current_msg_type;
         }
-        need_aprs_list_refresh = true;
-        ESP_LOGD(TAG, "need_aprs_list_refresh set to true");
+        ESP_LOGD(TAG, "pending_delete_refresh_type=%d", pending_delete_refresh_type);
     }
 
     confirm_msgbox_to_delete = confirm_msgbox;

@@ -278,6 +278,41 @@ namespace MSG_Utils {
         writeFile.close();
     }
 
+    static bool rewriteLinesFile(const String& filename, const std::vector<String>& lines) {
+        STORAGE_Utils::removeFile(filename);
+        if (lines.empty()) {
+            return true;
+        }
+
+        File file = STORAGE_Utils::openFile(filename, FILE_WRITE);
+        if (!file) {
+            ESP_LOGE(TAG, "Failed to rewrite %s", filename.c_str());
+            return false;
+        }
+
+        String chunk;
+        chunk.reserve(2048);
+        bool ok = true;
+        for (const String& line : lines) {
+            const size_t needed = line.length() + 1;
+            if (chunk.length() > 0 && chunk.length() + needed > 2048) {
+                ok = file.write((const uint8_t*)chunk.c_str(), chunk.length()) == chunk.length();
+                chunk = "";
+                if (!ok) {
+                    break;
+                }
+            }
+            chunk += line;
+            chunk += '\n';
+        }
+
+        if (ok && chunk.length() > 0) {
+            ok = file.write((const uint8_t*)chunk.c_str(), chunk.length()) == chunk.length();
+        }
+        file.close();
+        return ok;
+    }
+
     // Clean old entries from deduplication buffer
     static void cleanRecentMessagesBuffer() {
         uint32_t now = millis();
@@ -823,11 +858,8 @@ namespace MSG_Utils {
     }
 
     bool deleteMessageByIndex(uint8_t typeOfMessage, int index) {
-        // Load messages first
-        loadMessagesFromMemory(typeOfMessage);
-
         std::vector<String>* messages = nullptr;
-        const char* filename = nullptr;
+        String filename;
         int* numMessages = nullptr;
 
         if (typeOfMessage == 0) {
@@ -843,6 +875,10 @@ namespace MSG_Utils {
         }
 
         if (index < 0 || index >= (int)messages->size()) {
+            loadMessagesFromMemory(typeOfMessage);
+        }
+
+        if (index < 0 || index >= (int)messages->size()) {
             ESP_LOGW(TAG, "Invalid message index %d", index);
             return false;
         }
@@ -851,17 +887,8 @@ namespace MSG_Utils {
         messages->erase(messages->begin() + index);
         (*numMessages)--;
 
-        // Rewrite the file with remaining messages
-        STORAGE_Utils::removeFile(filename);
-
-        if (messages->size() > 0) {
-            File file = STORAGE_Utils::openFile(filename, FILE_WRITE);
-            if (file) {
-                for (const String& msg : *messages) {
-                    file.println(msg);
-                }
-                file.close();
-            }
+        if (!rewriteLinesFile(filename, *messages)) {
+            ESP_LOGW(TAG, "Message delete kept RAM state but failed to persist %s", filename.c_str());
         }
 
         ESP_LOGI(TAG, "Deleted message %d, %d remaining", index, messages->size());
@@ -975,17 +1002,8 @@ namespace MSG_Utils {
         // Remove message at index
         messages.erase(messages.begin() + index);
 
-        // Rewrite the file
-        STORAGE_Utils::removeFile(filename);
-
-        if (messages.size() > 0) {
-            File file = STORAGE_Utils::openFile(filename, FILE_WRITE);
-            if (file) {
-                for (const String& msg : messages) {
-                    file.println(msg);
-                }
-                file.close();
-            }
+        if (!rewriteLinesFile(filename, messages)) {
+            ESP_LOGW(TAG, "Conversation delete kept RAM state but failed to persist %s", filename.c_str());
         }
 
         ESP_LOGI(TAG, "Deleted message %d from conversation with %s, %d remaining",
