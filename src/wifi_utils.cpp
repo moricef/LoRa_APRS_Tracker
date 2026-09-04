@@ -20,6 +20,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_task_wdt.h>
+#include <esp_netif.h>
 #include "configuration.h"
 #include "wifi_utils.h"
 #include "web_utils.h"
@@ -152,6 +153,28 @@ namespace WIFI_Utils {
         startConnectionAttempt(wifiCurrentNetworkIndex + 1);
     }
 
+    // Pose les DNS publics sans desactiver DHCP.
+    static void setPublicDNS() {
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (!netif) {
+            ESP_LOGW(TAG, "STA netif introuvable, DNS inchanges");
+            return;
+        }
+        esp_netif_dns_info_t dns;
+        dns.ip.type = ESP_IPADDR_TYPE_V4;
+
+        dns.ip.u_addr.ip4.addr = esp_netif_htonl(0x01010101);   // 1.1.1.1 Cloudflare
+        esp_err_t err = esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns);
+
+        dns.ip.u_addr.ip4.addr = esp_netif_htonl(0x08080808);   // 8.8.8.8 Google
+        if (err == ESP_OK) {
+            err = esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns);
+        }
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "esp_netif_set_dns_info: 0x%04x", err);
+        }
+    }
+
     // Called when connection succeeds
     void onConnectionSuccess() {
         WiFiConnected = true;
@@ -161,10 +184,14 @@ namespace WIFI_Utils {
         esp_wifi_set_ps(WIFI_PS_MIN_MODEM);  // Enable modem sleep for coexistence
 
         // Use public DNS servers (Cloudflare + Google) for reliable resolution
-        // DHCP-provided DNS on some routers is slow or unreliable for the ESP32
-        IPAddress dns1(1, 1, 1, 1);       // Cloudflare
-        IPAddress dns2(8, 8, 8, 8);       // Google
-        WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), dns1, dns2);
+        // DHCP-provided DNS on some routers is slow or unreliable for the ESP32.
+        //
+        // NE PAS utiliser WiFi.config(WiFi.localIP(), ...) ici : cet appel arrete
+        // le client DHCP (esp_netif_dhcpc_stop) et positionne _useStaticIp, qui est
+        // une static RAM jamais remise a false. Tous les WiFi.begin() suivants
+        // gardent alors l'IP du reseau precedent -> IP fantome apres changement d'AP.
+        // On pose donc uniquement les DNS via l'API esp_netif, sans toucher a l'IP.
+        setPublicDNS();
 
         ESP_LOGI(TAG, "Connected to '%s'! IP=%s RSSI=%d dBm DNS=1.1.1.1/8.8.8.8",
             Config.wifiAPs[wifiCurrentNetworkIndex].ssid.c_str(),
@@ -315,7 +342,11 @@ namespace WIFI_Utils {
     }
 
     bool isConnected() {
-        return WiFiConnected;
+        // Etat reel de la pile, pas le drapeau WiFiConnected : celui-ci reste vrai
+        // pendant toute une perte de liaison (30 s avant reaction, remis a false
+        // seulement apres echec de tous les reseaux). Sur un hotspot mobile en
+        // deplacement, cela faisait ecrire APRS-IS dans un socket deja mort.
+        return (WiFi.status() == WL_CONNECTED);
     }
 
     // Non-blocking AP mode for LVGL UI
