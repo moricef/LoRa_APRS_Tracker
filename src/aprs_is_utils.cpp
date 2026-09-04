@@ -131,6 +131,17 @@ namespace APRS_IS_Utils {
     }
 
     void upload(const String& packet) {
+        // Le lien WiFi est teste en premier : sur une coupure brutale (hotspot
+        // mobile hors de portee), aucun FIN/RST n'arrive et WiFiClient::connected()
+        // continue de repondre vrai sur un socket mort. Sans ce test, les balises
+        // partaient dans le vide sans que rien ne le signale.
+        if (!WIFI_Utils::isConnected()) {
+            ESP_LOGW(TAG, "WiFi link down, cannot upload");
+            aprsIsConnected = false;
+            passcodeValid = false;
+            return;
+        }
+
         if (!aprsIsConnected || !aprsIsClient.connected()) {
             ESP_LOGW(TAG, "Not connected, cannot upload");
             return;
@@ -141,7 +152,18 @@ namespace APRS_IS_Utils {
             return;
         }
 
-        aprsIsClient.print(packet + "\r\n");
+        String line = packet + "\r\n";
+        size_t written = aprsIsClient.print(line);
+        if (written != line.length()) {
+            // Ecriture partielle ou nulle : la session est perdue, on force une
+            // reconnexion plutot que de croire la balise transmise.
+            ESP_LOGW(TAG, "Upload failed (%u/%u bytes), dropping session",
+                          (unsigned)written, (unsigned)line.length());
+            aprsIsClient.stop();
+            aprsIsConnected = false;
+            passcodeValid = false;
+            return;
+        }
         ESP_LOGI(TAG, "Uploaded: %s", packet.c_str());
     }
 

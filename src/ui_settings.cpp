@@ -1097,11 +1097,17 @@ static void update_wifi_screen_status() {
         }
     }
 
+    // WiFiConnected reste vrai pendant toute la perte de liaison : le firmware
+    // n'agit qu'apres 30 s et ne remet le drapeau a false qu'apres echec de tous
+    // les reseaux. On interroge donc la pile directement, sinon l'ecran affiche
+    // la derniere IP et le dernier RSSI connus alors que l'AP est eteint.
+    const bool wifiLinkUp = (WiFi.status() == WL_CONNECTED);
+
     if (wifi_status_label) {
         if (WiFiUserDisabled) {
             lv_label_set_text(wifi_status_label, "Disabled");
             lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xff6b6b), 0);
-        } else if (WiFiConnected) {
+        } else if (wifiLinkUp) {
             lv_label_set_text(wifi_status_label, "Connected");
             lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(UIColors::TEXT_GREEN), 0);
         } else if (WiFiEcoMode) {
@@ -1114,7 +1120,7 @@ static void update_wifi_screen_status() {
     }
 
     if (wifi_ip_row) {
-        if (WiFiConnected && !WiFiUserDisabled) {
+        if (wifiLinkUp && !WiFiUserDisabled) {
             lv_obj_clear_flag(wifi_ip_row, LV_OBJ_FLAG_HIDDEN);
             if (wifi_ip_label) {
                 lv_label_set_text(wifi_ip_label, WiFi.localIP().toString().c_str());
@@ -1125,7 +1131,7 @@ static void update_wifi_screen_status() {
     }
 
     if (wifi_rssi_row) {
-        if (WiFiConnected && !WiFiUserDisabled) {
+        if (wifiLinkUp && !WiFiUserDisabled) {
             lv_obj_clear_flag(wifi_rssi_row, LV_OBJ_FLAG_HIDDEN);
             if (wifi_rssi_label) {
                 char rssi_buf[16];
@@ -1433,7 +1439,7 @@ void UISettings::createWifiScreen() {
     if (WiFiUserDisabled) {
         lv_label_set_text(wifi_status_label, "OFF (disabled)");
         lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xff6b6b), 0);
-    } else if (WiFiConnected) {
+    } else if (WiFi.status() == WL_CONNECTED) {   // etat reel, pas le drapeau
         lv_label_set_text(wifi_status_label, "Connected");
         lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(UIColors::TEXT_GREEN), 0);
     } else if (WiFiEcoMode) {
