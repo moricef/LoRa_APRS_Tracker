@@ -517,8 +517,28 @@ namespace MapEngine {
         if (renderLock) xSemaphoreTake(renderLock, portMAX_DELAY);
 
         ESP_LOGI(TAG, "Freeing NAV pool to restore raster pool");
-        // 1. Clear NAV cache completely to ensure all slots are marked free
+        // 1. Clear NAV cache completely to ensure all slots are marked free.
+        //    Chaque entree doit passer par releaseNavSlot AVANT que les slots du
+        //    pool ne soient liberes : un navCache.clear() nu perdait les blocs
+        //    alloues par la branche de secours ps_malloc de readNpkTileData
+        //    (pool sature ou tuile > NAV_POOL_SLOT_SIZE), dont le seul pointeur
+        //    disparaissait avec le vector. releaseNavSlot distingue les deux cas.
+        size_t leaked = 0;
+        for (auto& e : navCache) {
+            if (e.data) {
+                bool fromPool = false;
+                for (int i = 0; i < NAV_POOL_MAX_SLOTS; ++i) {
+                    if (_navPool[i] == e.data) { fromPool = true; break; }
+                }
+                if (!fromPool) leaked += e.size;
+                releaseNavSlot(e.data);
+                e.data = nullptr;
+            }
+        }
         navCache.clear();
+        if (leaked) {
+            ESP_LOGI(TAG, "Released %u bytes of ps_malloc fallback tiles", (unsigned)leaked);
+        }
 
         // 2. Free NAV slots
         for (int i = 0; i < NAV_POOL_MAX_SLOTS; ++i) {
