@@ -602,26 +602,6 @@ static void confirm_conversation_delete_cb(lv_event_t *e) {
     lv_timer_create(delete_msgbox_timer_cb, 10, NULL);
 }
 
-static void show_conversation_delete_confirmation(int msg_index) {
-    if (conversation_confirm_msgbox != nullptr)
-        return;
-
-    pending_conversation_msg_delete = msg_index;
-    pending_conversation_batch_delete = false;
-    pending_conversation_delete_indices.clear();
-
-    static const char *btns[] = {"Yes", "No", ""};
-    conversation_confirm_msgbox = lv_msgbox_create(
-        lv_layer_top(), "Delete message?", "Delete this message?", btns, false);
-    lv_obj_set_style_bg_color(conversation_confirm_msgbox, lv_color_hex(0x1a1a2e), 0);
-    lv_obj_set_style_bg_opa(conversation_confirm_msgbox, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(conversation_confirm_msgbox, lv_color_hex(0xffffff), LV_PART_MAIN);
-    lv_obj_set_width(conversation_confirm_msgbox, 240);
-    lv_obj_center(conversation_confirm_msgbox);
-    lv_obj_add_event_cb(conversation_confirm_msgbox, confirm_conversation_delete_cb,
-                        LV_EVENT_VALUE_CHANGED, NULL);
-}
-
 static void show_conversation_delete_selected_confirmation() {
     if (conversation_confirm_msgbox != nullptr ||
         selected_conversation_msg_indices.empty()) {
@@ -778,6 +758,10 @@ static void create_conversation_screen(const String &callsign) {
     lv_obj_align(btn_back, LV_ALIGN_LEFT_MID, 5, 0);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x82aaff), 0);
     lv_obj_add_event_cb(btn_back, btn_conversation_back_clicked, LV_EVENT_CLICKED, NULL);
+    // Cible tactile elargie : un bouton de 28 px centre dans un bandeau de 35
+    // occupe y=3,5 a 31,5. Les appuis dans les derniers pixels du bandeau
+    // paraissent viser la fleche mais ne touchent aucun objet cliquable.
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, LV_SYMBOL_LEFT);
     lv_obj_center(lbl_back);
@@ -796,6 +780,7 @@ static void create_conversation_screen(const String &callsign) {
     lv_obj_align(btn_reply, LV_ALIGN_RIGHT_MID, -5, 0);
     lv_obj_set_style_bg_color(btn_reply, lv_color_hex(0x89ddff), 0);
     lv_obj_add_event_cb(btn_reply, btn_conversation_reply_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_reply, 8);
     lv_obj_t *lbl_reply = lv_label_create(btn_reply);
     lv_label_set_text(lbl_reply, LV_SYMBOL_EDIT);
     lv_obj_center(lbl_reply);
@@ -1081,6 +1066,7 @@ static void show_contact_edit_screen(const Contact *contact) {
         lv_obj_align(btn_back, LV_ALIGN_LEFT_MID, 0, 0);
         lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x444444), 0);
         lv_obj_add_event_cb(btn_back, btn_contact_cancel_clicked, LV_EVENT_CLICKED, NULL);
+        lv_obj_set_ext_click_area(btn_back, 8);
         lv_obj_t *lbl_back = lv_label_create(btn_back);
         lv_label_set_text(lbl_back, LV_SYMBOL_LEFT);
         lv_obj_center(lbl_back);
@@ -1635,6 +1621,7 @@ void createComposeScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x16213e), 0);
     lv_obj_add_event_cb(btn_back, btn_compose_back_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
     lv_obj_center(lbl_back);
@@ -1773,6 +1760,7 @@ void createMsgScreen() {
     lv_obj_set_size(btn_back, 50, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x16213e), 0);
     lv_obj_add_event_cb(btn_back, btn_back_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, LV_SYMBOL_LEFT);
     lv_obj_center(lbl_back);
@@ -1908,6 +1896,7 @@ static void createFramesScreen() {
     lv_obj_set_size(btn_back, 50, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x16213e), 0);
     lv_obj_add_event_cb(btn_back, btn_back_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, LV_SYMBOL_LEFT);
     lv_obj_center(lbl_back);

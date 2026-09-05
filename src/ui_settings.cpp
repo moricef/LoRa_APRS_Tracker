@@ -302,6 +302,7 @@ void UISettings::createSetupScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_add_event_cb(btn_back, btn_back_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
     lv_obj_center(lbl_back);
@@ -400,6 +401,7 @@ void UISettings::createFreqScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_add_event_cb(btn_back, btn_back_to_setup_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
     lv_obj_center(lbl_back);
@@ -502,6 +504,7 @@ void UISettings::createCallsignScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_add_event_cb(btn_back, btn_back_to_setup_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
     lv_obj_center(lbl_back);
@@ -680,6 +683,7 @@ void UISettings::createDisplayScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_add_event_cb(btn_back, btn_back_to_setup_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
     lv_obj_center(lbl_back);
@@ -874,6 +878,7 @@ void UISettings::createSoundScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_add_event_cb(btn_back, btn_back_to_setup_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
     lv_obj_center(lbl_back);
@@ -1186,6 +1191,7 @@ void UISettings::createRepeaterScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_add_event_cb(btn_back, btn_back_to_setup_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
     lv_obj_center(lbl_back);
@@ -1301,6 +1307,7 @@ void UISettings::createRepeaterScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_add_event_cb(btn_back, btn_back_to_setup_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
     lv_obj_center(lbl_back);
@@ -1375,6 +1382,7 @@ void UISettings::createWifiScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_add_event_cb(btn_back, btn_wifi_back_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
     lv_obj_center(lbl_back);
@@ -1625,6 +1633,7 @@ void UISettings::createBluetoothScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_add_event_cb(btn_back, btn_bluetooth_back_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
     lv_obj_center(lbl_back);
@@ -2051,6 +2060,7 @@ void UISettings::createAboutScreen() {
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
     lv_obj_add_event_cb(btn_back, btn_back_to_setup_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, LV_SYMBOL_LEFT);
     lv_obj_center(lbl_back);
