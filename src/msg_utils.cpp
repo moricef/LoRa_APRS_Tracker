@@ -21,6 +21,10 @@
 #include <algorithm>
 #include <utility>
 #include <vector>
+#include <map>
+#include <set>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "notification_utils.h"
 #include "bluetooth_utils.h"
 #include "storage_utils.h"
@@ -613,48 +617,67 @@ namespace MSG_Utils {
         return previewOut;
     }
 
+    // Chemin POSIX du dossier des conversations, selon le support monte.
+    // SD.begin() monte sur "/sd", SPIFFS.begin() sur "/spiffs" ; STORAGE_Utils
+    // prefixe "/LoRa_Tracker/Messages" aux chemins relatifs sur SD uniquement.
+    static const char* conversationsDirPath() {
+        return STORAGE_Utils::isSDAvailable()
+                 ? "/sd/LoRa_Tracker/Messages/conversations"
+                 : "/spiffs/conversations";
+    }
+
     std::vector<String> getConversationsList(std::vector<time_t>* outMtimes) {
         std::vector<String> callsigns;
 
-        if (!STORAGE_Utils::fileExists("/conversations")) {
-            ESP_LOGD(TAG, "No /conversations directory found");
+        // Enumeration en POSIX et non via l'API File d'Arduino : chaque
+        // openNextFile() construit un VFSFileImpl qui fait un stat(), un fopen()
+        // et un setvbuf() de 4 Ko, puis getLastWrite() refait un stat() complet
+        // (vfs_api.cpp:295 et :369 — _getStat() ne teste pas si _stat est deja
+        // rempli). On n'a besoin ici que du nom et du mtime : opendir/readdir
+        // plus un seul stat les donnent sans ouvrir un seul fichier. Mesure sur
+        // le materiel de N7UV : 7,3 s pour 192 conversations avec l'ancien code.
+        const char* basePath = conversationsDirPath();
+        DIR* dir = opendir(basePath);
+        if (!dir) {
+            ESP_LOGD(TAG, "No conversations directory at %s", basePath);
             return callsigns;
         }
 
-        File dir = STORAGE_Utils::openFile("/conversations", "r");
-        if (!dir || !dir.isDirectory()) {
-            ESP_LOGW(TAG, "Failed to open /conversations directory");
-            return callsigns;
-        }
-
-        // Collect conversations with their last modification time
         std::vector<std::pair<String, time_t>> conversationsWithTime;
+        // basePath (~40) + separateur + d_name (jusqu a NAME_MAX = 255) + NUL
+        char pathBuf[320];
+        struct dirent* de;
+        while ((de = readdir(dir)) != nullptr) {
+            if (de->d_type == DT_DIR) continue;
 
-        File entry = dir.openNextFile();
-        while (entry) {
-            if (!entry.isDirectory()) {
-                String filename = String(entry.name());
-                // Remove path prefix if present (SD library may return full path)
-                int lastSlash = filename.lastIndexOf('/');
-                if (lastSlash >= 0) {
-                    filename = filename.substring(lastSlash + 1);
-                }
-                // Remove .txt extension
-                if (filename.endsWith(".txt")) {
-                    String callsign = filename.substring(0, filename.length() - 4);
-                    time_t lastWrite = entry.getLastWrite();
-                    conversationsWithTime.push_back(std::make_pair(callsign, lastWrite));
-                    // LOGV et non LOGD : une ligne par conversation coute ~8 ms
-                    // d'ecriture UART bloquante a 115200, soit plusieurs secondes
-                    // par navigation chez un utilisateur ayant des centaines de
-                    // correspondants. Non compile a CORE_DEBUG_LEVEL=4.
-                    ESP_LOGV(TAG, "Found conversation: %s (time: %ld)", callsign.c_str(), lastWrite);
-                }
+            const size_t nameLen = strlen(de->d_name);
+            if (nameLen <= 4) continue;
+            // Comparaison d'extension a la main : <strings.h> (strcasecmp)
+            // apporte aussi index(), qui masque les parametres nommes index
+            // de ce fichier et produit une erreur de compilation obscure.
+            const char* ext = de->d_name + nameLen - 4;
+            if (ext[0] != '.' ||
+                (ext[1] != 't' && ext[1] != 'T') ||
+                (ext[2] != 'x' && ext[2] != 'X') ||
+                (ext[3] != 't' && ext[3] != 'T')) continue;
+
+            time_t lastWrite = 0;
+            struct stat st;
+            snprintf(pathBuf, sizeof(pathBuf), "%s/%s", basePath, de->d_name);
+            if (stat(pathBuf, &st) == 0) {
+                lastWrite = st.st_mtime;
             }
-            entry.close();
-            entry = dir.openNextFile();
+
+            String callsign(de->d_name);
+            callsign.remove(nameLen - 4);   // retire ".txt"
+            conversationsWithTime.push_back(std::make_pair(callsign, lastWrite));
+            // LOGV et non LOGD : une ligne par conversation coute ~8 ms
+            // d'ecriture UART bloquante a 115200, soit plusieurs secondes
+            // par navigation chez un utilisateur ayant des centaines de
+            // correspondants. Non compile a CORE_DEBUG_LEVEL=4.
+            ESP_LOGV(TAG, "Found conversation: %s (time: %ld)", callsign.c_str(), lastWrite);
         }
-        dir.close();
+        closedir(dir);
 
         // Sort by last modification time (most recent first)
         std::sort(conversationsWithTime.begin(), conversationsWithTime.end(),
@@ -662,17 +685,22 @@ namespace MSG_Utils {
                 return a.second > b.second;  // Descending order
             });
 
+        // Index des mtimes : les deux boucles de reconciliation ci-dessous
+        // etaient en O(n^2) sur des String (~37 000 comparaisons a 192 entrees).
+        std::map<String, time_t> mtimeByCallsign;
+        for (const auto& conv : conversationsWithTime) {
+            mtimeByCallsign[conv.first] = conv.second;
+        }
+        std::set<String> alreadyListed;
+
         File orderFile = STORAGE_Utils::openFile("/conversations_order.txt", "r");
         if (orderFile) {
             while (orderFile.available()) {
                 String callsign = orderFile.readStringUntil('\n');
                 callsign.trim();
                 if (callsign.length() > 0 &&
-                    std::find_if(conversationsWithTime.begin(), conversationsWithTime.end(),
-                        [&callsign](const std::pair<String, time_t>& conv) {
-                            return conv.first == callsign;
-                        }) != conversationsWithTime.end() &&
-                    std::find(callsigns.begin(), callsigns.end(), callsign) == callsigns.end()) {
+                    mtimeByCallsign.count(callsign) > 0 &&
+                    alreadyListed.insert(callsign).second) {
                     callsigns.push_back(callsign);
                 }
             }
@@ -681,7 +709,7 @@ namespace MSG_Utils {
 
         // Append conversations not yet present in the persisted order.
         for (const auto& conv : conversationsWithTime) {
-            if (std::find(callsigns.begin(), callsigns.end(), conv.first) == callsigns.end()) {
+            if (alreadyListed.insert(conv.first).second) {
                 callsigns.push_back(conv.first);
             }
         }
@@ -693,11 +721,8 @@ namespace MSG_Utils {
             outMtimes->clear();
             outMtimes->reserve(callsigns.size());
             for (const auto& cs : callsigns) {
-                time_t m = 0;
-                for (const auto& conv : conversationsWithTime) {
-                    if (conv.first == cs) { m = conv.second; break; }
-                }
-                outMtimes->push_back(m);
+                auto it = mtimeByCallsign.find(cs);
+                outMtimes->push_back(it != mtimeByCallsign.end() ? it->second : 0);
             }
         }
         return callsigns;
