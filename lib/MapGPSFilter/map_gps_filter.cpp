@@ -16,6 +16,14 @@
 
 static const char* TAG = "MapGPSFilter";
 
+// Seuils du gel de position (le commentaire annoncait 4 et le code testait 3).
+static const float HDOP_FREEZE_THRESHOLD = 3.0f;
+static const uint8_t MIN_SATELLITES      = 6;
+
+// Vrai tant que la position est gelee faute de signal : ne sert qu'a ne
+// tracer que les transitions.
+static bool signalFreezeActive = false;
+
 MapGPSFilter::MapGPSFilter() {
     _mutex = xSemaphoreCreateMutex();
     reset();
@@ -122,17 +130,35 @@ void MapGPSFilter::updateFilteredOwnPosition(const gps_fix& fix) {
     }
     lastValidTime = now;
 
-    // 2. Poor signal freeze: HDOP > 4 -> unconditional freeze
+    // 2. Poor signal freeze: HDOP > HDOP_FREEZE_THRESHOLD -> unconditional freeze
     //    Speed is unreliable when HDOP is bad (indoor multipath)
-    if (fix.valid.hdop && hdopVal > 3.0f) {
-        ESP_LOGD(TAG, "Poor signal freeze: HDOP=%.1f", hdopVal);
+    if (fix.valid.hdop && hdopVal > HDOP_FREEZE_THRESHOLD) {
+        // Etat stable, pas un evenement : sans ce garde le message sortait a
+        // chaque trame GPS (1 Hz) tant que le signal restait mauvais, noyant
+        // les trames LoRa dans la console.
+        if (!signalFreezeActive) {
+            signalFreezeActive = true;
+            ESP_LOGD(TAG, "Poor signal freeze: HDOP=%.1f", hdopVal);
+        }
         return;
     }
 
-    // 2b. Fallback: no HDOP available and few satellites -> freeze
-    if (!fix.valid.hdop && fix.satellites < 6) {
-        ESP_LOGD(TAG, "No HDOP and few sats (%d) - freeze", fix.satellites);
+    // 2b. Fallback: no HDOP available and fewer than MIN_SATELLITES -> freeze
+    if (!fix.valid.hdop && fix.satellites < MIN_SATELLITES) {
+        if (!signalFreezeActive) {
+            signalFreezeActive = true;
+            ESP_LOGD(TAG, "No HDOP and few sats (%d) - freeze", fix.satellites);
+        }
         return;
+    }
+
+    if (signalFreezeActive) {
+        signalFreezeActive = false;
+        if (fix.valid.hdop) {
+            ESP_LOGD(TAG, "Signal recovered: HDOP=%.1f", hdopVal);
+        } else {
+            ESP_LOGD(TAG, "Signal recovered: %d sats", fix.satellites);
+        }
     }
 
     // 2c. Filtre anti-gigue a l'arret (Jitter Filter)
