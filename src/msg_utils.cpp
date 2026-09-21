@@ -38,6 +38,7 @@
 #include "station_utils.h"
 #include "gps_utils.h"
 #include "display.h"
+#include "mice_utils.h"
 #include "shared_spi_guard.h"
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
@@ -1336,6 +1337,9 @@ namespace MSG_Utils {
         if (packet.text.substring(0,3) == "\x3c\xff\x01") {              // its an APRS packet
             //Serial.println(packet.text); // only for debug
             lastReceivedPacket = APRSPacketLib::processReceivedPacket(packet.text.substring(3),packet.rssi, packet.snr, packet.freqError);
+            if (lastReceivedPacket.type == 4) {
+                lastReceivedPacket.longitude = MicEUtils::normalizeDecodedLongitude(lastReceivedPacket.longitude);
+            }
             if (lastReceivedPacket.sender != currentBeacon->callsign) {
 
                 if (lastReceivedPacket.payload.indexOf("\x3c\xff\x01") != -1) {
