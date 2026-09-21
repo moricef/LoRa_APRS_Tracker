@@ -67,7 +67,6 @@ extern double               lastTxLat;
 extern double               lastTxLng;
 extern double               lastTxDistance;
 
-extern bool                 miceActive;
 extern bool                 smartBeaconActive;
 extern bool                 winlinkCommentState;
 
@@ -433,7 +432,10 @@ namespace STATION_Utils {
         String path = Config.path;
         if (gpsFix.speed_kph() > 200 || gpsFix.alt.whole > 9000) path = ""; // avoid plane speed and altitude
         String packet;
-        if (miceActive) {
+        // Decide from the active profile at the point of transmission. Keeping
+        // this as cached global state made a profile with an empty Mic-E field
+        // inherit the previous profile's mode and transmit 000 (Emergency).
+        if (APRSPacketLib::validateMicE(currentBeacon->micE)) {
             packet = APRSPacketLib::generateMiceGPSBeaconPacket(currentBeacon->micE, currentBeacon->callsign, currentBeacon->symbol, currentBeacon->overlay, path, gpsFix.latitude(), gpsFix.longitude(), gpsFix.heading(), gpsSpeedKnots(), gpsFix.alt.whole);
         } else {
             packet = APRSPacketLib::generateBase91GPSBeaconPacket(currentBeacon->callsign, "APLRT1", path, currentBeacon->overlay, APRSPacketLib::encodeGPSIntoBase91(gpsFix.latitude(), gpsFix.longitude(), gpsFix.heading(), gpsSpeedKnots(), currentBeacon->symbol, Config.sendAltitude, gpsAltFeet(), sendStandingUpdate));

@@ -143,8 +143,6 @@ bool        flashlight              = false;
 bool        digipeaterActive        = false;
 bool        sosActive               = false;
 
-bool        miceActive              = false;
-
 bool        smartBeaconActive       = true;
 
 uint32_t    lastGPSTime             = 0;
@@ -334,7 +332,6 @@ void loop() {
 #endif
             currentBeacon = &Config.beacons[myBeaconsIndex];
         }
-        miceActive = APRSPacketLib::validateMicE(currentBeacon->micE);
     }
 
     SMARTBEACON_Utils::checkSettings(currentBeacon->smartBeaconSetting);
