@@ -31,6 +31,7 @@
 #include <esp_log.h>
 #include "board_pinout.h"
 #include "storage_utils.h"
+#include "shared_spi_guard.h"
 
 static const char *TAG = "Storage";
 
@@ -52,6 +53,12 @@ namespace STORAGE_Utils {
 
     void createDirectoryStructure() {
         if (!sdAvailable) return;
+
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, directory setup skipped");
+            return;
+        }
 
         // Create root directory
         if (!SD.exists(ROOT_DIR)) {
@@ -128,8 +135,18 @@ namespace STORAGE_Utils {
                     sdMounted = SD.begin(BOARD_SDCARD_CS, sdSPI, 4000000);
                 }
             #else
-                // Shared SPI bus with LoRa + display on T-Deck Plus
                 SPI.begin(RADIO_SCLK_PIN, RADIO_MISO_PIN, RADIO_MOSI_PIN);
+                #if defined(TTGO_T_DECK_PLUS) || defined(TTGO_T_DECK_GPS)
+                // The display, SD and LoRa share the same physical bus on the
+                // T-Deck family. 10 MHz leaves more signal-integrity margin than
+                // the previous 20 MHz default, which could mount successfully
+                // and still fail during later writes with some cards/boards.
+                sdMounted = SD.begin(BOARD_SDCARD_CS, SPI, 10000000);
+                if (!sdMounted) {
+                    ESP_LOGW(TAG, "SD init @10MHz failed, retry @4MHz");
+                    sdMounted = SD.begin(BOARD_SDCARD_CS, SPI, 4000000);
+                }
+                #else
                 sdMounted = SD.begin(BOARD_SDCARD_CS, SPI, 20000000);
                 if (!sdMounted) {
                     ESP_LOGW(TAG, "SD init @20MHz failed, retry @10MHz");
@@ -139,6 +156,7 @@ namespace STORAGE_Utils {
                     ESP_LOGW(TAG, "SD init @10MHz failed, retry @4MHz");
                     sdMounted = SD.begin(BOARD_SDCARD_CS, SPI, 4000000);
                 }
+                #endif
             #endif
             if (sdMounted) {
                 sdAvailable = true;
@@ -179,6 +197,8 @@ namespace STORAGE_Utils {
 
     bool fileExists(const String& path) {
         if (sdAvailable) {
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) return false;
             // If path starts with /, use it as-is for SD
             if (path.startsWith("/LoRa_Tracker")) {
                 return SD.exists(path);
@@ -192,6 +212,11 @@ namespace STORAGE_Utils {
 
     File openFile(const String& path, const char* mode) {
         if (sdAvailable) {
+            // Callers that keep the File open must hold SharedSpiGuard for the
+            // complete open/read-or-write/close transaction. This inner guard
+            // also makes one-shot opens safe and is recursive for such callers.
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) return File();
             String sdPath;
             // If path starts with /, use it as-is for SD
             if (path.startsWith("/LoRa_Tracker")) {
@@ -222,6 +247,8 @@ namespace STORAGE_Utils {
 
     bool removeFile(const String& path) {
         if (sdAvailable) {
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) return false;
             if (path.startsWith("/LoRa_Tracker")) {
                 return SD.remove(path);
             }
@@ -233,6 +260,8 @@ namespace STORAGE_Utils {
 
     bool mkdir(const String& path) {
         if (sdAvailable) {
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) return false;
             String sdPath;
             // If path starts with /LoRa_Tracker, use it as-is
             if (path.startsWith("/LoRa_Tracker")) {
@@ -250,6 +279,9 @@ namespace STORAGE_Utils {
     std::vector<String> listFiles(const String& dirPath) {
         std::vector<String> files;
         if (!sdAvailable) return files;
+
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) return files;
 
         File dir = SD.open(dirPath);
         if (!dir || !dir.isDirectory()) {
@@ -271,6 +303,9 @@ namespace STORAGE_Utils {
     std::vector<String> listDirs(const String& dirPath) {
         std::vector<String> dirs;
         if (!sdAvailable) return dirs;
+
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) return dirs;
 
         File dir = SD.open(dirPath);
         if (!dir || !dir.isDirectory()) {
@@ -294,6 +329,8 @@ namespace STORAGE_Utils {
 
     uint64_t getUsedBytes() {
         if (sdAvailable) {
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) return 0;
             return SD.usedBytes();
         }
         return SPIFFS.usedBytes();
@@ -301,6 +338,8 @@ namespace STORAGE_Utils {
 
     uint64_t getTotalBytes() {
         if (sdAvailable) {
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) return 0;
             return SD.totalBytes();
         }
         return SPIFFS.totalBytes();
@@ -317,6 +356,12 @@ namespace STORAGE_Utils {
 
         if (!sdAvailable) {
             ESP_LOGW(TAG, "No SD card, contacts not available");
+            return contactsCache;
+        }
+
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, contacts not loaded");
             return contactsCache;
         }
 
@@ -358,6 +403,12 @@ namespace STORAGE_Utils {
     bool saveContacts(const std::vector<Contact>& contacts) {
         if (!sdAvailable) {
             ESP_LOGW(TAG, "No SD card, cannot save contacts");
+            return false;
+        }
+
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, contacts not saved");
             return false;
         }
 
@@ -482,6 +533,9 @@ namespace STORAGE_Utils {
     void checkFramesLogRotation() {
         if (!sdAvailable) return;
 
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+        if (!spiGuard.acquired()) return;
+
         File file = SD.open(FRAMES_FILE, FILE_READ);
         if (!file) return;
 
@@ -533,6 +587,11 @@ namespace STORAGE_Utils {
 
         // 4. Write to SD card
         if (sdAvailable) {
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) {
+                ESP_LOGW(TAG, "SPI bus busy, frame not persisted");
+                return false;
+            }
             checkFramesLogRotation();
             File file = SD.open(FRAMES_FILE, FILE_APPEND);
             if (file) {
@@ -565,6 +624,12 @@ const std::vector<String>& getLastFrames(int count) {
     void loadFramesFromSD() {
         if (!sdAvailable) {
             ESP_LOGW(TAG, "No SD card, frames not loaded");
+            return;
+        }
+
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, frames not loaded");
             return;
         }
 
@@ -876,6 +941,12 @@ const std::vector<String>& getLastFrames(int count) {
             return;
         }
 
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, stats not loaded");
+            return;
+        }
+
         File file = SD.open(STATS_FILE, FILE_READ);
         if (!file) {
             ESP_LOGW(TAG, "No stats file, starting fresh");
@@ -942,6 +1013,12 @@ const std::vector<String>& getLastFrames(int count) {
 
     bool saveStats() {
         if (!sdAvailable) {
+            return false;
+        }
+
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, stats not saved");
             return false;
         }
 

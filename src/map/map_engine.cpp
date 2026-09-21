@@ -15,6 +15,7 @@
 #undef MOTOLONG
 #include <PNGdec.h>
 #include "storage_utils.h"
+#include "shared_spi_guard.h"
 #include "OpenSansBold6pt7b.h"
 #include <SD.h>
 #include <esp_task_wdt.h>
@@ -851,6 +852,7 @@ namespace MapEngine {
             s.yTable = nullptr;
         }
         if (s.file) {
+            SharedSpiGuard spiGuard;
             s.file.close();
         }
         memset(&s.header, 0, sizeof(s.header));
@@ -1227,6 +1229,12 @@ namespace MapEngine {
     bool loadMapFont() {
         if (vlwFontLoaded) return true;
 
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, map font load deferred");
+            return false;
+        }
+
         // Try 16pt first (better readability on 480×320), fallback to 12pt
         const char* fontPath = "/LoRa_Tracker/fonts/OpenSans-Bold-14.vlw";
         if (!SD.exists(fontPath)) {
@@ -1481,7 +1489,7 @@ namespace MapEngine {
                 char path[128];
                 bool found = false;
 
-                if (spiMutex && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                if (spiMutex && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                     if (STORAGE_Utils::isSDAvailable()) {
                         snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
                                  region, zoom, tileX, tileY);
@@ -1492,7 +1500,7 @@ namespace MapEngine {
                             if (SD.exists(path)) { found = true; }
                         }
                     }
-                    xSemaphoreGive(spiMutex);
+                    xSemaphoreGiveRecursive(spiMutex);
                 }
 
                 if (!found) continue;

@@ -11,6 +11,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <esp_attr.h>   // RTC_NOINIT_ATTR
+#include "shared_spi_guard.h"
 
 static const char *TAG = "SD_Log";
 
@@ -101,7 +102,9 @@ namespace SD_Logger {
             // Only persist W (warn) and E (error) levels — I/D/V are too noisy
             if (buf[0] == 'W' || buf[0] == 'E') {
                 inSdHook = true;
-                if (sdLogMutex && xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                SharedSpiGuard spiGuard(pdMS_TO_TICKS(50));
+                if (spiGuard.acquired() && sdLogMutex &&
+                    xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
                     File f = SD.open(SD_LOG_FILE, FILE_APPEND);
                     if (f) {
                         char ts[20];
@@ -178,6 +181,12 @@ namespace SD_Logger {
             sdLogMutex = xSemaphoreCreateMutex();
         }
 
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, logging disabled");
+            return;
+        }
+
         // Create log directory if needed
         if (!SD.exists("/LoRa_Tracker")) {
             SD.mkdir("/LoRa_Tracker");
@@ -190,9 +199,12 @@ namespace SD_Logger {
     void log(LogLevel level, const char* module, const char* message) {
         if (!initialized || !STORAGE_Utils::isSDAvailable()) return;
 
-        // Take mutex
+        // Always acquire locks in bus -> logger order. The bus mutex is
+        // recursive because ESP_LOG may be called by code already holding it.
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+        if (!spiGuard.acquired()) return;
+
         if (sdLogMutex && xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-            ESP_LOGW(TAG, "Failed to get mutex");
             return;
         }
 
@@ -286,6 +298,9 @@ namespace SD_Logger {
 
         ESP_LOGI(TAG, "Rotating log file");
 
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) return;
+
         if (sdLogMutex && xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
             return;
         }
@@ -306,6 +321,9 @@ namespace SD_Logger {
 
     void clearLogs() {
         if (!initialized || !STORAGE_Utils::isSDAvailable()) return;
+
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+        if (!spiGuard.acquired()) return;
 
         if (sdLogMutex && xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             SD.remove(SD_LOG_FILE);

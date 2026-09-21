@@ -38,6 +38,7 @@
 #include "station_utils.h"
 #include "gps_utils.h"
 #include "display.h"
+#include "shared_spi_guard.h"
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #include "ui_dashboard.h"
@@ -123,6 +124,9 @@ namespace MSG_Utils {
     }
 
     static void saveUnreadAPRSState() {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) return;
+
         STORAGE_Utils::removeFile("/unread_aprs.txt");
 
         File file = STORAGE_Utils::openFile("/unread_aprs.txt", FILE_WRITE);
@@ -140,6 +144,9 @@ namespace MSG_Utils {
     }
 
     static void saveUnreadWLNKState() {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) return;
+
         STORAGE_Utils::removeFile("/unread_wlnk.txt");
 
         if (unreadWLNKMessages <= 0) {
@@ -160,6 +167,9 @@ namespace MSG_Utils {
         if (unreadStateLoaded) {
             return;
         }
+
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) return;
 
         unreadAPRSConversations.clear();
         unreadWLNKMessages = 0;
@@ -254,6 +264,9 @@ namespace MSG_Utils {
     }
 
     static void touchConversationOrder(const String& callsign) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) return;
+
         std::vector<String> ordered;
         ordered.push_back(callsign);
 
@@ -283,6 +296,9 @@ namespace MSG_Utils {
     }
 
     static bool rewriteLinesFile(const String& filename, const std::vector<String>& lines) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) return false;
+
         STORAGE_Utils::removeFile(filename);
         if (lines.empty()) {
             return true;
@@ -440,6 +456,12 @@ namespace MSG_Utils {
     // Save message to conversation file (per-contact)
     // Format: TIMESTAMP,DIRECTION,MESSAGE
     void saveToConversation(const String& callsign, const String& message, bool outgoing) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, conversation not saved");
+            return;
+        }
+
         // Ensure /conversations directory exists
         if (!STORAGE_Utils::fileExists("/conversations")) {
             bool created = STORAGE_Utils::mkdir("/conversations");
@@ -537,6 +559,9 @@ namespace MSG_Utils {
     // fichier ; si ce fragment ne contient aucune ligne complete (message unique
     // tres long), on relit depuis le debut.
     static String readLastLine(const String& filename) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) return String();
+
         File f = STORAGE_Utils::openFile(filename, "r");
         if (!f) return String();
 
@@ -627,7 +652,9 @@ namespace MSG_Utils {
     }
 
     std::vector<String> getConversationsList(std::vector<time_t>* outMtimes) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(5000));
         std::vector<String> callsigns;
+        if (!spiGuard.acquired()) return callsigns;
 
         // Enumeration en POSIX et non via l'API File d'Arduino : chaque
         // openNextFile() construit un VFSFileImpl qui fait un stat(), un fopen()
@@ -729,7 +756,9 @@ namespace MSG_Utils {
     }
 
     std::vector<String> getMessagesForContact(const String& callsign) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
         std::vector<String> result;
+        if (!spiGuard.acquired()) return result;
 
         // Read from conversation file
         String filename = "/conversations/" + callsign + ".txt";
@@ -758,6 +787,9 @@ namespace MSG_Utils {
     }
 
     void loadNumMessages() {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) return;
+
         File fileToReadAPRS = STORAGE_Utils::openFile("/aprsMessages.txt", "r");
         if(!fileToReadAPRS) {
             ESP_LOGD(TAG, "No APRS messages file");
@@ -789,6 +821,9 @@ namespace MSG_Utils {
     }
 
     void loadMessagesFromMemory(uint8_t typeOfMessage) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(5000));
+        if (!spiGuard.acquired()) return;
+
         File fileToRead;
         if (typeOfMessage == 0) {  // APRS
             noAPRSMsgWarning = false;
@@ -849,6 +884,9 @@ namespace MSG_Utils {
     }
 
     void deleteFile(uint8_t typeOfFile) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(5000));
+        if (!spiGuard.acquired()) return;
+
         if (typeOfFile == 0) {  //APRS
             STORAGE_Utils::removeFile("/aprsMessages.txt");
             // Also delete all conversation files
@@ -929,6 +967,9 @@ namespace MSG_Utils {
     }
 
     bool deleteConversation(const String& callsign) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(5000));
+        if (!spiGuard.acquired()) return false;
+
         String cleanCallsign = callsign;
         cleanCallsign.trim();
         if (cleanCallsign.length() == 0) {
@@ -1060,6 +1101,12 @@ namespace MSG_Utils {
     }
 
     void saveNewMessage(uint8_t typeMessage, const String& station, const String& newMessage) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, message not saved");
+            return;
+        }
+
         String message = newMessage;
         message.trim();
 
