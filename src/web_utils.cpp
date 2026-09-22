@@ -215,7 +215,13 @@ namespace WEB_Utils {
         if (Config.bluetooth.active) {
             Config.bluetooth.deviceName         = getParamStringSafe("bluetooth.deviceName", Config.bluetooth.deviceName);
             Config.bluetooth.useBLE             = request->hasParam("bluetooth.useBLE", true);
-            Config.bluetooth.useKISS            = request->hasParam("bluetooth.useKISS", true);
+            if (request->hasParam("bluetooth.protocol", true)) {
+                Config.bluetooth.useKISS =
+                    getParamStringSafe("bluetooth.protocol", "tnc2") == "kiss";
+            } else {
+                // Compatibility with older WebConfig pages/backups.
+                Config.bluetooth.useKISS = request->hasParam("bluetooth.useKISS", true);
+            }
         }
 
         //  APRS-IS

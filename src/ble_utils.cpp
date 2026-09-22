@@ -23,6 +23,8 @@
 #endif
 #include <NimBLEDevice.h>
 #include <esp_wifi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include "configuration.h"
 #include "lora_utils.h"
 #include "kiss_utils.h"
@@ -33,8 +35,10 @@
 #include "lvgl_ui.h"
 #endif
 
-#define BLE_CHUNK_SIZE  512
-#define MAX_KISS_BUFFER 1024
+#define BLE_CHUNK_SIZE       512
+#define MAX_KISS_BUFFER      1024
+#define MAX_TNC2_LINE        512
+#define TNC2_QUEUE_CAPACITY  8
 
 
 // APPLE - APRS.fi app
@@ -44,8 +48,10 @@
 
 // ANDROID - BLE Terminal app (Serial Bluetooth Terminal from Playstore)
 #define SERVICE_UUID_1            "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHARACTERISTIC_UUID_TX_1  "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHARACTERISTIC_UUID_RX_1  "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+// Nordic UART Service (NUS), from the peripheral's point of view:
+// the central writes to RX (...0002) and subscribes to TX (...0003).
+#define CHARACTERISTIC_UUID_RX_1  "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_TX_1  "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 BLEServer               *pServer;
 BLECharacteristic       *pCharacteristicTx;
@@ -61,6 +67,7 @@ static const char *TAG = "BLE";
 bool    shouldSendBLEtoLoRa     = false;
 String  BLEToLoRaPacket         = "";
 String  kissSerialBuffer        = "";
+String  tnc2SerialBuffer        = "";
 String  bleConnectedDeviceAddr  = "";  // Connected device MAC address
 String  bleConnectedDeviceName  = "";  // Connected device name (from GAP)
 bool    bleNeedToReadName       = false;  // Flag to read name after connection
@@ -70,16 +77,108 @@ NimBLEAddress bleConnectedPeerAddr;  // Peer address for client connection
 bool        bleSleeping         = false;    // BLE is currently stopped (for WiFi coexistence)
 bool        bleWakeRequested    = false;    // Deferred wake flag (set from LVGL, processed in main loop)
 
-class MyServerCallbacks : public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* pServer) {
-        bluetoothConnected = true;
-        bleConnectedDeviceName = "";
-        bleNeedToReadName = true;
+// BLE callbacks run in the NimBLE host task while sendToLoRa() runs in the
+// Arduino loop. Keep complete TNC2 lines in a bounded queue so consecutive
+// writes cannot overwrite one another.
+static SemaphoreHandle_t tnc2QueueMutex = nullptr;
+static String tnc2Queue[TNC2_QUEUE_CAPACITY];
+static uint8_t tnc2QueueHead = 0;
+static uint8_t tnc2QueueTail = 0;
+static uint8_t tnc2QueueCount = 0;
+static bool tnc2DiscardUntilDelimiter = false;
 
-        ESP_LOGI(TAG, "%s", "BLE Client Connected");
+static void resetTnc2Input() {
+    if (tnc2QueueMutex == nullptr) {
+        tnc2QueueMutex = xSemaphoreCreateMutex();
+    }
+    if (tnc2QueueMutex == nullptr ||
+        xSemaphoreTake(tnc2QueueMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
     }
 
-    void onConnect(NimBLEServer* pServer, ble_gap_conn_desc* desc) {
+    tnc2SerialBuffer = "";
+    tnc2DiscardUntilDelimiter = false;
+    for (uint8_t i = 0; i < TNC2_QUEUE_CAPACITY; ++i) tnc2Queue[i] = "";
+    tnc2QueueHead = 0;
+    tnc2QueueTail = 0;
+    tnc2QueueCount = 0;
+    xSemaphoreGive(tnc2QueueMutex);
+}
+
+static bool enqueueTnc2Line(const String& line) {
+    if (tnc2QueueMutex == nullptr ||
+        xSemaphoreTake(tnc2QueueMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return false;
+    }
+
+    bool queued = false;
+    if (tnc2QueueCount < TNC2_QUEUE_CAPACITY) {
+        tnc2Queue[tnc2QueueTail] = line;
+        tnc2QueueTail = (tnc2QueueTail + 1) % TNC2_QUEUE_CAPACITY;
+        ++tnc2QueueCount;
+        queued = true;
+    }
+    xSemaphoreGive(tnc2QueueMutex);
+    return queued;
+}
+
+static bool dequeueTnc2Line(String& line) {
+    if (tnc2QueueMutex == nullptr ||
+        xSemaphoreTake(tnc2QueueMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return false;
+    }
+
+    bool available = false;
+    if (tnc2QueueCount > 0) {
+        line = tnc2Queue[tnc2QueueHead];
+        tnc2Queue[tnc2QueueHead] = "";
+        tnc2QueueHead = (tnc2QueueHead + 1) % TNC2_QUEUE_CAPACITY;
+        --tnc2QueueCount;
+        available = true;
+    }
+    xSemaphoreGive(tnc2QueueMutex);
+    return available;
+}
+
+static void finishTnc2Line() {
+    if (tnc2DiscardUntilDelimiter) {
+        tnc2DiscardUntilDelimiter = false;
+        tnc2SerialBuffer = "";
+        return;
+    }
+    if (tnc2SerialBuffer.isEmpty()) return;
+
+    if (!KISS_Utils::validateTNC2Frame(tnc2SerialBuffer)) {
+        ESP_LOGW(TAG, "Ignoring invalid BLE TNC2 line: %s", tnc2SerialBuffer.c_str());
+    } else if (!enqueueTnc2Line(tnc2SerialBuffer)) {
+        ESP_LOGW(TAG, "BLE TNC2 receive queue full, dropping line");
+    }
+    tnc2SerialBuffer = "";
+}
+
+static void receiveTnc2Bytes(const std::string& receivedData) {
+    for (uint8_t c : receivedData) {
+        if (c == '\r' || c == '\n') {
+            finishTnc2Line();
+            continue;
+        }
+        if (tnc2DiscardUntilDelimiter) continue;
+        if (tnc2SerialBuffer.length() >= MAX_TNC2_LINE) {
+            ESP_LOGW(TAG, "BLE TNC2 line exceeds %d bytes, discarding", MAX_TNC2_LINE);
+            tnc2SerialBuffer = "";
+            tnc2DiscardUntilDelimiter = true;
+            continue;
+        }
+        tnc2SerialBuffer += (char)c;
+    }
+}
+
+class MyServerCallbacks : public NimBLEServerCallbacks {
+    // NimBLE 1.4 invokes both overloads. Handle the descriptor overload only
+    // so connection state is not processed twice.
+    void onConnect(NimBLEServer*) override {}
+
+    void onConnect(NimBLEServer*, ble_gap_conn_desc* desc) override {
         bluetoothConnected = true;
         // Get connected device MAC address from connection descriptor
         bleConnectedPeerAddr = NimBLEAddress(desc->peer_ota_addr);
@@ -90,27 +189,22 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
         ESP_LOGI(TAG, "BLE Client Connected: %s", bleConnectedDeviceAddr.c_str());
     }
 
-    void onDisconnect(NimBLEServer* pServer) {
-        bluetoothConnected = false;
-        bleConnectedDeviceAddr = "";
-        bleConnectedDeviceName = "";
-        bleNeedToReadName = false;
-        ESP_LOGI(TAG, "%s", "BLE client Disconnected");
-        pServer->startAdvertising();
-    }
+    void onDisconnect(NimBLEServer* pServer) override {}
 
-    void onDisconnect(NimBLEServer* pServer, ble_gap_conn_desc* desc, int reason) {
+    void onDisconnect(NimBLEServer* pServer, ble_gap_conn_desc* desc) override {
         bluetoothConnected = false;
         bleConnectedDeviceAddr = "";
         bleConnectedDeviceName = "";
         bleNeedToReadName = false;
-        ESP_LOGI(TAG, "BLE client Disconnected (reason: %d)", reason);
+        resetTnc2Input();
+        kissSerialBuffer = "";
+        ESP_LOGI(TAG, "BLE client disconnected");
         pServer->startAdvertising();
     }
 };
 
 class MyCallbacks : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic *pCharacteristic) {
+    void onWrite(NimBLECharacteristic *pCharacteristic) override {
         if (Config.bluetooth.useKISS) {   // KISS (AX.25)
             std::string receivedData = pCharacteristic->getValue();
 
@@ -161,27 +255,38 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
             }
         } else {                            // TNC2
             std::string receivedData = pCharacteristic->getValue();
-            String receivedString = "";
-            for (int i = 0; i < receivedData.length(); i++) receivedString += receivedData[i];
-            BLEToLoRaPacket = receivedString;
-            shouldSendBLEtoLoRa = true;
+            receiveTnc2Bytes(receivedData);
         }
     }
+
+    // NimBLE 1.4 invokes this after the one-argument overload above.
+    void onWrite(NimBLECharacteristic*, ble_gap_conn_desc*) override {}
 };
+
+static MyCallbacks rxCallbacks;
 
 namespace BLE_Utils {
 
     void stop() {
         if (BLEDevice::getInitialized()) {
-            BLEDevice::deinit();
+            // clearAll is required: otherwise setup() adds duplicate services
+            // and the client can subscribe to an old characteristic while the
+            // firmware notifies through the newly-created one.
+            BLEDevice::deinit(true);
         }
         pServer = nullptr;
         pCharacteristicTx = nullptr;
         pCharacteristicRx = nullptr;
+        bluetoothConnected = false;
+        resetTnc2Input();
+        kissSerialBuffer = "";
+        BLEToLoRaPacket = "";
+        shouldSendBLEtoLoRa = false;
     }
 
     void setup() {
         bleSleeping = false;
+        resetTnc2Input();
 
         String BLEid = Config.bluetooth.deviceName;
         BLEDevice::init(BLEid.c_str());
@@ -198,7 +303,7 @@ namespace BLE_Utils {
         pCharacteristicRx = pService->createCharacteristic(useKISS ? CHARACTERISTIC_UUID_RX_0 : CHARACTERISTIC_UUID_RX_1, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
 
         if (pService != nullptr) {
-            pCharacteristicRx->setCallbacks(new MyCallbacks());
+            pCharacteristicRx->setCallbacks(&rxCallbacks);
             pService->start();
 
             BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
@@ -208,13 +313,28 @@ namespace BLE_Utils {
             pServer->getAdvertising()->setMinPreferred(0x06);
             pServer->getAdvertising()->setMaxPreferred(0x0C);
             pAdvertising->start();
-            ESP_LOGD(TAG, "%s", "Waiting for BLE central to connect...");
+            ESP_LOGI(TAG, "BLE %s service ready; waiting for central",
+                     useKISS ? "KISS" : "TNC2/NUS");
         } else {
             ESP_LOGE(TAG, "Failed to create BLE service");
         }
     }
 
     void sendToLoRa() {
+        if (!Config.bluetooth.useKISS) {
+            String line;
+            if (!dequeueTnc2Line(line)) return;
+
+            ESP_LOGD(TAG, "TNC2 Tx %s", line.c_str());
+            #ifdef USE_LVGL_UI
+                LVGL_UI::showTxPacket(line.c_str());
+            #else
+                displayShow("BLE Tx >>", "", line, 1000);
+            #endif
+            LoRa_Utils::sendNewPacket(line);
+            return;
+        }
+
         if (!shouldSendBLEtoLoRa) return;
 
         ESP_LOGD(TAG, "Tx %s", BLEToLoRaPacket.c_str());
@@ -228,32 +348,42 @@ namespace BLE_Utils {
         shouldSendBLEtoLoRa = false;
     }
 
-    void txBLE(uint8_t p) {
-        pCharacteristicTx->setValue(&p,1);
-        pCharacteristicTx->notify();
-        delay(3);
+    static size_t notificationChunkSize() {
+        size_t chunkSize = BLE_CHUNK_SIZE;
+        if (pServer != nullptr) {
+            std::vector<uint16_t> peers = pServer->getPeerDevices();
+            for (uint16_t peer : peers) {
+                uint16_t mtu = pServer->getPeerMTU(peer);
+                size_t payloadSize = mtu > 3 ? mtu - 3 : 20;
+                if (payloadSize < chunkSize) chunkSize = payloadSize;
+            }
+        }
+        return chunkSize > 0 ? chunkSize : 20;
+    }
+
+    static void notifyBytes(const uint8_t* data, size_t length) {
+        if (pCharacteristicTx == nullptr || data == nullptr || length == 0) return;
+
+        const size_t chunkSize = notificationChunkSize();
+        for (size_t offset = 0; offset < length; offset += chunkSize) {
+            size_t lengthRemaining = length - offset;
+            size_t currentSize = lengthRemaining < chunkSize ? lengthRemaining : chunkSize;
+            pCharacteristicTx->setValue(data + offset, currentSize);
+            pCharacteristicTx->notify();
+            delay(3);
+        }
     }
 
     void txToPhoneOverBLE(const String& frame) {
         if (Config.bluetooth.useKISS) {   // KISS (AX.25)
             const String kissEncodedFrame = KISS_Utils::encodeKISS(frame);
 
-            const char* t   = kissEncodedFrame.c_str();
-            int length      = kissEncodedFrame.length();
-            for (int i = 0; i < length; i += BLE_CHUNK_SIZE) {
-                int chunkSize = (length - i < BLE_CHUNK_SIZE) ? (length - i) : BLE_CHUNK_SIZE;
-                
-                uint8_t* chunk = new uint8_t[chunkSize];
-                memcpy(chunk, t + i, chunkSize);
-
-                pCharacteristicTx->setValue(chunk, chunkSize);
-                pCharacteristicTx->notify();
-                delete[] chunk;
-                delay(200);
-            }
+            notifyBytes(reinterpret_cast<const uint8_t*>(kissEncodedFrame.c_str()),
+                        kissEncodedFrame.length());
         } else {        // TNC2
-            for (int n = 0; n < frame.length(); n++) txBLE(frame[n]);
-            txBLE('\n');
+            String line = frame;
+            line += '\n';
+            notifyBytes(reinterpret_cast<const uint8_t*>(line.c_str()), line.length());
         }
     }
 
