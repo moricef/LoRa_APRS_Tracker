@@ -41,7 +41,7 @@
 #define TNC2_QUEUE_CAPACITY  8
 
 
-// APPLE - APRS.fi app
+// BLE-KISS service for AX.25 frames transported with KISS framing.
 #define SERVICE_UUID_0            "00000001-ba2a-46c9-ae49-01b0961f68bb"
 #define CHARACTERISTIC_UUID_TX_0  "00000003-ba2a-46c9-ae49-01b0961f68bb"
 #define CHARACTERISTIC_UUID_RX_0  "00000002-ba2a-46c9-ae49-01b0961f68bb"
@@ -296,7 +296,7 @@ namespace BLE_Utils {
 
         BLEService *pService = nullptr;
 
-        //  KISS (AX.25) or TNC2
+        // KISS uses the BLE-KISS service; TNC2 plain text uses Nordic UART.
         bool useKISS = Config.bluetooth.useKISS;
         pService = pServer->createService(useKISS ? SERVICE_UUID_0 : SERVICE_UUID_1);
         pCharacteristicTx = pService->createCharacteristic(useKISS ? CHARACTERISTIC_UUID_TX_0 : CHARACTERISTIC_UUID_TX_1, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
