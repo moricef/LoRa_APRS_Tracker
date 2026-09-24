@@ -235,7 +235,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
 namespace LVGL_UI {
   bool handleScreenLockKey(char key) {
-    if (!screenLocked && lv_scr_act() != UIDashboard::getMainScreen()) {
+    if (!screenLocked) {
       lockQPending = false;
       return false;
     }
@@ -244,21 +244,25 @@ namespace LVGL_UI {
     if (key == 'q' || key == 'Q') {
       lockQPending = true;
       lockQTime = now;
-      return screenLocked;
-    }
-
-    const bool toggle = key == ' ' && lockQPending && now - lockQTime <= 1000;
-    lockQPending = false;
-    if (toggle) {
-      screenLocked = !screenLocked;
-      screenDimmed = screenLocked;
-      lastActivityTime = now;
-      if (!screenLocked) absorbTouchUntilRelease = true;
-      displaySetBrightness(screenLocked ? 0 : screenBrightness);
-      ESP_LOGI(TAG, "Screen %s by Q then Space", screenLocked ? "locked" : "unlocked");
       return true;
     }
-    return screenLocked;
+
+    const bool unlock = key == ' ' && lockQPending && now - lockQTime <= 1000;
+    lockQPending = false;
+    if (unlock) {
+      screenLocked = false;
+      screenDimmed = false;
+      lastActivityTime = now;
+      absorbTouchUntilRelease = true;
+      displaySetBrightness(screenBrightness);
+      if (lv_scr_act() == MapState::screen_map) {
+        setCpuFrequencyMhz(240);
+        UIMapManager::redraw_map_canvas();
+      }
+      SD_Logger::logScreenState(false);
+      ESP_LOGI(TAG, "Screen unlocked by Q then Space");
+    }
+    return true;
   }
 
   // Splash and init screens shown during boot
@@ -663,6 +667,8 @@ namespace LVGL_UI {
           Config.display.timeout * 1000; // Config is in seconds
       if (currentTime - lastActivityTime >= ecoTimeoutMs) {
         screenDimmed = true;
+        screenLocked = true;
+        lockQPending = false;
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
         if (waveshare_expander) {
           waveshare_expander->digitalWrite(2, 0); // Backlight OFF via CH422G
@@ -677,7 +683,7 @@ namespace LVGL_UI {
               "Screen dimmed (eco mode), CPU reduced to %d MHz (map)",
               getCpuFrequencyMhz());
         } else {
-          ESP_LOGI(TAG, "Screen dimmed (eco mode)");
+          ESP_LOGI(TAG, "Screen locked (eco timeout)");
         }
         SD_Logger::logScreenState(true); // Log screen dimmed
       }
