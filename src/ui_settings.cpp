@@ -18,6 +18,8 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <math.h>
+#include <NMEAGPS.h>
+#include "lvgl_ui.h"
 
 static const char *TAG = "UISettings";
 
@@ -29,6 +31,7 @@ static const char *TAG = "UISettings";
 #include "notification_utils.h"
 #include "station_utils.h"
 #include "storage_utils.h"
+#include "utils.h"
 #include "wifi_utils.h"
 #include "display.h"
 
@@ -66,6 +69,9 @@ static lv_obj_t *screen_display = nullptr;
 static lv_obj_t *screen_sound = nullptr;
 static lv_obj_t *screen_repeater = nullptr;
 static lv_obj_t *screen_gps = nullptr;
+static lv_obj_t *gnss_details_label = nullptr;
+static bool gnss_opened_from_dashboard = false;
+static char gnss_details[192] = "No GNSS fix\nSatellites: --";
 static lv_obj_t *screen_wifi = nullptr;
 static lv_obj_t *screen_bluetooth = nullptr;
 static lv_obj_t *screen_webconf = nullptr;
@@ -143,6 +149,14 @@ static void btn_back_to_setup_clicked(lv_event_t *e) {
     lv_scr_load_anim(screen_setup, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 100, 0, false);
 }
 
+static void btn_gnss_back_clicked(lv_event_t *e) {
+    if (gnss_opened_from_dashboard) {
+        UISettings::backToDashboard();
+    } else {
+        UISettings::backToSetup();
+    }
+}
+
 static void btn_wifi_back_clicked(lv_event_t *e) {
     ESP_LOGD(TAG, "WiFi BACK");
     if (wifi_update_timer) {
@@ -217,11 +231,32 @@ static void setup_item_repeater(lv_event_t *e) {
 }
 
 static void setup_item_gps(lv_event_t *e) {
-    ESP_LOGD(TAG, "GPS selected");
+    ESP_LOGD(TAG, "GNSS selected");
+    gnss_opened_from_dashboard = false;
     if (!screen_gps) {
         UISettings::createGPSScreen();
     }
     lv_scr_load_anim(screen_gps, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+}
+
+void UISettings::openGNSS() {
+    gnss_opened_from_dashboard = true;
+    if (!screen_gps) createGPSScreen();
+    lv_scr_load_anim(screen_gps, LV_SCR_LOAD_ANIM_MOVE_LEFT, 100, 0, false);
+}
+
+void UISettings::updateGNSS(double lat, double lng, double alt, double speed,
+                            int sats, double hdop, bool hasFix) {
+    if (hasFix) {
+        const char *locator = Utils::getMaidenheadLocator(lat, lng, 8);
+        snprintf(gnss_details, sizeof(gnss_details),
+                 "Fix: yes  Satellites: %d\nLat: %.4f  Lon: %.4f\nAlt: %.0f m  Spd: %.0f km/h\nHDOP: %.1f  Loc: %s",
+                 sats, lat, lng, alt, speed, hdop, locator);
+    } else {
+        snprintf(gnss_details, sizeof(gnss_details),
+                 "No GNSS fix\nSatellites: %d", sats);
+    }
+    if (gnss_details_label) lv_label_set_text(gnss_details_label, gnss_details);
 }
 
 static void setup_item_wifi(lv_event_t *e) {
@@ -340,7 +375,7 @@ void UISettings::createSetupScreen() {
     btn = lv_list_add_btn(list, LV_SYMBOL_LOOP, "Repeater");
     lv_obj_add_event_cb(btn, setup_item_repeater, LV_EVENT_CLICKED, NULL);
 
-    btn = lv_list_add_btn(list, LV_SYMBOL_GPS, "GPS");
+    btn = lv_list_add_btn(list, LV_SYMBOL_GPS, "GNSS");
     lv_obj_add_event_cb(btn, setup_item_gps, LV_EVENT_CLICKED, NULL);
 
     btn = lv_list_add_btn(list, LV_SYMBOL_WIFI, "WiFi");
@@ -1285,8 +1320,7 @@ void UISettings::createRepeaterScreen() {
     bool is_on = lv_obj_has_state(sw, LV_STATE_CHECKED);
     Config.gpsConfig.strict3DFix = is_on;
     Config.writeFile();
-    UIDashboard::updateGPSStrictIcon();
-    ESP_LOGI(TAG, "GPS Strict 3D Fix (PDOP) saved: %d", is_on);
+    ESP_LOGI(TAG, "GNSS Strict 3D Fix (PDOP) saved: %d", is_on);
     }
 
     void UISettings::createGPSScreen() {
@@ -1306,7 +1340,7 @@ void UISettings::createRepeaterScreen() {
     lv_obj_t *btn_back = lv_btn_create(title_bar);
     lv_obj_set_size(btn_back, 60, 25);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(UIColors::BG_HEADER), 0);
-    lv_obj_add_event_cb(btn_back, btn_back_to_setup_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_back, btn_gnss_back_clicked, LV_EVENT_CLICKED, NULL);
     lv_obj_set_ext_click_area(btn_back, 8);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
     lv_label_set_text(lbl_back, "< BACK");
@@ -1314,7 +1348,7 @@ void UISettings::createRepeaterScreen() {
 
     // Title
     lv_obj_t *title = lv_label_create(title_bar);
-    lv_label_set_text(title, "GPS Settings");
+    lv_label_set_text(title, "GNSS");
     lv_obj_set_style_text_color(title, lv_color_hex(UIColors::TEXT_WHITE), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_18, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 20, 0);
@@ -1329,6 +1363,13 @@ void UISettings::createRepeaterScreen() {
     lv_obj_set_layout(content, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+
+    gnss_details_label = lv_label_create(content);
+    lv_obj_set_width(gnss_details_label, lv_pct(100));
+    lv_label_set_long_mode(gnss_details_label, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(gnss_details_label, gnss_details);
+    lv_obj_set_style_text_color(gnss_details_label, lv_color_hex(UIColors::TEXT_CYAN), 0);
+    lv_obj_set_style_text_font(gnss_details_label, &lv_font_mono_14, 0);
 
     // Strict 3D Fix row
     lv_obj_t *row1 = lv_obj_create(content);

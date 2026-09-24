@@ -38,6 +38,7 @@ namespace LVGL_UI {
     void closeAllPopups();     // Close all popups (TX, RX, beacon pending)
     void showWiFiEcoMode();  // Display WiFi eco mode popup
     void handleComposeKeyboard(char key);  // Handle physical keyboard for compose screen
+    bool handleScreenLockKey(char key);  // Q then Space on dashboard; consumes keys while locked
     void showCapsLockPopup(bool active);  // Display Caps Lock status popup
     void showBootWebConfig();  // Show web-conf screen at boot (blocking, LVGL-based)
     void showAddContactPrompt(const char* callsign);  // Prompt to add unknown sender as contact

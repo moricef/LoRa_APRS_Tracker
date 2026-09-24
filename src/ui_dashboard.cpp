@@ -57,8 +57,7 @@ namespace UIDashboard {
 
 // Dashboard screen and labels
 static lv_obj_t *screen_main = nullptr;
-static lv_obj_t *label_callsign = nullptr;
-static lv_obj_t *label_gps = nullptr;
+static lv_obj_t *label_gnss = nullptr;
 static lv_obj_t *label_lora = nullptr;
 static lv_obj_t *label_time = nullptr;
 static lv_obj_t *aprs_symbol_canvas = nullptr;
@@ -70,7 +69,6 @@ static lv_obj_t *badge_msg_unread = nullptr;
 static lv_obj_t *label_last_rx = nullptr;
 
 // Status bar icons
-static lv_obj_t *icon_gps_strict = nullptr;
 static lv_obj_t *icon_wifi = nullptr;
 static lv_obj_t *icon_bluetooth = nullptr;
 static lv_obj_t *icon_battery = nullptr;
@@ -82,6 +80,7 @@ static void btn_setup_clicked(lv_event_t *e);
 static void btn_msg_clicked(lv_event_t *e);
 static void btn_frames_clicked(lv_event_t *e);
 static void btn_map_clicked(lv_event_t *e);
+static void gnss_clicked(lv_event_t *e) { UISettings::openGNSS(); }
 
 void init() {
     // Initialize dashboard module (nothing to do yet)
@@ -216,11 +215,14 @@ void createDashboard() {
     lv_obj_set_flex_align(status_bar, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Callsign label (left)
-    label_callsign = lv_label_create(status_bar);
-    lv_label_set_text(label_callsign, "NOCALL");
-    lv_obj_set_style_text_color(label_callsign, lv_color_hex(0xffffff), 0);
-    lv_obj_set_style_text_font(label_callsign, &lv_font_montserrat_14, 0);
+    // Compact GNSS status; tap for details.
+    label_gnss = lv_label_create(status_bar);
+    lv_label_set_text(label_gnss, LV_SYMBOL_GPS " --");
+    lv_obj_set_style_text_color(label_gnss, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_font(label_gnss, &lv_font_montserrat_14, 0);
+    lv_obj_add_flag(label_gnss, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(label_gnss, 8);
+    lv_obj_add_event_cb(label_gnss, gnss_clicked, LV_EVENT_CLICKED, nullptr);
 
     // APRS symbol canvas (center)
     aprs_symbol_buf = (lv_color_t *)malloc(
@@ -241,12 +243,6 @@ void createDashboard() {
     lv_label_set_text(label_time, "--/-- --:--");
     lv_obj_set_style_text_color(label_time, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_text_font(label_time, &lv_font_montserrat_14, 0);
-
-    // GPS Strict 3D icon (hidden by default, shown when active)
-    icon_gps_strict = lv_label_create(status_bar);
-    lv_label_set_text(icon_gps_strict, LV_SYMBOL_GPS " 3D");
-    lv_obj_set_style_text_color(icon_gps_strict, lv_color_hex(0xffd700), 0); // Gold/Yellow
-    if (!Config.gpsConfig.strict3DFix) lv_obj_add_flag(icon_gps_strict, LV_OBJ_FLAG_HIDDEN);
 
     // WiFi icon (hidden by default, shown when connected)
     icon_wifi = lv_label_create(status_bar);
@@ -279,25 +275,19 @@ void createDashboard() {
     lv_obj_set_style_radius(content, 8, 0);
     lv_obj_set_style_pad_all(content, 10, 0);
 
-    // GPS info
-    label_gps = lv_label_create(content);
-    lv_label_set_text(label_gps, "GPS: -- sat  Loc: --------\nLat: --.----  Lon: "
-                                 "--.----\nAlt: ---- m  Spd: --- km/h");
-    lv_obj_set_style_text_color(label_gps, lv_color_hex(0x759a9e), 0);
-    lv_obj_set_style_text_font(label_gps, &lv_font_mono_14, 0);
-    lv_obj_set_pos(label_gps, 0, 0);
-
     // LoRa info
     label_lora = lv_label_create(content);
     char lora_init[96];
     const char *profileName = Config.loraTypes[loraIndex].profileName.c_str();
     float freq = Config.loraTypes[loraIndex].frequency / 1000000.0;
-    int rate = Config.loraTypes[loraIndex].dataRate;
-    snprintf(lora_init, sizeof(lora_init), "LoRa profile: %s\nFreq: %.4f MHz  Speed: %d bps", profileName, freq, rate);
+    const auto &profile = Config.loraTypes[loraIndex];
+    snprintf(lora_init, sizeof(lora_init), "%s\n%.4f MHz  BW%ld SF%d CR4/%d",
+             profileName, freq, profile.signalBandwidth / 1000,
+             profile.spreadingFactor, profile.codingRate4);
     lv_label_set_text(label_lora, lora_init);
     lv_obj_set_style_text_color(label_lora, lv_color_hex(0xff6b6b), 0);
     lv_obj_set_style_text_font(label_lora, &lv_font_mono_14, 0);
-    lv_obj_set_pos(label_lora, 0, 55);
+    lv_obj_set_pos(label_lora, 0, 0);
 
     // RX history extends the existing scrollable dashboard content.
     label_last_rx = lv_label_create(content);
@@ -305,7 +295,7 @@ void createDashboard() {
     lv_label_set_text(label_last_rx, "SOURCE    RSSI   SNR   RF-TX\n---");
     lv_obj_set_style_text_color(label_last_rx, lv_color_hex(0xffcc00), 0);
     lv_obj_set_style_text_font(label_last_rx, &lv_font_mono_12, 0);
-    lv_obj_set_pos(label_last_rx, 0, 95);
+    lv_obj_set_pos(label_last_rx, 0, 40);
 
     // Bottom button bar
     lv_obj_t *btn_bar = lv_obj_create(screen_main);
@@ -386,27 +376,13 @@ void createDashboard() {
 }
 
 // Update functions
-void updateGPS(double lat, double lng, double alt, double speed, int sats, double hdop) {
-    if (label_gps) {
-        char buf[128];
-        const char *locator = Utils::getMaidenheadLocator(lat, lng, 8);
-
-        // Determine HDOP quality indicator
-        const char *hdopState = "";
-        if (hdop > 5.0) {
-            hdopState = "X"; // Bad precision
-        } else if (hdop > 2.0 && hdop < 5.0) {
-            hdopState = "-"; // Medium precision
-        } else if (hdop <= 2.0) {
-            hdopState = "+"; // Good precision
-        }
-
-        snprintf(buf, sizeof(buf),
-                 "GPS: %d%s sat  Loc: %s\nLat: %.4f  Lon: %.4f\nAlt: %.0f m  "
-                 "Spd: %.0f km/h",
-                 sats, hdopState, locator, lat, lng, alt, speed);
-        lv_label_set_text(label_gps, buf);
-    }
+void updateGPS(int sats, bool hasFix) {
+    if (!label_gnss) return;
+    char buf[24];
+    snprintf(buf, sizeof(buf), LV_SYMBOL_GPS " %d", sats);
+    lv_label_set_text(label_gnss, buf);
+    lv_obj_set_style_text_color(label_gnss,
+        lv_color_hex(hasFix ? 0x00cc66 : 0x888888), 0);
 }
 
 void updateBattery(int percent, float voltage) {
@@ -455,8 +431,10 @@ void refreshLoRaInfo() {
         char buf[96];
         const char *profileName = Config.loraTypes[loraIndex].profileName.c_str();
         float freq = Config.loraTypes[loraIndex].frequency / 1000000.0;
-        int rate = Config.loraTypes[loraIndex].dataRate;
-        snprintf(buf, sizeof(buf), "LoRa profile: %s\nFreq: %.4f MHz  Speed: %d bps", profileName, freq, rate);
+        const auto &profile = Config.loraTypes[loraIndex];
+        snprintf(buf, sizeof(buf), "%s\n%.4f MHz  BW%ld SF%d CR4/%d",
+                 profileName, freq, profile.signalBandwidth / 1000,
+                 profile.spreadingFactor, profile.codingRate4);
         lv_label_set_text(label_lora, buf);
     }
 }
@@ -501,16 +479,6 @@ void refreshMessageBadge() {
     }
 }
 
-    void updateGPSStrictIcon() {
-    if (icon_gps_strict) {
-        if (Config.gpsConfig.strict3DFix) {
-            lv_obj_clear_flag(icon_gps_strict, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(icon_gps_strict, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-    }
-
     void updateWiFi(bool connected, int rssi) {
     if (icon_wifi) {
         // Show icon only if WiFi is connected
@@ -523,9 +491,7 @@ void refreshMessageBadge() {
 }
 
 void updateCallsign(const char *callsign) {
-    if (label_callsign) {
-        lv_label_set_text(label_callsign, callsign);
-    }
+    (void)callsign;
 }
 
 void updateTime(int day, int month, int year, int hour, int minute, int second) {
@@ -556,7 +522,7 @@ void returnToDashboard() {
 }
 
 // Provide label access for UISettings (callsign, wifi labels)
-lv_obj_t* getLabelCallsign() { return label_callsign; }
+lv_obj_t* getLabelCallsign() { return nullptr; }
 lv_obj_t* getLabelWifi() { return nullptr; } // Removed from dashboard, now icon only
 
 } // namespace UIDashboard

@@ -625,6 +625,9 @@ namespace KEYBOARD_Utils {
     }
 
     void processPressedKey(char key) {
+        #ifdef USE_LVGL_UI
+            if (LVGL_UI::handleScreenLockKey(key)) return;
+        #endif
         keyDetected = true;
         menuTime = millis();
         

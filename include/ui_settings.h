@@ -34,6 +34,8 @@ namespace UISettings {
     void openSound();
     void openWifi();
     void openBluetooth();
+    void openGNSS();
+    void updateGNSS(double lat, double lng, double alt, double speed, int sats, double hdop, bool hasFix);
 
     // Back navigation
     void backToDashboard();

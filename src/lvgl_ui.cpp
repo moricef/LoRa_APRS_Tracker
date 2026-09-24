@@ -109,6 +109,9 @@ static lv_indev_drv_t indev_drv;
 // Timeout is configured via Config.display.timeout (in seconds)
 uint32_t lastActivityTime = 0;        // Non-static: accessed by UISettings
 bool screenDimmed = false;            // Non-static: accessed by UISettings
+static bool screenLocked = false;
+static bool lockQPending = false;
+static uint32_t lockQTime = 0;
 
 // Note: Dashboard screen and labels are now in UIDashboard module (ui_dashboard.cpp)
 
@@ -152,6 +155,10 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 static uint32_t lastTouchDebug = 0;
 static bool absorbTouchUntilRelease = false;   // absorbe le toucher de réveil jusqu'au relâchement
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+  if (screenLocked) {
+    data->state = LV_INDEV_STATE_REL;
+    return;
+  }
   uint16_t x, y;
   if (tft.getTouch(&x, &y)) {
     // Reset activity timer on touch
@@ -226,7 +233,33 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     UIMessaging::openComposeWithCallsign(callsign);
 }
 
-  namespace LVGL_UI {
+namespace LVGL_UI {
+  bool handleScreenLockKey(char key) {
+    if (!screenLocked && lv_scr_act() != UIDashboard::getMainScreen()) {
+      lockQPending = false;
+      return false;
+    }
+
+    const uint32_t now = millis();
+    if (key == 'q' || key == 'Q') {
+      lockQPending = true;
+      lockQTime = now;
+      return screenLocked;
+    }
+
+    const bool toggle = key == ' ' && lockQPending && now - lockQTime <= 1000;
+    lockQPending = false;
+    if (toggle) {
+      screenLocked = !screenLocked;
+      screenDimmed = screenLocked;
+      lastActivityTime = now;
+      if (!screenLocked) absorbTouchUntilRelease = true;
+      displaySetBrightness(screenLocked ? 0 : screenBrightness);
+      ESP_LOGI(TAG, "Screen %s by Q then Space", screenLocked ? "locked" : "unlocked");
+      return true;
+    }
+    return screenLocked;
+  }
 
   // Splash and init screens shown during boot
   static lv_obj_t *screen_splash = nullptr;
@@ -664,11 +697,11 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
         UIDashboard::drawAPRSSymbol(fullSymbol.c_str());
       }
 
-      // Update GPS data
-      if (gpsFix.valid.location) {
-        UIDashboard::updateGPS(gpsFix.latitude(), gpsFix.longitude(), gpsFix.alt.whole,
-                  gpsFix.speed_kph(), gpsFix.satellites, gpsHdop());
-      }
+      // Compact GNSS status and detailed settings page, including loss of fix.
+      UIDashboard::updateGPS(gpsFix.satellites, gpsFix.valid.location);
+      UISettings::updateGNSS(gpsFix.latitude(), gpsFix.longitude(), gpsFix.alt.whole,
+                             gpsFix.speed_kph(), gpsFix.satellites, gpsHdop(),
+                             gpsFix.valid.location);
 
       // Update date/time from GPS
       if (gpsFix.valid.time && gpsFix.valid.date) {
@@ -700,7 +733,8 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
   // Update functions - delegated to UIDashboard module
   void updateGPS(double lat, double lng, double alt, double speed, int sats, double hdop) {
-    UIDashboard::updateGPS(lat, lng, alt, speed, sats, hdop);
+    UIDashboard::updateGPS(sats, gpsFix.valid.location);
+    UISettings::updateGNSS(lat, lng, alt, speed, sats, hdop, gpsFix.valid.location);
   }
 
   void updateBattery(int percent, float voltage) {
