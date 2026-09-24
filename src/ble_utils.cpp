@@ -377,6 +377,7 @@ namespace BLE_Utils {
     void txToPhoneOverBLE(const String& frame) {
         if (Config.bluetooth.useKISS) {   // KISS (AX.25)
             const String kissEncodedFrame = KISS_Utils::encodeKISS(frame);
+            if (kissEncodedFrame.isEmpty()) return;
 
             notifyBytes(reinterpret_cast<const uint8_t*>(kissEncodedFrame.c_str()),
                         kissEncodedFrame.length());

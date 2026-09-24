@@ -840,9 +840,9 @@ const std::vector<String>& getLastFrames(int count) {
         return digiStats;
     }
 
-    // ========== Dashboard Last RX (RAM only, max 4) ==========
+    // ========== Dashboard Last RX (RAM only, max 15) ==========
 
-    static const int DASHBOARD_RX_SIZE = 4;
+    static const int DASHBOARD_RX_SIZE = 15;
     static std::vector<DashboardRxEntry> dashboardRx;
 
     static void updateDashboardRx(const String& callsign, int rssi, float snr,
@@ -858,7 +858,7 @@ const std::vector<String>& getLastFrames(int count) {
 
         dashboardRx.insert(dashboardRx.begin(), entry);
 
-        // Keep only last 4
+        // Keep only last 15
         if (dashboardRx.size() > DASHBOARD_RX_SIZE) {
             dashboardRx.resize(DASHBOARD_RX_SIZE);
         }

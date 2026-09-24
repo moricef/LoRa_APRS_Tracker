@@ -299,7 +299,7 @@ void createDashboard() {
     lv_obj_set_style_text_font(label_lora, &lv_font_mono_14, 0);
     lv_obj_set_pos(label_lora, 0, 55);
 
-    // RX stations (4 max)
+    // RX history extends the existing scrollable dashboard content.
     label_last_rx = lv_label_create(content);
     lv_label_set_recolor(label_last_rx, true);
     lv_label_set_text(label_last_rx, "SOURCE    RSSI   SNR   RF-TX\n---");
@@ -472,7 +472,7 @@ void updateLastRx() {
     String text = "SOURCE    RSSI   SNR   RF-TX";
     char line[128];
 
-    for (size_t i = 0; i < entries.size() && i < 4; i++) {
+    for (size_t i = 0; i < entries.size(); i++) {
         const DashboardRxEntry &e = entries[i];
 
         // Same colour code as the Frames tab: direct = green, digipeated = orange

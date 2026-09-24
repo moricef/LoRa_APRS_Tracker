@@ -26,6 +26,16 @@
 #include "display.h"
 static const char *TAG = "Config";
 
+static Beacon makeDefaultBeacon(size_t index) {
+    Beacon beacon{};
+    beacon.callsign = String("NOCALL-") + String(7 + index);
+    beacon.symbol = index == 0 ? "[" : (index == 1 ? "<" : ">");
+    beacon.overlay = "/";
+    beacon.smartBeaconActive = true;
+    beacon.smartBeaconSetting = index < 2 ? index : 2;
+    return beacon;
+}
+
 bool Configuration::writeFile() {
 
     ESP_LOGI(TAG, "Saving config..");
@@ -287,6 +297,7 @@ bool Configuration::readFile() {
             loraType.power              = LoraTypesArray[j]["power"] | 20;
 
             loraType.dataRate = LoRa_Utils::calculateDataRate(loraType.spreadingFactor, loraType.codingRate4, loraType.signalBandwidth);
+            if ((LoraTypesArray[j]["dataRate"] | 0) != loraType.dataRate) needsRewrite = true;
 
             loraTypes.push_back(loraType);
         }
@@ -393,17 +404,10 @@ bool Configuration::readFile() {
             needsRewrite = true;
             ESP_LOGI(TAG, "Added default WiFi AP entry");
         }
-        if (beacons.size() == 0) {
-            Beacon bcn;
-            bcn.callsign = "NOCALL-7";
-            bcn.symbol = "[";
-            bcn.overlay = "/";
-            bcn.smartBeaconActive = true;
-            bcn.smartBeaconSetting = 0;
-            bcn.gpsEcoMode = false;
-            beacons.push_back(bcn);
+        while (beacons.size() < 4) {
+            beacons.push_back(makeDefaultBeacon(beacons.size()));
             needsRewrite = true;
-            ESP_LOGI(TAG, "Added default beacon entry");
+            ESP_LOGI(TAG, "Added default beacon profile %u", (unsigned)beacons.size());
         }
         if (loraTypes.size() == 0) {
             LoraType loraType;
@@ -413,7 +417,8 @@ bool Configuration::readFile() {
             loraType.signalBandwidth = 125000;
             loraType.codingRate4 = 5;
             loraType.power = 20;
-            loraType.dataRate = 300;
+            loraType.dataRate = LoRa_Utils::calculateDataRate(
+                loraType.spreadingFactor, loraType.codingRate4, loraType.signalBandwidth);
             loraTypes.push_back(loraType);
             needsRewrite = true;
             ESP_LOGI(TAG, "Added default LoRa entry");
@@ -453,22 +458,7 @@ void Configuration::setDefaultValues() {
     wifiAutoAP.timeout              = 10;
     wifiEnabled                     = true;  // WiFi enabled by default
 
-    {
-        Beacon b1;
-        b1.callsign = "NOCALL-7"; b1.symbol = "["; b1.overlay = "/";
-        b1.smartBeaconActive = true; b1.smartBeaconSetting = 0; b1.gpsEcoMode = false;
-        beacons.push_back(b1);
-
-        Beacon b2;
-        b2.callsign = "NOCALL-8"; b2.symbol = "<"; b2.overlay = "/";
-        b2.smartBeaconActive = true; b2.smartBeaconSetting = 1; b2.gpsEcoMode = false;
-        beacons.push_back(b2);
-
-        Beacon b3;
-        b3.callsign = "NOCALL-9"; b3.symbol = ">"; b3.overlay = "/";
-        b3.smartBeaconActive = true; b3.smartBeaconSetting = 2; b3.gpsEcoMode = false;
-        beacons.push_back(b3);
-    }
+    for (size_t i = 0; i < 4; ++i) beacons.push_back(makeDefaultBeacon(i));
 
     display.ecoMode                 = false;
     display.timeout                 = 4;
@@ -492,7 +482,7 @@ void Configuration::setDefaultValues() {
     aprs_is.port                    = 14580;
     aprs_is.passcode                = "-1";
 
-    auto addLoraType = [&](const char *name, long freq, int sf, int cr4, int dataRate) {
+    auto addLoraType = [&](const char *name, long freq, int sf, int cr4) {
         LoraType lt;
         lt.profileName      = name;
         lt.frequency        = freq;
@@ -500,22 +490,22 @@ void Configuration::setDefaultValues() {
         lt.codingRate4      = cr4;
         lt.signalBandwidth  = 125000;
         lt.power            = 20;
-        lt.dataRate         = dataRate;
+        lt.dataRate         = LoRa_Utils::calculateDataRate(sf, cr4, lt.signalBandwidth);
         loraTypes.push_back(lt);
     };
 
     #if defined(LORA_FREQ_MIN) && LORA_FREQ_MIN < 500000000
         // 433 MHz boards: EU, PL, UK
-        addLoraType("EU/WORLD", 433775000, 12, 5, 300);   // EU  — SF12 CR4:5
-        addLoraType("Poland",   434855000,  9, 7, 1200);  // PL  — SF9  CR4:7
-        addLoraType("UK",       439912500, 12, 5, 300);   // UK  — SF12 CR4:5
+        addLoraType("EU/WORLD", 433775000, 12, 5);   // EU  — SF12 CR4:5
+        addLoraType("Poland",   434855000,  9, 7);   // PL  — SF9  CR4:7
+        addLoraType("UK",       439912500, 12, 5);   // UK  — SF12 CR4:5
     #elif defined(LORA_FREQ_MIN) && LORA_FREQ_MIN >= 800000000
         // 868/915 MHz boards: EU868, US915
-        addLoraType("EU868", 868200000, 12, 5, 300);
-        addLoraType("US915", 915000000, 12, 5, 300);
+        addLoraType("EU868", 868200000, 12, 5);
+        addLoraType("US915", 915000000, 12, 5);
     #else
         // Fallback: EU 433
-        addLoraType("EU/WORLD", 433775000, 12, 5, 300);
+        addLoraType("EU/WORLD", 433775000, 12, 5);
     #endif
 
     battery.sendVoltage             = false;

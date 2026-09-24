@@ -162,17 +162,7 @@ namespace LoRa_Utils {
     }
 
     int calculateDataRate(int sf, int cr, int bw) {
-        // Match the 6 standard presets first (keeps compatibility with speed selector UI)
-        if (bw == 125000) {
-            const struct { int sf; int cr; int rate; } presets[] = {
-                {12, 5, 300}, {12, 6, 244}, {12, 7, 209}, {12, 8, 183},
-                {10, 8, 610}, {9, 7, 1200}
-            };
-            for (const auto& p : presets) {
-                if (p.sf == sf && p.cr == cr) return p.rate;
-            }
-        }
-        // Compute exact rate for all other SF/CR/BW combinations
+        // LoRa physical bit rate, rounded to the nearest bit per second.
         if (sf < 5 || sf > 12 || cr < 5 || cr > 8 || bw <= 0) return 0;
         double rate = (double)sf * ((double)bw / (1 << sf)) * (4.0 / cr);
         return (int)(rate + 0.5);
@@ -181,12 +171,12 @@ namespace LoRa_Utils {
     DataRateConfig getDataRateConfig(int dataRate) {
         // Map the 6 speeds to their LoRa parameters
         const DataRateConfig configs[] = {
-            {300,  12, 5, 125000},  // SF12, CR4/5
+            {293,  12, 5, 125000},  // SF12, CR4/5
             {244,  12, 6, 125000},  // SF12, CR4/6
             {209,  12, 7, 125000},  // SF12, CR4/7
             {183,  12, 8, 125000},  // SF12, CR4/8
             {610,  10, 8, 125000},  // SF10, CR4/8
-            {1200,  9, 7, 125000}   // SF9, CR4/7
+            {1256,  9, 7, 125000}   // SF9, CR4/7
         };
 
         for (int i = 0; i < 6; i++) {
@@ -196,12 +186,12 @@ namespace LoRa_Utils {
         }
 
         // Default value if not found
-        return configs[0];  // 300 bps
+        return configs[0];  // 293 bps
     }
 
     int getNextDataRate(int currentDataRate) {
         // The 6 available speeds
-        const int dataRates[] = {300, 244, 209, 183, 610, 1200};
+        const int dataRates[] = {293, 244, 209, 183, 610, 1256};
 
         for (int i = 0; i < 6; i++) {
             if (dataRates[i] == currentDataRate) {
@@ -209,7 +199,7 @@ namespace LoRa_Utils {
             }
         }
 
-        return 300;  // Default value
+        return 293;  // Default value
     }
 
     void changeDataRate() {

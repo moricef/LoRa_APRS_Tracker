@@ -172,7 +172,7 @@ namespace WEB_Utils {
         };
 
         //  Beacons
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             String prefix = "beacons." + String(i) + ".";
             Config.beacons[i].callsign          = getParamStringSafe(prefix + "callsign", Config.beacons[i].callsign);
             Config.beacons[i].symbol            = getParamStringSafe(prefix + "symbol", Config.beacons[i].symbol);

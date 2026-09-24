@@ -428,7 +428,7 @@ namespace KEYBOARD_Utils {
             LoRa_Utils::requestFrequencyChange(newLoraIndex);  // Always request, even if same
         } else if (menuDisplay >= 21500 && menuDisplay <= 21505) {
             // Request data rate change (safe from ISR) - menuDisplay change handled in processPendingChanges()
-            const int dataRates[] = {300, 244, 209, 183, 610, 1200};
+            const int dataRates[] = {293, 244, 209, 183, 610, 1256};
             int index = menuDisplay - 21500;
             LoRa_Utils::requestDataRateChange(dataRates[index]);
         } else if (menuDisplay == 220) {

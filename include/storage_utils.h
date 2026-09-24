@@ -65,7 +65,7 @@ struct StationStats {
     bool lastIsDirect;
 };
 
-// Dashboard Last RX cache (RAM only, max 4, cleared at boot)
+// Dashboard Last RX cache (RAM only, max 15, cleared at boot)
 struct DashboardRxEntry {
     String callsign;
     String rfTransmitter;

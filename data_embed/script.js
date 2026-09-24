@@ -16,6 +16,13 @@ function setChecked(id, value) { const element = byId(id); if (element) element.
 function setDisabled(id, value) { const element = byId(id); if (element) element.disabled = Boolean(value); }
 function escapeHtml(value) { return String(value ?? "").replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"); }
 function numeric(value, fallback) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
+function loraBitRate(sf, cr, bw) { return Math.round(sf * (bw / (2 ** sf)) * (4 / cr)); }
+function updateLoraBitRate(index) {
+    const sf = Number(byId('lora.' + index + '.spreadingFactor').value);
+    const cr = Number(byId('lora.' + index + '.codingRate4').value);
+    const bw = Number(byId('lora.' + index + '.signalBandwidth').value);
+    byId('lora.' + index + '.bitRate').textContent = loraBitRate(sf, cr, bw) + ' bps';
+}
 function cloneLoraProfile(profile) { return { ...profile }; }
 function applyBuildInfoPreviewFallback() {
     const element = byId("buildInfo");
@@ -95,7 +102,7 @@ function renderSmartBeaconInput(index, field, label, value) {
 function renderBeaconProfiles(beacons) {
     const container = byId("beacon-settings");
     container.innerHTML = "";
-    const stationProfiles = Array.from({ length: 3 }, (_, index) => {
+    const stationProfiles = Array.from({ length: 4 }, (_, index) => {
         return (beacons || [])[index] || {
             callsign: "",
             profileLabel: "PROFILE " + (index + 1),
@@ -140,14 +147,16 @@ function renderLoraProfiles() {
         const bw = numeric(lora.signalBandwidth, 125000);
         const sf = numeric(lora.spreadingFactor, 12);
         const cr = numeric(lora.codingRate4, 5);
+        const bitRate = loraBitRate(sf, cr, bw);
         element.classList.add("row", "lora", "border-bottom", "py-2");
         element.innerHTML = '<div class="list-index mb-2"><strong>' + (index + 1) + ')</strong></div>' +
             '<div class="form-floating col-12 col-md-3 mb-2"><input type="text" class="form-control form-control-sm" name="lora.' + index + '.profileName" id="lora.' + index + '.profileName" value="' + escapeHtml(lora.profileName || ('PROFILE ' + (index + 1))) + '" maxlength="16" required><label for="lora.' + index + '.profileName">Profile name</label></div>' +
             '<div class="form-floating col-12 col-md-3 mb-2"><input type="number" class="form-control form-control-sm" name="lora.' + index + '.frequency" id="lora.' + index + '.frequency" value="' + numeric(lora.frequency, loraFrequencyLimits.min) + '" min="' + loraFrequencyLimits.min + '" max="' + loraFrequencyLimits.max + '" required><label for="lora.' + index + '.frequency">Freq (' + freqMinMHz + '-' + freqMaxMHz + ')</label></div>' +
-            '<div class="form-floating col-6 col-md-2 mb-2"><select class="form-select form-select-sm" name="lora.' + index + '.signalBandwidth" id="lora.' + index + '.signalBandwidth"><option value="62500" ' + (bw === 62500 ? "selected" : "") + '>62.5</option><option value="125000" ' + (bw === 125000 ? "selected" : "") + '>125</option></select><label for="lora.' + index + '.signalBandwidth">BW (kHz)</label></div>' +
-            '<div class="form-floating col-6 col-md-1 mb-2"><select class="form-select form-select-sm" name="lora.' + index + '.spreadingFactor" id="lora.' + index + '.spreadingFactor">' + [5,6,7,8,9,10,11,12].map((v) => '<option value="' + v + '" ' + (sf === v ? "selected" : "") + '>SF' + v + '</option>').join("") + '</select><label for="lora.' + index + '.spreadingFactor">SF</label></div>' +
-            '<div class="form-floating col-6 col-md-1 mb-2"><select class="form-select form-select-sm" name="lora.' + index + '.codingRate4" id="lora.' + index + '.codingRate4">' + [5,6,7,8].map((v) => '<option value="' + v + '" ' + (cr === v ? "selected" : "") + '>4:' + v + '</option>').join("") + '</select><label for="lora.' + index + '.codingRate4">CR</label></div>' +
+            '<div class="form-floating col-6 col-md-2 mb-2"><select class="form-select form-select-sm" name="lora.' + index + '.signalBandwidth" id="lora.' + index + '.signalBandwidth" onchange="updateLoraBitRate(' + index + ')"><option value="62500" ' + (bw === 62500 ? "selected" : "") + '>62.5</option><option value="125000" ' + (bw === 125000 ? "selected" : "") + '>125</option></select><label for="lora.' + index + '.signalBandwidth">BW (kHz)</label></div>' +
+            '<div class="form-floating col-6 col-md-1 mb-2"><select class="form-select form-select-sm" name="lora.' + index + '.spreadingFactor" id="lora.' + index + '.spreadingFactor" onchange="updateLoraBitRate(' + index + ')">' + [5,6,7,8,9,10,11,12].map((v) => '<option value="' + v + '" ' + (sf === v ? "selected" : "") + '>SF' + v + '</option>').join("") + '</select><label for="lora.' + index + '.spreadingFactor">SF</label></div>' +
+            '<div class="form-floating col-6 col-md-1 mb-2"><select class="form-select form-select-sm" name="lora.' + index + '.codingRate4" id="lora.' + index + '.codingRate4" onchange="updateLoraBitRate(' + index + ')">' + [5,6,7,8].map((v) => '<option value="' + v + '" ' + (cr === v ? "selected" : "") + '>4:' + v + '</option>').join("") + '</select><label for="lora.' + index + '.codingRate4">CR</label></div>' +
             '<div class="form-floating col-6 col-md-1 mb-2"><input type="number" class="form-control form-control-sm" name="lora.' + index + '.power" id="lora.' + index + '.power" value="' + numeric(lora.power, 20) + '" min="1" max="22" required><label for="lora.' + index + '.power">Power</label></div>' +
+            '<div class="col-6 col-md-auto mb-2 d-flex align-items-center"><span class="text-muted" id="lora.' + index + '.bitRate">' + bitRate + ' bps</span></div>' +
             '<div class="col-12 col-md-auto mb-2 d-flex align-items-center"><button type="button" class="btn btn-outline-danger" title="Delete profile" onclick="removeLoraProfile(' + index + ')">Delete</button></div>';
         container.appendChild(element);
     });

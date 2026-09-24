@@ -13,8 +13,8 @@
 // Version Info
 // =============================================================================
 
-#define UI_VERSION "2.11.0-BLETEST1"
-#define UI_VERSION_DATE "2026-09-22"
+#define UI_VERSION "2.11.0-DASHRATE1"
+#define UI_VERSION_DATE "2026-09-24"
 
 // =============================================================================
 // Display Constants

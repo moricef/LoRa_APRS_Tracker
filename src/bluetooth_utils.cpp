@@ -135,7 +135,8 @@ namespace BLUETOOTH_Utils {
         if (!packet.isEmpty()) {
             if (useKiss) {
                 ESP_LOGD(TAG, "Rx Kiss %s", serialReceived.c_str());
-                SerialBT.println(KISS_Utils::encodeKISS(packet));
+                String encoded = KISS_Utils::encodeKISS(packet);
+                if (!encoded.isEmpty()) SerialBT.println(encoded);
             } else {
                 ESP_LOGD(TAG, "Rx TNC2 %s", serialReceived.c_str());
                 SerialBT.println(packet);
