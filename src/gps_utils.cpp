@@ -71,9 +71,17 @@ static int8_t nmeaHexValue(char c) {
     return -1;
 }
 
+// Le buffer RX par defaut du core Arduino est de 256 octets
+// (HardwareSerial.cpp: _rxBufferSize(256)). A 38400 bauds cela ne couvre que
+// 66 ms, alors que l'economiseur de boucle (power_save.cpp) peut retarder la
+// lecture de 50 ms : un burst NMEA deborderait et le fix se degraderait sans
+// message d'erreur. 1024 octets portent la marge a 266 ms.
+#define GPS_RX_BUFFER_SIZE 1024
+
 static bool detectNmeaAtBaud(uint32_t baud, uint32_t timeoutMs) {
     gpsSerial.end();
     delay(20);
+    gpsSerial.setRxBufferSize(GPS_RX_BUFFER_SIZE);
     gpsSerial.begin(baud, SERIAL_8N1, GPS_TX, GPS_RX);
 
     bool inSentence = false;
@@ -141,6 +149,7 @@ static uint32_t detectTDeckGpsBaud() {
 
     gpsSerial.end();
     delay(20);
+    gpsSerial.setRxBufferSize(GPS_RX_BUFFER_SIZE);
     gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_TX, GPS_RX);
     ESP_LOGW(TAG, "No valid NMEA sentence during baud detection; using %u baud",
              (unsigned)GPS_BAUD);
@@ -177,7 +186,8 @@ namespace GPS_Utils {
             delay(100);
             gpsSerial.print("$PMTK314,0,1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n");
         #else
-            gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_TX, GPS_RX);
+            gpsSerial.setRxBufferSize(GPS_RX_BUFFER_SIZE);
+    gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_TX, GPS_RX);
         #endif
     }
 

@@ -116,6 +116,54 @@ namespace BATTERY_Utils {
     };
     static const int battLUTSize = sizeof(battLUT) / sizeof(battLUT[0]);
 
+    // --- Detection de l'alimentation externe ---------------------------------
+    // Sert a decider si l'economiseur de boucle peut s'engager (power_save).
+    //
+    // Un AXP192/AXP2101 repond directement. Sans PMU il ne reste que la tension,
+    // et un seuil instantane ne distingue pas "sur secteur" de "batterie pleine
+    // qu'on vient de debrancher" : les deux lisent 4,20 V. C'est la PERSISTANCE
+    // qui tranche. Un chargeur maintient la tension a son maximum indefiniment ;
+    // une batterie debranchee perd sa charge de surface et decroche sous 4,15 V
+    // en quelques minutes avec les ~70 mA que consomme l'appareil ecran eteint.
+    //
+    // Les deux erreurs possibles sont asymetriques dans le bon sens : croire
+    // qu'on est sur batterie alors qu'on est branche ne fait que ralentir la
+    // boucle sans dommage, tandis que l'inverse ne coute que les premieres
+    // minutes d'economie.
+    static const float    EXT_POWER_VOLTAGE  = 4.18f;
+    static const uint32_t EXT_POWER_HOLD_MS  = 10UL * 60UL * 1000UL;
+    static const float    EXT_POWER_RATE     = 1.0f;   // %/h, fuel gauge en charge
+
+    static uint32_t lastBelowExtThreshold = 0;
+    static bool     extPowerSampled       = false;
+    static bool     extPowerChargingNow   = false;
+
+    // Appele a chaque mesure (toutes les 30 s hors PMU).
+    static void sampleExternalPower(float voltage, float chargeRatePctPerHour) {
+        if (!extPowerSampled) {
+            extPowerSampled = true;
+            lastBelowExtThreshold = millis();   // ne jamais conclure sur millis()==0
+        }
+        if (voltage < EXT_POWER_VOLTAGE) {
+            lastBelowExtThreshold = millis();
+        }
+        extPowerChargingNow = (chargeRatePctPerHour > EXT_POWER_RATE);
+    }
+
+    bool isExternallyPowered() {
+        #if defined(HAS_AXP192) || defined(HAS_AXP2101)
+            return POWER_Utils::isCharging();
+        #else
+            // Avant la premiere mesure, repondre "alimente" : l'economiseur
+            // reste inactif tant qu'on ne sait pas.
+            if (!extPowerSampled) return true;
+            // Une charge en cours est un indice immediat ; une charge terminee
+            // sur secteur donne un taux nul, d'ou le repli sur la persistance.
+            if (extPowerChargingNow) return true;
+            return (millis() - lastBelowExtThreshold) >= EXT_POWER_HOLD_MS;
+        #endif
+    }
+
     int voltageToPercent(float voltage) {
         if (voltage >= battLUT[0][0]) return 100;
         if (voltage <= battLUT[battLUTSize - 1][0]) return 0;
@@ -265,6 +313,7 @@ namespace BATTERY_Utils {
                 batteryVoltage                  = String(cellV, 2);
                 batteryConnected                = (cellV > 1.5);
                 batteryChargeDischargeCurrent   = String(rate, 0);
+                sampleExternalPower(cellV, rate);
 
                 static uint32_t lastBattLog    = 0;
                 static float    lastVoltage    = 0.0f;
@@ -297,6 +346,7 @@ namespace BATTERY_Utils {
         #else
             batteryVoltage = String(readBatteryVoltage(), 2);
             if (batteryVoltage.toFloat() > 1.5) batteryConnected = true;
+            sampleExternalPower(batteryVoltage.toFloat(), 0.0f);
         #endif
     }
 
