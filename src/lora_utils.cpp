@@ -28,6 +28,7 @@
 #include "configuration.h"
 #include "board_pinout.h"
 #include "lora_utils.h"
+#include "native_aprs.h"
 #include "display.h"
 #include "station_utils.h"
 #include "storage_utils.h"
@@ -418,6 +419,47 @@ namespace LoRa_Utils {
         }
     }
 
+    // Received payload as text. A native frame becomes "<\xff\x01" + TNC2
+    // with its RXT block as a v2 trailer, so every consumer sees what a text
+    // frame would have given; a text frame keeps the behaviour of
+    // readData(String&), which stops at the first zero byte.
+    static String payloadToText(uint8_t* data, size_t length) {
+        if (NATIVE_APRS::isNativeFrame(data, length)) {
+            std::string tnc2;
+            std::vector<NATIVE_APRS::RxtTuple> rxt;
+            if (!NATIVE_APRS::decode(data, length, tnc2, rxt)) {
+                ESP_LOGW(TAG, "Native frame not decodable (%u bytes)", (unsigned)length);
+                return "";
+            }
+            ESP_LOGI(TAG, "Native frame %u bytes", (unsigned)length);
+            return String("\x3c\xff\x01") + NATIVE_APRS::toText(tnc2, rxt).c_str();
+        }
+        data[length] = 0;
+        return String(reinterpret_cast<char*>(data));
+    }
+
+    // Raw read: a native frame contains zero bytes, which readData(String&) would cut at.
+    static int readPayload(String& text) {
+        uint8_t buffer[256];
+        size_t length = radio.getPacketLength();
+        if (length > sizeof(buffer) - 1) length = sizeof(buffer) - 1;
+        int state = radio.readData(buffer, length);
+        if (state == RADIOLIB_ERR_NONE) text = payloadToText(buffer, length);
+        return state;
+    }
+
+    // Native form of a text packet, or empty when it has to go as text.
+    static std::vector<uint8_t> nativeFrame(const String& packet) {
+        std::string tnc2;
+        std::vector<NATIVE_APRS::RxtTuple> rxt;
+        std::vector<uint8_t> frame;
+        if (!NATIVE_APRS::fromText(std::string(packet.c_str(), packet.length()), "", tnc2, rxt) ||
+            !NATIVE_APRS::encode(tnc2, rxt, frame) || frame.size() > 255) {
+            return {};
+        }
+        return frame;
+    }
+
     void sendNewPacket(const String& newPacket) {
         if (!loraInitOk) return;
         ESP_LOGI(TAG, "Tx ---> %s", newPacket.c_str());
@@ -438,7 +480,23 @@ namespace LoRa_Utils {
         if (spiMutex) xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY);
         loraSpiBegin();
 
-        int state = radio.transmit("\x3c\xff\x01" + newPacket);
+        std::vector<uint8_t> native;
+        if (Config.lora.txFormat != 0) {
+            native = nativeFrame(newPacket);
+            if (native.empty()) ESP_LOGW(TAG, "Native: sent as text, packet cannot be encoded");
+        }
+        int state;
+        if (Config.lora.txFormat == 1 && !native.empty()) {
+            state = radio.transmit(native.data(), native.size());
+        } else {
+            state = radio.transmit("\x3c\xff\x01" + newPacket);
+            if (state == RADIOLIB_ERR_NONE && Config.lora.txFormat == 2 && !native.empty()) {
+                state = radio.transmit(native.data(), native.size());
+            }
+        }
+        if (!native.empty()) {
+            ESP_LOGI(TAG, "Native Tx %u bytes (text frame %u bytes)", (unsigned)native.size(), (unsigned)(newPacket.length() + 3));
+        }
         transmitFlag = true;
         loraSpiEnd();
         if (spiMutex) xSemaphoreGiveRecursive(spiMutex);
@@ -474,7 +532,7 @@ namespace LoRa_Utils {
         String packet = "";
         if (spiMutex) xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY);
         loraSpiBegin();
-        int state = radio.readData(packet);
+        int state = readPayload(packet);
         if (state == RADIOLIB_ERR_NONE) {
             receivedLoraPacket.text       = packet;
             receivedLoraPacket.rssi       = radio.getRSSI();
@@ -510,7 +568,7 @@ namespace LoRa_Utils {
                 while (digitalRead(RADIO_BUSY_PIN) && (millis() - busyWaitStart < 500)) {
                     yield();
                 }
-                int state = radio.readData(packet);
+                int state = readPayload(packet);
                 #ifdef HAS_SX1262
                 radio.startReceive(RADIOLIB_SX126X_RX_TIMEOUT_NONE);  // re-arm single-shot RX
                 #else
