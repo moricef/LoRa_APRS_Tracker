@@ -59,7 +59,7 @@ namespace MSG_Utils {
     bool    deleteMessageFromConversation(const String& callsign, int index);
     void    saveToConversation(const String& callsign, const String& message, bool outgoing);
     void    saveNewMessage(uint8_t typeMessage, const String& station, const String& newMessage);
-    void    sendMessage(const String& station, const String& textMessage);
+    void    sendMessage(const String& station, const String& textMessage, const String& wireSuffix = "");
     void    addToOutputBuffer(uint8_t typeOfMessage, const String& station, const String& textMessage);
     void    processOutputBuffer();
     void    clean15SegBuffer();

@@ -44,6 +44,7 @@
 #include "lvgl_ui.h"
 #include "ui_dashboard.h"
 #include "ui_messaging.h"
+#include "reply_ack_utils.h"
 #endif
 
 
@@ -104,7 +105,7 @@ std::vector<String>             outputMessagesBuffer;
 std::vector<String>             outputAckRequestBuffer;
 std::vector<Packet15SegBuffer>  packet15SegBuffer;
 
-int         ackRequestNumber    = random(1,999);
+int         ackRequestNumber    = random(1, REPLY_ACK_Utils::MESSAGE_NUMBER_SLOTS + 1);
 bool        ackRequestState     = false;
 String      ackCallsignRequest  = "";
 String      ackNumberRequest    = "";
@@ -116,6 +117,29 @@ uint32_t    messageLedTime      = millis();
 
 
 namespace MSG_Utils {
+
+    // Last reply-ack message number received from each peer, piggybacked
+    // as AA on our next message to it. Bounded: oldest peer dropped first.
+    static const size_t REPLY_ACK_PEERS = 8;
+    static std::vector<std::pair<String, String>> replyAckPeers;
+
+    static void observeReplyAck(const String& station, const String& number) {
+        for (auto it = replyAckPeers.begin(); it != replyAckPeers.end(); ++it) {
+            if (it->first == station) {
+                replyAckPeers.erase(it);
+                break;
+            }
+        }
+        if (replyAckPeers.size() >= REPLY_ACK_PEERS) replyAckPeers.erase(replyAckPeers.begin());
+        replyAckPeers.push_back(std::make_pair(station, number));
+    }
+
+    static String pendingReplyAck(const String& station) {
+        for (const auto& entry : replyAckPeers) {
+            if (entry.first == station) return entry.second;
+        }
+        return "";
+    }
 
     static void notifyUnreadChanged() {
         #ifdef USE_LVGL_UI
@@ -1176,8 +1200,10 @@ namespace MSG_Utils {
         }
     }
 
-    void sendMessage(const String& station, const String& textMessage) {
-        String newPacket = APRSPacketLib::generateMessagePacket(currentBeacon->callsign, "APLRT1", Config.path, station, textMessage);
+    void sendMessage(const String& station, const String& textMessage, const String& wireSuffix) {
+        // wireSuffix ("}AA" reply-ack) is on air only; the conversation keeps
+        // textMessage so retries with a changed AA stay one saved message.
+        String newPacket = APRSPacketLib::generateMessagePacket(currentBeacon->callsign, "APLRT1", Config.path, station, textMessage + wireSuffix);
         if (textMessage.indexOf("ack") == 0 && station != "WLNK-1") {  // don't show Winlink ACK
             displayShow("<<ACK Tx>>", "", "", 500);
         } else if (station.indexOf("CA2RXU-15") == 0 && textMessage.indexOf("wrl") == 0) {
@@ -1198,10 +1224,10 @@ namespace MSG_Utils {
 
     String getAckRequestNumber() {
         ackRequestNumber++;
-        if (ackRequestNumber > 999) {
+        if (ackRequestNumber < 1 || ackRequestNumber > REPLY_ACK_Utils::MESSAGE_NUMBER_SLOTS) {
             ackRequestNumber = 1;
         }
-        return String(ackRequestNumber);
+        return REPLY_ACK_Utils::formatMessageNumber(ackRequestNumber);
     }
 
     void addToOutputBuffer(uint8_t typeOfMessage, const String& station, const String& textMessage) {
@@ -1296,7 +1322,8 @@ namespace MSG_Utils {
                 ackCallsignRequest = rest.substring(0, rest.indexOf(","));
                 String payload = rest.substring(rest.indexOf(",") + 1);
                 ackNumberRequest = payload.substring(payload.indexOf("{") + 1);                
-                sendMessage(ackCallsignRequest, payload);
+                // Reply-ack form "{MM}AA", AA taken at each transmission.
+                sendMessage(ackCallsignRequest, payload, "}" + pendingReplyAck(ackCallsignRequest));
                 lastTxTime = millis();
                 lastRetryTime = millis();
                 outputAckRequestBuffer[0] = String(triesLeft.toInt() - 1) + "," + ackCallsignRequest + "," + payload;
@@ -1369,12 +1396,24 @@ namespace MSG_Utils {
                     if (lastReceivedPacket.type == 1 && lastReceivedPacket.addressee == currentBeacon->callsign) {
 
                         if (ackRequestState && lastReceivedPacket.payload.indexOf("ack") == 0) {
-                            if (ackCallsignRequest == lastReceivedPacket.sender && ackNumberRequest == lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("ack") + 3)) {
+                            if (ackCallsignRequest == lastReceivedPacket.sender && ackNumberRequest == REPLY_ACK_Utils::ackedNumber(lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("ack") + 3))) {
                                 outputAckRequestBuffer.erase(outputAckRequestBuffer.begin());
                                 ackRequestState = false;
                             }
                         }
                         if (lastReceivedPacket.payload.indexOf("{") >= 0) {
+                            String replyNumber, replyAck;
+                            if (REPLY_ACK_Utils::parseReplyAck(lastReceivedPacket.payload, replyNumber, replyAck)) {
+                                MSG_Utils::observeReplyAck(lastReceivedPacket.sender, replyNumber);
+                                // A piggybacked AA acknowledges our pending message (step 7).
+                                if (ackRequestState && replyAck.length() > 0 &&
+                                    ackCallsignRequest == lastReceivedPacket.sender && ackNumberRequest == replyAck &&
+                                    !outputAckRequestBuffer.empty()) {
+                                    outputAckRequestBuffer.erase(outputAckRequestBuffer.begin());
+                                    ackRequestState = false;
+                                }
+                            }
+                            // Exact copy of the number, "ackMM}AA" for reply-ack (step 4).
                             MSG_Utils::addToOutputBuffer(0, lastReceivedPacket.sender, "ack" + lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("{") + 1));
                             lastMsgRxTime = millis();
                             lastReceivedPacket.payload = lastReceivedPacket.payload.substring(0, lastReceivedPacket.payload.indexOf("{"));
@@ -1426,7 +1465,7 @@ namespace MSG_Utils {
                                 if (lastReceivedPacket.payload.indexOf("ack") != 0) {
                                     saveNewMessage(0, lastReceivedPacket.sender, lastReceivedPacket.payload);
                                 }                                    
-                            } else if (winlinkStatus == 1 && ackNumberRequest == lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("ack") + 3)) {
+                            } else if (winlinkStatus == 1 && ackNumberRequest == REPLY_ACK_Utils::ackedNumber(lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("ack") + 3))) {
                                 ESP_LOGD(TAG, "---> Waiting Challenge");
                                 lastMsgRxTime = millis();
                                 winlinkStatus = 2;
@@ -1437,7 +1476,7 @@ namespace MSG_Utils {
                                 lastMsgRxTime = millis();
                                 winlinkStatus = 3;
                                 menuDisplay = 501;
-                            } else if (winlinkStatus == 3 && ackNumberRequest == lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("ack") + 3)) {
+                            } else if (winlinkStatus == 3 && ackNumberRequest == REPLY_ACK_Utils::ackedNumber(lastReceivedPacket.payload.substring(lastReceivedPacket.payload.indexOf("ack") + 3))) {
                                 ESP_LOGD(TAG, "---> Challenge Ack Received");
                                 lastMsgRxTime = millis();
                                 winlinkStatus = 4;
