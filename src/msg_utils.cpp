@@ -40,11 +40,11 @@
 #include "display.h"
 #include "mice_utils.h"
 #include "shared_spi_guard.h"
+#include "reply_ack_utils.h"
 #ifdef USE_LVGL_UI
 #include "lvgl_ui.h"
 #include "ui_dashboard.h"
 #include "ui_messaging.h"
-#include "reply_ack_utils.h"
 #endif
 
 

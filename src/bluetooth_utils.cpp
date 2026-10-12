@@ -16,6 +16,10 @@
  * along with LoRa APRS Tracker. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#ifndef UNIT_TEST
+#include "board_pinout.h"   // defines HAS_BT_CLASSIC
+#endif
+
 #ifdef HAS_BT_CLASSIC
 
 #ifdef UNIT_TEST

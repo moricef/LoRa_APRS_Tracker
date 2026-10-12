@@ -25,7 +25,7 @@
 
 static const char *TAG = "Touch";
 
-#if defined(HAS_TOUCHSCREEN) && !defined(WAVESHARE_S3_TOUCH_LCD_7)
+#if defined(HAS_TOUCHSCREEN)
 
     extern Configuration    Config;
 

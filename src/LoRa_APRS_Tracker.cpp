@@ -50,17 +50,10 @@ static const char *TAG = "Main";
 #include <NMEAGPS.h>
 #include <Arduino.h>
 #include <WiFi.h>
-#if defined(WAVESHARE_S3_TOUCH_LCD_7)
-#include <Network.h>
-#endif
 #include "smartbeacon_utils.h"
-#ifdef HAS_BT_CLASSIC
 #include "bluetooth_utils.h"
-#endif
-#if !defined(WAVESHARE_S3_TOUCH_LCD_7)
 #include "keyboard_utils.h"
 #include "joystick_utils.h"
-#endif
 #include "sd_logger.h"
 #include "configuration.h"
 #include "battery_utils.h"
@@ -269,9 +262,7 @@ void setup() {
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("Keyboard...");
     #endif
-    #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
     KEYBOARD_Utils::setup();
-#endif
     #ifdef HAS_TOUCHSCREEN
         #ifndef USE_LVGL_UI
             TOUCH_Utils::setup();  // Only use old touch when LVGL not active
@@ -300,16 +291,7 @@ void setup() {
     ESP_LOGI(TAG, "Heap: %u KB total, %u KB free", ESP.getHeapSize()/1024, ESP.getFreeHeap()/1024);
 
     // Initialize watchdog timer (30 seconds timeout)
-    #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    esp_task_wdt_config_t wdt_config = {
-        .timeout_ms = 30000,
-        .idle_core_mask = 0,
-        .trigger_panic = true,
-    };
-    esp_task_wdt_init(&wdt_config);
-    #else
     esp_task_wdt_init(30, true);  // 30 seconds, panic on timeout
-    #endif
     esp_task_wdt_add(NULL);       // Add current task to watchdog
     ESP_LOGI(TAG, "Watchdog initialized (30s timeout)");
 
@@ -328,9 +310,7 @@ void loop() {
         if (APRSPacketLib::checkNocall(currentBeacon->callsign)) {
             ESP_LOGE(TAG, "Change your callsigns in WebConfig");
             displayShow("ERROR", "Callsigns = NOCALL!", "---> change it !!!", 2000);
-            #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
             KEYBOARD_Utils::rightArrow();
-#endif
             currentBeacon = &Config.beacons[myBeaconsIndex];
         }
     }
@@ -348,9 +328,7 @@ void loop() {
     #ifdef BUTTON_PIN
         BUTTON_Utils::loop();
     #endif
-    #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
     KEYBOARD_Utils::read();
-#endif
     #ifdef HAS_JOYSTICK
         JOYSTICK_Utils::loop();
     #endif

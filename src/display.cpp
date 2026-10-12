@@ -30,19 +30,14 @@ static const char *TAG = "Display";
 
 
 #ifdef HAS_TFT
-    #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-        // No LGFX device — display via ESP32_Display_Panel
-        extern esp_expander::CH422G* waveshare_expander;
-    #elif defined(CROWPANEL_ADVANCE_35)
+    #if defined(CROWPANEL_ADVANCE_35)
         #include "LGFX_CrowPanel_35.h"
         LGFX_CrowPanel_35 tft;
     #else
         #include "LGFX_TDeck.h"
         LGFX_TDeck  tft;
     #endif
-    #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
     LGFX_Sprite sprite(&tft);
-    #endif
 
     #ifdef HELTEC_WIRELESS_TRACKER
         #define bigSizeFont     2
@@ -259,20 +254,14 @@ bool        symbolAvailable         = true;
 
 void displaySetBrightness(uint8_t value) {
     #ifdef HAS_TFT
-    #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-    if (waveshare_expander) {
-        waveshare_expander->digitalWrite(2, value > 0 ? 1 : 0);
-    }
-    #else
     tft.setBrightness(value);
-    #endif
     #endif
 }
 
 void displaySetup() {
     delay(500);
     STATION_Utils::loadIndex(2);    // Screen Brightness value
-    #if defined(HAS_TFT) && !defined(WAVESHARE_S3_TOUCH_LCD_7)
+    #if defined(HAS_TFT)
         tft.init();
         #ifdef BOARD_HAS_PSRAM
             // PSRAM is handled automatically by LovyanGFX
@@ -334,13 +323,7 @@ void displayToggle(bool toggle) {
         displaySetBrightness(screenBrightness);
     } else {
         #ifdef HAS_TFT
-        #if defined(WAVESHARE_S3_TOUCH_LCD_7)
-        if (waveshare_expander) {
-            waveshare_expander->digitalWrite(2, 0);
-        }
-        #else
         tft.setBrightness(0);
-        #endif
         #endif
     }
 }
@@ -350,7 +333,7 @@ void displayShow(const String& header, const String& line1, const String& line2,
         // LVGL handles display - skip TFT sprite operations
         return;
     #endif
-    #if defined(HAS_TFT) && !defined(WAVESHARE_S3_TOUCH_LCD_7)
+    #if defined(HAS_TFT)
         #if defined(TTGO_T_DECK_GPS) || defined(TTGO_T_DECK_PLUS)
             draw_T_DECK_Top();
 
@@ -456,7 +439,7 @@ void displayShow(const String& header, const String& line1, const String& line2,
         // LVGL handles display - skip TFT sprite operations
         return;
     #endif
-    #if defined(HAS_TFT) && !defined(WAVESHARE_S3_TOUCH_LCD_7)
+    #if defined(HAS_TFT)
         #if defined(TTGO_T_DECK_GPS) || defined(TTGO_T_DECK_PLUS)
             draw_T_DECK_Top();
             sprite.setTextSize(normalSizeFont);
