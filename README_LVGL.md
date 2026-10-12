@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.10.2-blue)
+![Version](https://img.shields.io/badge/version-2.11.0-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus and CrowPanel Advance 3.5", plus classic OLED tracker for T-Beam V1.2**
@@ -15,6 +15,25 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 | **Dashboard** | **Vector Map** | **Messaging** | **Frames** |
 
 > *Screenshots captured from the Linux port. The UI is identical on device; only the map differs — the T-Deck uses the embedded NAV vector renderer, not the OSM-Bright style shown here.*
+
+---
+## What's New in v2.11.0
+- **Batch message deletion** - Long press a message in a conversation to enter selection mode, select as many as needed, and the reply button becomes a trash button that deletes them in one pass.
+- **Faster conversation list** - Listing conversations opened every file just to read its name and date. It now reads the directory directly: 7.3 s for 192 conversations before the change, measured on a user's device. Thanks to @n7uv-jon for the logs.
+- **Larger touch targets** - Title bar buttons (back, reply) were 25-28 px high in a 35 px bar, so taps on the last pixels of the bar hit nothing. Their sensitive area is extended without changing their look.
+- **WiFi after switching networks** - Forcing public DNS servers also froze the IP address, so the tracker kept the address of the previous network after switching access points without a reboot. DHCP now stays active.
+- **WiFi status** - The WiFi screen and APRS-IS uploads follow the real link state instead of a flag that stayed true for 30 s after the access point disappeared.
+- **APRS reply-acks** - Outgoing messages use reply-ack numbers (`{MM}AA`), and an acknowledgement carried by an incoming message stops the retries.
+- **BLE TNC2** - TNC2 frames are queued and sent over the standard Nordic UART Service.
+- **Mic-E** - Encoding follows the active beacon profile, and decoded longitude offsets are normalized.
+- **T-Deck SD card** - Accesses to the SD card, which shares its SPI bus with the LoRa radio and the display, are serialized.
+- **T-Deck screen lock** - When ECO Mode turns the screen off, touch and keyboard are ignored until **Q** then **Space** are pressed within one second, so the device cannot wake up by accident in a pocket.
+- **Quieter GPS log** - The "poor signal freeze" message is logged when the state changes, not once per second.
+
+**In the devel build only:**
+- **Idle power saving** - With the screen off, WiFi and BLE off and on battery, the main loop slows from about 880 to 16 iterations per second, letting the CPU sleep between ticks. LoRa reception, beacons and GPX recording are unaffected.
+- **Log over HTTP** - `http://<tracker>/log` serves the SD card journal, `?grep=TEXT` filters it.
+- **Native LoRa APRS frames** - Reception and optional transmission of the compact native format, selected by `loraConfig.txFormat`.
 
 ---
 ## What's New in v2.10.2
