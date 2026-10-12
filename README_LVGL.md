@@ -153,6 +153,7 @@ You will find details about:
 
 **Power Management**:
 - Display: configurable ECO timeout
+- T-Deck screen lock: when ECO Mode turns the screen off, touch and keyboard are ignored until **Q** then **Space** are pressed within one second
 - WiFi: periodic sleep
 - BLE: auto-disable after 5 min
 - GPS: sleep between beacons
