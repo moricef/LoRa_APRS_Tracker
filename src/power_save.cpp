@@ -27,7 +27,9 @@
 
 static const char *TAG = "PowerSave";
 
+#ifdef USE_LVGL_UI
 extern bool screenDimmed;         // lvgl_ui.cpp
+#endif
 extern bool WiFiUserDisabled;     // wifi_utils.cpp
 extern bool bluetoothActive;      // bluetooth_utils.cpp
 
@@ -60,7 +62,13 @@ namespace POWER_Save {
     // Renvoie BLK_COUNT quand rien ne bloque, sinon la premiere cause trouvee.
     static Blocker currentBlocker() {
         if (!_enabled)                                   return BLK_DISABLED;
+        #ifdef USE_LVGL_UI
         if (!screenDimmed)                               return BLK_SCREEN_ON;
+        #else
+        // Cartes sans UI LVGL (OLED) : l'economiseur n'y a pas ete valide sur
+        // le materiel, la boucle garde son rythme d'origine.
+        return BLK_DISABLED;
+        #endif
         if (BLE_Utils::getConnectedDeviceAddress().length() > 0)
                                                          return BLK_BLE_CLIENT;
         if (!WiFiUserDisabled || WiFi.status() == WL_CONNECTED)

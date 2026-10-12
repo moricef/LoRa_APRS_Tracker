@@ -19,6 +19,10 @@
 #ifndef BLUETOOTH_UTILS_H
 #define BLUETOOTH_UTILS_H
 
+#ifndef UNIT_TEST
+#include "board_pinout.h"   // defines HAS_BT_CLASSIC
+#endif
+
 #ifdef HAS_BT_CLASSIC
 #include <BluetoothSerial.h>
 
