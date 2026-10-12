@@ -63,6 +63,13 @@ static const char *TAG = "GPS";
 
 bool        gpsIsActive     = true;
 
+// Le buffer RX par defaut du core Arduino est de 256 octets
+// (HardwareSerial.cpp: _rxBufferSize(256)). A 38400 bauds cela ne couvre que
+// 66 ms, alors que l'economiseur de boucle (power_save.cpp) peut retarder la
+// lecture de 50 ms : un burst NMEA deborderait et le fix se degraderait sans
+// message d'erreur. 1024 octets portent la marge a 266 ms.
+#define GPS_RX_BUFFER_SIZE 1024
+
 #ifdef TTGO_T_DECK_PLUS
 static int8_t nmeaHexValue(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -70,13 +77,6 @@ static int8_t nmeaHexValue(char c) {
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
     return -1;
 }
-
-// Le buffer RX par defaut du core Arduino est de 256 octets
-// (HardwareSerial.cpp: _rxBufferSize(256)). A 38400 bauds cela ne couvre que
-// 66 ms, alors que l'economiseur de boucle (power_save.cpp) peut retarder la
-// lecture de 50 ms : un burst NMEA deborderait et le fix se degraderait sans
-// message d'erreur. 1024 octets portent la marge a 266 ms.
-#define GPS_RX_BUFFER_SIZE 1024
 
 static bool detectNmeaAtBaud(uint32_t baud, uint32_t timeoutMs) {
     gpsSerial.end();
