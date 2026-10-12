@@ -667,8 +667,11 @@ namespace LVGL_UI {
           Config.display.timeout * 1000; // Config is in seconds
       if (currentTime - lastActivityTime >= ecoTimeoutMs) {
         screenDimmed = true;
+#if defined(TTGO_T_DECK_PLUS) || defined(TTGO_T_DECK_GPS)
+        // Only boards with a keyboard can type the Q + Space unlock sequence.
         screenLocked = true;
         lockQPending = false;
+#endif
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
         if (waveshare_expander) {
           waveshare_expander->digitalWrite(2, 0); // Backlight OFF via CH422G
