@@ -19,7 +19,7 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 ---
 ## What's New in v2.11.0
 - **Batch message deletion** - Long press a message in a conversation to enter selection mode, select as many as needed, and the reply button becomes a trash button that deletes them in one pass.
-- **Faster conversation list** - Listing conversations opened every file just to read its name and date. It now reads the directory directly: 7.3 s for 192 conversations before the change, measured on a user's device. Thanks to @n7uv-jon for the logs.
+- **Faster conversation list** - Listing conversations opened every file just to read its name and date. It now reads the directory directly: 7.3 s for 192 conversations before the change, measured on a user's device. Thanks to @n7uv for the logs.
 - **Larger touch targets** - Title bar buttons (back, reply) were 25-28 px high in a 35 px bar, so taps on the last pixels of the bar hit nothing. Their sensitive area is extended without changing their look.
 - **WiFi after switching networks** - Forcing public DNS servers also froze the IP address, so the tracker kept the address of the previous network after switching access points without a reboot. DHCP now stays active.
 - **WiFi status** - The WiFi screen and APRS-IS uploads follow the real link state instead of a flag that stayed true for 30 s after the access point disappeared.
