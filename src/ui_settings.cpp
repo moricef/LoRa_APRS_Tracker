@@ -1929,9 +1929,7 @@ void UISettings::openWebConf() {
 
         while (!webconf_reboot_requested) {
             uint32_t now = millis();
-            #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
             lv_tick_inc(now - last_tick);
-            #endif
             last_tick = now;
             lv_timer_handler();
             esp_task_wdt_reset();
@@ -2056,9 +2054,7 @@ void UISettings::showBootWebConfig() {
 
         while (!webconf_reboot_requested) {
             uint32_t now = millis();
-            #if !defined(WAVESHARE_S3_TOUCH_LCD_7)
             lv_tick_inc(now - last_tick);
-            #endif
             last_tick = now;
             lv_timer_handler();
             yield();
