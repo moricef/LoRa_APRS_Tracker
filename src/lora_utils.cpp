@@ -274,7 +274,7 @@ namespace LoRa_Utils {
         radio.setBandwidth(signalBandwidth);
         radio.setCodingRate(currentLoRaType->codingRate4);
         #if (defined(HAS_SX1268) || defined(HAS_SX1262)) && !defined(HAS_1W_LORA)
-            radio.setOutputPower(currentLoRaType->power + 2);
+            radio.setOutputPower(constrain(currentLoRaType->power + 2, -9, 22));   // SX126x: -9..22 dBm
         #endif
         #if defined(HAS_SX1278) || defined(HAS_SX1276) || defined(HAS_1W_LORA)
             radio.setOutputPower(currentLoRaType->power);
@@ -384,7 +384,7 @@ namespace LoRa_Utils {
         #endif
 
         #if (defined(HAS_SX1268) || defined(HAS_SX1262)) && !defined(HAS_1W_LORA)
-            state = radio.setOutputPower(currentLoRaType->power + 2); // values available: 10, 17, 22 --> if 20 in tracker_conf.json it will be updated to 22.
+            state = radio.setOutputPower(constrain(currentLoRaType->power + 2, -9, 22)); // values available: 10, 17, 22 --> if 20 in tracker_conf.json it will be updated to 22.
             radio.setCurrentLimit(140);
         #endif
         
