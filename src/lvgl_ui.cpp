@@ -109,6 +109,9 @@ static lv_indev_drv_t indev_drv;
 // Timeout is configured via Config.display.timeout (in seconds)
 uint32_t lastActivityTime = 0;        // Non-static: accessed by UISettings
 bool screenDimmed = false;            // Non-static: accessed by UISettings
+static bool screenLocked = false;
+static bool lockQPending = false;
+static uint32_t lockQTime = 0;
 
 // Note: Dashboard screen and labels are now in UIDashboard module (ui_dashboard.cpp)
 
@@ -152,6 +155,10 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 static uint32_t lastTouchDebug = 0;
 static bool absorbTouchUntilRelease = false;   // absorbe le toucher de réveil jusqu'au relâchement
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+  if (screenLocked) {
+    data->state = LV_INDEV_STATE_REL;
+    return;
+  }
   uint16_t x, y;
   if (tft.getTouch(&x, &y)) {
     // Reset activity timer on touch
@@ -226,7 +233,37 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
     UIMessaging::openComposeWithCallsign(callsign);
 }
 
-  namespace LVGL_UI {
+namespace LVGL_UI {
+  bool handleScreenLockKey(char key) {
+    if (!screenLocked) {
+      lockQPending = false;
+      return false;
+    }
+
+    const uint32_t now = millis();
+    if (key == 'q' || key == 'Q') {
+      lockQPending = true;
+      lockQTime = now;
+      return true;
+    }
+
+    const bool unlock = key == ' ' && lockQPending && now - lockQTime <= 1000;
+    lockQPending = false;
+    if (unlock) {
+      screenLocked = false;
+      screenDimmed = false;
+      lastActivityTime = now;
+      absorbTouchUntilRelease = true;
+      displaySetBrightness(screenBrightness);
+      if (lv_scr_act() == MapState::screen_map) {
+        setCpuFrequencyMhz(240);
+        UIMapManager::redraw_map_canvas();
+      }
+      SD_Logger::logScreenState(false);
+      ESP_LOGI(TAG, "Screen unlocked by Q then Space");
+    }
+    return true;
+  }
 
   // Splash and init screens shown during boot
   static lv_obj_t *screen_splash = nullptr;
@@ -630,6 +667,8 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
           Config.display.timeout * 1000; // Config is in seconds
       if (currentTime - lastActivityTime >= ecoTimeoutMs) {
         screenDimmed = true;
+        screenLocked = true;
+        lockQPending = false;
 #if defined(WAVESHARE_S3_TOUCH_LCD_7)
         if (waveshare_expander) {
           waveshare_expander->digitalWrite(2, 0); // Backlight OFF via CH422G
@@ -644,7 +683,7 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
               "Screen dimmed (eco mode), CPU reduced to %d MHz (map)",
               getCpuFrequencyMhz());
         } else {
-          ESP_LOGI(TAG, "Screen dimmed (eco mode)");
+          ESP_LOGI(TAG, "Screen locked (eco timeout)");
         }
         SD_Logger::logScreenState(true); // Log screen dimmed
       }
@@ -664,11 +703,11 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
         UIDashboard::drawAPRSSymbol(fullSymbol.c_str());
       }
 
-      // Update GPS data
-      if (gpsFix.valid.location) {
-        UIDashboard::updateGPS(gpsFix.latitude(), gpsFix.longitude(), gpsFix.alt.whole,
-                  gpsFix.speed_kph(), gpsFix.satellites, gpsHdop());
-      }
+      // Compact GNSS status and detailed settings page, including loss of fix.
+      UIDashboard::updateGPS(gpsFix.satellites, gpsFix.valid.location);
+      UISettings::updateGNSS(gpsFix.latitude(), gpsFix.longitude(), gpsFix.alt.whole,
+                             gpsFix.speed_kph(), gpsFix.satellites, gpsHdop(),
+                             gpsFix.valid.location);
 
       // Update date/time from GPS
       if (gpsFix.valid.time && gpsFix.valid.date) {
@@ -700,7 +739,8 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 
   // Update functions - delegated to UIDashboard module
   void updateGPS(double lat, double lng, double alt, double speed, int sats, double hdop) {
-    UIDashboard::updateGPS(lat, lng, alt, speed, sats, hdop);
+    UIDashboard::updateGPS(sats, gpsFix.valid.location);
+    UISettings::updateGNSS(lat, lng, alt, speed, sats, hdop, gpsFix.valid.location);
   }
 
   void updateBattery(int percent, float voltage) {

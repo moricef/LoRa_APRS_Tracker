@@ -32,6 +32,7 @@
 #include "map_engine.h"
 #include "map_coordinate_math.h"
 #include "storage_utils.h"
+#include "shared_spi_guard.h"
 #include "nav_types.h"
 #include "ui_map_manager.h"  // For spiMutex, MAP_TILE_SIZE, MAP_SPRITE_SIZE
 
@@ -342,7 +343,7 @@ namespace MapTiles {
             return false;
         }
 
-        if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 const char* region = map_current_region.c_str();
                 snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
@@ -354,7 +355,7 @@ namespace MapTiles {
                     if (SD.exists(path)) { strcpy(found_path, path); found = true; }
                 }
             }
-            xSemaphoreGive(spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         }
 
         // 4. Not found — add to negative cache
@@ -396,7 +397,7 @@ namespace MapTiles {
         char path[128], found_path[128] = {0};
         bool found = false;
 
-        if (spiMutex != NULL && xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+        if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 const char* region = map_current_region.c_str();
                 snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
@@ -408,7 +409,7 @@ namespace MapTiles {
                     if (SD.exists(path)) { strcpy(found_path, path); found = true; }
                 }
             }
-            xSemaphoreGive(spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         }
 
         if (!found) { cacheSlot->isValid = false; return false; }
@@ -469,7 +470,7 @@ namespace MapTiles {
         int yMin = INT_MAX, yMax = INT_MIN;
 
         if (spiMutex != NULL &&
-            xSemaphoreTake(spiMutex, pdMS_TO_TICKS(300)) == pdTRUE) {
+            xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(300)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 File zoomDir = SD.open(path);
                 if (zoomDir && zoomDir.isDirectory()) {
@@ -499,7 +500,7 @@ namespace MapTiles {
                 }
                 zoomDir.close();
             }
-            xSemaphoreGive(spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         }
 
         if (xMin <= xMax && yMin <= yMax) {
@@ -518,7 +519,7 @@ namespace MapTiles {
 
         ESP_LOGI(TAG, "Discovering map region...");
         if (spiMutex != NULL &&
-            xSemaphoreTake(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+            xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 File mapsDir = SD.open("/LoRa_Tracker/Maps");
                 if (mapsDir && mapsDir.isDirectory()) {
@@ -540,7 +541,7 @@ namespace MapTiles {
                 }
                 mapsDir.close();
             }
-            xSemaphoreGive(spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         } else {
             ESP_LOGE(TAG, "Cannot get SPI mutex for region discovery");
         }
@@ -550,6 +551,9 @@ namespace MapTiles {
     }
 
     bool regionContainsTile(const char* region, int zoom, int tileX, int tileY) {
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+        if (!spiGuard.acquired()) return false;
+
         char path[128];
         snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
         File f = SD.open(path, FILE_READ);
@@ -579,7 +583,7 @@ namespace MapTiles {
         int gpsMatchIdx = -1;
 
         if (spiMutex != NULL &&
-            xSemaphoreTake(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+            xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 File vectDir = SD.open("/LoRa_Tracker/VectMaps");
                 if (vectDir && vectDir.isDirectory()) {
@@ -608,7 +612,7 @@ namespace MapTiles {
                 }
                 vectDir.close();
             }
-            xSemaphoreGive(spiMutex);
+            xSemaphoreGiveRecursive(spiMutex);
         }
 
         if (gpsMatchIdx > 0) {

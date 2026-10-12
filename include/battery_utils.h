@@ -29,6 +29,7 @@ namespace BATTERY_Utils {
     float   readBatteryVoltage();
     void    initBatteryGauge();
     void    monitor();
+    bool    isExternallyPowered();   // secteur/chargeur detecte (voir .cpp)
     
 }
 

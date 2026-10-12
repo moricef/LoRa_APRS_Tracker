@@ -24,13 +24,12 @@ namespace UIDashboard {
     void drawAPRSSymbol(const char* symbolStr);
 
     // Update functions for dashboard labels
-    void updateGPS(double lat, double lng, double alt, double speed, int sats, double hdop);
+    void updateGPS(int sats, bool hasFix);
     void updateBattery(int percent, float voltage);
     void updateLoRa(const char* lastRx, int rssi);
     void refreshLoRaInfo();
     void updateLastRx();
     void refreshMessageBadge();
-    void updateGPSStrictIcon();
     void updateWiFi(bool connected, int rssi);
     void updateCallsign(const char* callsign);
     void updateTime(int day, int month, int year, int hour, int minute, int second);

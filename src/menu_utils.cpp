@@ -396,11 +396,11 @@ namespace MENU_Utils {
                 displayShow("FREQUENCY", "", "  UK  439.913 MHz", "> US  915.000 MHz", "  EU  433.775 MHz", lastLine);
                 break;
 
-            case 21500:   // 2.Configuration ---> Change Speed: 300 bps
-                displayShow("DATA RATE", "", "> 300bps  (SF12,CR5)", "  244bps  (SF12,CR6)", "  209bps  (SF12,CR7)", lastLine);
+            case 21500:   // 2.Configuration ---> Change Speed: 293 bps
+                displayShow("DATA RATE", "", "> 293bps  (SF12,CR5)", "  244bps  (SF12,CR6)", "  209bps  (SF12,CR7)", lastLine);
                 break;
             case 21501:   // 2.Configuration ---> Change Speed: 244 bps
-                displayShow("DATA RATE", "", "  300bps  (SF12,CR5)", "> 244bps  (SF12,CR6)", "  209bps  (SF12,CR7)", lastLine);
+                displayShow("DATA RATE", "", "  293bps  (SF12,CR5)", "> 244bps  (SF12,CR6)", "  209bps  (SF12,CR7)", lastLine);
                 break;
             case 21502:   // 2.Configuration ---> Change Speed: 209 bps
                 displayShow("DATA RATE", "", "  244bps  (SF12,CR6)", "> 209bps  (SF12,CR7)", "  183bps  (SF12,CR8)", lastLine);
@@ -409,10 +409,10 @@ namespace MENU_Utils {
                 displayShow("DATA RATE", "", "  209bps  (SF12,CR7)", "> 183bps  (SF12,CR8)", "  610bps  (SF10,CR8)", lastLine);
                 break;
             case 21504:   // 2.Configuration ---> Change Speed: 610 bps
-                displayShow("DATA RATE", "", "  183bps  (SF12,CR8)", "> 610bps  (SF10,CR8)", "  1200bps (SF9,CR7)", lastLine);
+                displayShow("DATA RATE", "", "  183bps  (SF12,CR8)", "> 610bps  (SF10,CR8)", "  1256bps (SF9,CR7)", lastLine);
                 break;
-            case 21505:   // 2.Configuration ---> Change Speed: 1200 bps
-                displayShow("DATA RATE", "", "  610bps  (SF10,CR8)", "> 1200bps (SF9,CR7)", "  300bps  (SF12,CR5)", lastLine);
+            case 21505:   // 2.Configuration ---> Change Speed: 1256 bps
+                displayShow("DATA RATE", "", "  610bps  (SF10,CR8)", "> 1256bps (SF9,CR7)", "  293bps  (SF12,CR5)", lastLine);
                 break;
 
             case 220:   // 2.Configuration ---> Display ---> ECO Mode

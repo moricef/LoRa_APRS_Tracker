@@ -64,6 +64,7 @@ static const char *TAG = "Main";
 #include "sd_logger.h"
 #include "configuration.h"
 #include "battery_utils.h"
+#include "power_save.h"
 #include "station_utils.h"
 #include "board_pinout.h"
 #include "button_utils.h"
@@ -142,8 +143,6 @@ double      lastTxDistance          = 0.0;
 bool        flashlight              = false;
 bool        digipeaterActive        = false;
 bool        sosActive               = false;
-
-bool        miceActive              = false;
 
 bool        smartBeaconActive       = true;
 
@@ -334,7 +333,6 @@ void loop() {
 #endif
             currentBeacon = &Config.beacons[myBeaconsIndex];
         }
-        miceActive = APRSPacketLib::validateMicE(currentBeacon->micE);
     }
 
     SMARTBEACON_Utils::checkSettings(currentBeacon->smartBeaconSetting);
@@ -576,6 +574,11 @@ void loop() {
     if (millis() - lastHeartbeat >= 300000) {  // 5 minutes
         lastHeartbeat = millis();
         SD_Logger::logf(SD_Logger::INFO, "LOOP", "Heartbeat - Free heap: %u KB", ESP.getFreeHeap() / 1024);
+        // Effet de l'economiseur de boucle : sans lui le rythme est de plusieurs
+        // centaines de tours/s en attente active, avec il tombe vers 20/s.
+        String ps = POWER_Save::statusLine();
+        SD_Logger::logf(SD_Logger::INFO, "PWRSAVE", "%s", ps.c_str());
+        ESP_LOGI(TAG, "PowerSave: %s", ps.c_str());
     }
 
     // Update RTC crash context every 5s — readable at next boot after PANIC/WDT
@@ -587,5 +590,8 @@ void loop() {
         SD_Logger::updateCrashContext("LOOP", lat, lon);
     }
 
-    yield();
+    // Remplace yield() : ralentit la boucle quand l'appareil est au repos.
+    // yield() est un vTaskDelay(0) qui ne laisse jamais la tache idle mettre
+    // le coeur en WFI ; voir power_save.h.
+    POWER_Save::loopEnd();
 }

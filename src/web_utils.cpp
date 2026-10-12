@@ -18,6 +18,8 @@
 
 #include <esp_log.h>
 #include <ArduinoJson.h>
+#include <SD.h>
+#include "sd_logger.h"
 #include "configuration.h"
 #include "lora_utils.h"
 #include "web_utils.h"
@@ -73,6 +75,53 @@ namespace WEB_Utils {
 
     void handleStatus(AsyncWebServerRequest *request) {
         request->send(200, "text/plain", "OK");
+    }
+
+    // Sert le journal de la carte SD tel quel, pour pouvoir le relire apres une
+    // sortie sur batterie sans demonter l'appareil ni extraire la carte.
+    //   /log           -> journal courant
+    //   /log?old=1     -> journal precedent (apres rotation)
+    //   /log?grep=TAG  -> ne garde que les lignes contenant TAG (ex: PWRSAVE)
+    void handleLog(AsyncWebServerRequest *request) {
+        String path = SD_Logger::getLogFilePath();
+        if (request->hasParam("old")) path += ".old";
+
+        if (!SD.exists(path)) {
+            request->send(404, "text/plain", "No log file at " + path);
+            return;
+        }
+
+        String filter;
+        if (request->hasParam("grep")) filter = request->getParam("grep")->value();
+
+        ESP_LOGI(TAG, "GET /log (%s%s) from %s", path.c_str(),
+                 filter.length() ? (" grep=" + filter).c_str() : "",
+                 request->client()->remoteIP().toString().c_str());
+
+        if (filter.length() == 0) {
+            // Envoi en flux : le journal peut peser plusieurs centaines de Ko,
+            // le charger en RAM n'est pas envisageable.
+            request->send(SD, path, "text/plain");
+            return;
+        }
+
+        // Avec filtre, lire ligne a ligne et n'accumuler que les lignes retenues.
+        File f = SD.open(path, FILE_READ);
+        if (!f) {
+            request->send(500, "text/plain", "Cannot open " + path);
+            return;
+        }
+        String out;
+        out.reserve(8192);
+        while (f.available()) {
+            String line = f.readStringUntil('\n');
+            if (line.indexOf(filter) >= 0) {
+                out += line;
+                out += '\n';
+            }
+        }
+        f.close();
+        request->send(200, "text/plain", out);
     }
 
     void handleHome(AsyncWebServerRequest *request) {
@@ -172,7 +221,7 @@ namespace WEB_Utils {
         };
 
         //  Beacons
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             String prefix = "beacons." + String(i) + ".";
             Config.beacons[i].callsign          = getParamStringSafe(prefix + "callsign", Config.beacons[i].callsign);
             Config.beacons[i].symbol            = getParamStringSafe(prefix + "symbol", Config.beacons[i].symbol);
@@ -215,7 +264,13 @@ namespace WEB_Utils {
         if (Config.bluetooth.active) {
             Config.bluetooth.deviceName         = getParamStringSafe("bluetooth.deviceName", Config.bluetooth.deviceName);
             Config.bluetooth.useBLE             = request->hasParam("bluetooth.useBLE", true);
-            Config.bluetooth.useKISS            = request->hasParam("bluetooth.useKISS", true);
+            if (request->hasParam("bluetooth.protocol", true)) {
+                Config.bluetooth.useKISS =
+                    getParamStringSafe("bluetooth.protocol", "tnc2") == "kiss";
+            } else {
+                // Compatibility with older WebConfig pages/backups.
+                Config.bluetooth.useKISS = request->hasParam("bluetooth.useKISS", true);
+            }
         }
 
         //  APRS-IS
@@ -419,6 +474,7 @@ namespace WEB_Utils {
         if (!routesRegistered) {
             server.on("/", HTTP_GET, handleHome);
             server.on("/status", HTTP_GET, handleStatus);
+            server.on("/log", HTTP_GET, handleLog);
             server.on("/configuration.json", HTTP_GET, handleReadConfiguration);
             server.on("/configuration.json", HTTP_POST, handleWriteConfiguration);
             server.on("/action", HTTP_POST, handleAction);
