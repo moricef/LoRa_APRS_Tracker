@@ -29,10 +29,10 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 - **T-Deck SD card** - Accesses to the SD card, which shares its SPI bus with the LoRa radio and the display, are serialized.
 - **T-Deck screen lock** - When ECO Mode turns the screen off, touch and keyboard are ignored until **Q** then **Space** are pressed within one second, so the device cannot wake up by accident in a pocket.
 - **Quieter GPS log** - The "poor signal freeze" message is logged when the state changes, not once per second.
-
-**In the devel build only:**
 - **Idle power saving** - With the screen off, WiFi and BLE off and on battery, the main loop slows from about 880 to 16 iterations per second, letting the CPU sleep between ticks. LoRa reception, beacons and GPX recording are unaffected.
 - **Log over HTTP** - `http://<tracker>/log` serves the SD card journal, `?grep=TEXT` filters it.
+
+**In the devel build only:**
 - **Native LoRa APRS frames** - Reception and optional transmission of the compact native format, selected by `loraConfig.txFormat`.
 
 ---
