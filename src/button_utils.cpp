@@ -101,8 +101,13 @@
                 #if BUTTON_PIN != 0
                     userButton.attachLongPressStart(longPress1);
                 #endif
-                userButton.attachDoubleClick(doublePress1);
-                userButton.attachMultiClick(multiPress1);
+                // The legacy text menu is not used by the T-Deck LVGL UI.
+                // These callbacks would turn on the backlight without unlocking
+                // the screen, leaving the lit display apparently unresponsive.
+                #if !defined(USE_LVGL_UI) || (!defined(TTGO_T_DECK_PLUS) && !defined(TTGO_T_DECK_GPS))
+                    userButton.attachDoubleClick(doublePress1);
+                    userButton.attachMultiClick(multiPress1);
+                #endif
                 #ifdef RPC_Electronics_1W_LoRa_GPS
                     userButton2.attachClick(singlePress2);
                     userButton3.attachClick(singlePress3);
