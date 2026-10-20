@@ -10,9 +10,11 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 
 ## Screenshots
 
-|<img src="docs/t-deck_dashboard.png" width="220">|<img src="docs/tdeck_vector_map.png" width="220">|<img src="docs/tdeck_messaging_conversation.png" width="220">|<img src="docs/tdeck_messaging_frames.png" width="220">|
-|:-:|:-:|:-:|:-:|
-| **Dashboard** | **Vector Map** | **Messaging** | **Frames** |
+|<img src="docs/t-deck_dashboard.png" width="220">|<img src="docs/tdeck_vector_map.png" width="220">|<img src="docs/tdeck_messaging_conversation.png" width="220">|
+|:-:|:-:|:-:|
+| **Dashboard** | **Vector Map** | **Messaging** |
+|<img src="docs/tdeck_messaging_frames.png" width="220">|<img src="docs/tdeck_gnss.png" width="220">|<img src="docs/tdeck_lora_profiles.png" width="220">|
+| **Frames** | **GNSS** | **LoRa Profiles** |
 
 > *Screenshots taken on a T-Deck Plus.*
 
