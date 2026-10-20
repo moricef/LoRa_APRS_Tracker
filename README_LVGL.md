@@ -14,7 +14,7 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 |:-:|:-:|:-:|:-:|
 | **Dashboard** | **Vector Map** | **Messaging** | **Frames** |
 
-> *Screenshots captured from the Linux port. The UI is identical on device; only the map differs — the T-Deck uses the embedded NAV vector renderer, not the OSM-Bright style shown here.*
+> *Screenshots taken on a T-Deck Plus.*
 
 ---
 ## What's New in v2.11.0
