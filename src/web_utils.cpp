@@ -25,6 +25,9 @@
 #include "web_utils.h"
 #include "display.h"
 #include "utils.h"
+#ifdef USE_LVGL_UI
+#include "lvgl_ui.h"
+#endif
 
 static const char *TAG = "WebServer";
 
@@ -123,6 +126,22 @@ namespace WEB_Utils {
         f.close();
         request->send(200, "text/plain", out);
     }
+
+#ifdef USE_LVGL_UI
+    // Capture de l'ecran courant en BMP 16 bits, pour la documentation :
+    //   curl -o ecran.bmp http://<tracker>/screenshot
+    void handleScreenshot(AsyncWebServerRequest *request) {
+        const uint8_t *data = nullptr;
+        size_t size = 0;
+        if (!LVGL_UI::takeScreenshot(&data, &size, 3000)) {
+            request->send(503, "text/plain", "Screenshot not available");
+            return;
+        }
+        AsyncWebServerResponse *response = request->beginResponse(200, "image/bmp", data, size);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+    }
+#endif
 
     void handleHome(AsyncWebServerRequest *request) {
         ESP_LOGI(TAG, "GET / from %s", request->client()->remoteIP().toString().c_str());
@@ -477,6 +496,9 @@ namespace WEB_Utils {
             server.on("/", HTTP_GET, handleHome);
             server.on("/status", HTTP_GET, handleStatus);
             server.on("/log", HTTP_GET, handleLog);
+#ifdef USE_LVGL_UI
+            server.on("/screenshot", HTTP_GET, handleScreenshot);
+#endif
             server.on("/configuration.json", HTTP_GET, handleReadConfiguration);
             server.on("/configuration.json", HTTP_POST, handleWriteConfiguration);
             server.on("/action", HTTP_POST, handleAction);

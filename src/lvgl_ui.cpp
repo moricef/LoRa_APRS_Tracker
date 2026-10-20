@@ -5,6 +5,7 @@
 #ifdef USE_LVGL_UI
 
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 static const char *TAG = "LVGL";
 
 #include <APRSPacketLib.h>
@@ -227,6 +228,84 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 }
 
 namespace LVGL_UI {
+  // Screenshot for /screenshot. LVGL may only be used from loop(), so the web
+  // server task posts a request and waits for loop() to render it. The buffer
+  // is allocated once in PSRAM and reused (screen size never changes).
+  static const uint32_t BMP_HEADER_BYTES = 14 + 40 + 12;   // file + info + RGB565 masks
+  static SemaphoreHandle_t shotDone = nullptr;
+  static volatile bool shotRequested = false;
+  static bool shotOk = false;
+  static uint8_t *shotBuf = nullptr;
+  static size_t shotCapacity = 0;
+  static size_t shotLength = 0;
+
+  static void put16(uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8; }
+  static void put32(uint8_t *p, uint32_t v) { put16(p, v); put16(p + 2, v >> 16); }
+
+  static void serviceScreenshot() {
+    if (!shotRequested) return;
+    shotRequested = false;
+    shotOk = false;
+
+    lv_obj_t *scr = lv_scr_act();
+    const uint32_t pixelBytes = lv_snapshot_buf_size_needed(scr, LV_IMG_CF_TRUE_COLOR);
+    const size_t needed = BMP_HEADER_BYTES + pixelBytes;
+    if (!shotBuf) {
+      shotBuf = (uint8_t *)heap_caps_malloc(needed, MALLOC_CAP_SPIRAM);
+      shotCapacity = shotBuf ? needed : 0;
+    }
+
+    lv_img_dsc_t dsc;
+    if (needed <= shotCapacity &&
+        lv_snapshot_take_to_buf(scr, LV_IMG_CF_TRUE_COLOR, &dsc,
+                                shotBuf + BMP_HEADER_BYTES, pixelBytes) == LV_RES_OK &&
+        (dsc.header.w * 2) % 4 == 0) {          // BMP rows must be 4-byte aligned
+      const uint32_t w = dsc.header.w, h = dsc.header.h;
+      const uint32_t imageBytes = w * h * 2;
+      uint8_t *b = shotBuf;
+      memset(b, 0, BMP_HEADER_BYTES);
+      b[0] = 'B'; b[1] = 'M';
+      put32(b + 2, BMP_HEADER_BYTES + imageBytes);
+      put32(b + 10, BMP_HEADER_BYTES);
+      put32(b + 14, 40);
+      put32(b + 18, w);
+      put32(b + 22, (uint32_t)(-(int32_t)h));   // negative height: rows top-down
+      put16(b + 26, 1);
+      put16(b + 28, 16);
+      put32(b + 30, 3);                         // BI_BITFIELDS
+      put32(b + 34, imageBytes);
+      put32(b + 54, 0xF800);
+      put32(b + 58, 0x07E0);
+      put32(b + 62, 0x001F);
+#if LV_COLOR_16_SWAP
+      // The display wants big-endian RGB565, BMP little-endian.
+      uint8_t *px = b + BMP_HEADER_BYTES;
+      for (uint32_t i = 0; i < imageBytes; i += 2) std::swap(px[i], px[i + 1]);
+#endif
+      shotLength = BMP_HEADER_BYTES + imageBytes;
+      shotOk = true;
+      ESP_LOGI(TAG, "Screenshot %ux%u (%u bytes)", (unsigned)w, (unsigned)h, (unsigned)shotLength);
+    } else {
+      ESP_LOGW(TAG, "Screenshot failed (%u bytes needed)", (unsigned)needed);
+    }
+    xSemaphoreGive(shotDone);
+  }
+
+  bool takeScreenshot(const uint8_t **data, size_t *size, uint32_t timeoutMs) {
+    if (!shotDone) shotDone = xSemaphoreCreateBinary();   // only the web task calls this
+    if (!shotDone) return false;
+    xSemaphoreTake(shotDone, 0);                // drop a give left by a timed-out request
+    shotRequested = true;
+    if (xSemaphoreTake(shotDone, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
+      shotRequested = false;
+      return false;
+    }
+    if (!shotOk) return false;
+    *data = shotBuf;
+    *size = shotLength;
+    return true;
+  }
+
   static void hideLockHint() {
     lockHintUntil = 0;
     if (lockHint) lv_obj_add_flag(lockHint, LV_OBJ_FLAG_HIDDEN);
@@ -631,6 +710,7 @@ namespace LVGL_UI {
     // Handle LVGL tasks
     lv_timer_handler();
     updateLockHint();
+    serviceScreenshot();
 
     // Check if Web-Conf was requested from Settings (deferred to avoid reentrancy)
     UISettings::checkPendingWebConf();
