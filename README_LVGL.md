@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.11.0-blue)
+![Version](https://img.shields.io/badge/version-2.11.3-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus and CrowPanel Advance 3.5", plus classic OLED tracker for T-Beam V1.2**
@@ -15,6 +15,17 @@ This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/L
 | **Dashboard** | **Vector Map** | **Messaging** | **Frames** |
 
 > *Screenshots taken on a T-Deck Plus.*
+
+---
+## What's New in v2.11.3
+- **Readable "no map" message** - Without maps on the SD card, the map screen drew its message mostly off the left edge of the screen. It is now centred and gives both paths: `/LoRa_Tracker/VectMaps/REGION/` for vector maps and `/LoRa_Tracker/Maps/REGION/z/x/y.png` for raster tiles.
+- **Wiki link** - The web flasher pages now link the user guide.
+
+## What's New in v2.11.2
+- **Unlock reminder** - On the locked T-Deck, a touch or any key lights the screen for 3 seconds with "Screen locked / Press Q then Space", then turns it off again. Before, the screen stayed black and ignored every input, so the lock looked like a freeze.
+
+## What's New in v2.11.1
+- **Trackball on the locked T-Deck** - Double and multiple trackball clicks no longer turn on the backlight of the locked screen, which left a lit but unresponsive display.
 
 ---
 ## What's New in v2.11.0
