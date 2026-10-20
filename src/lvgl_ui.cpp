@@ -108,6 +108,12 @@ bool screenDimmed = false;            // Non-static: accessed by UISettings
 static bool screenLocked = false;
 static bool lockQPending = false;
 static uint32_t lockQTime = 0;
+// While locked the screen stays dark and swallows every input, which users
+// read as a freeze. Any touch or key lights it briefly with the unlock hint.
+static const uint32_t LOCK_HINT_MS = 3000;
+static bool lockHintRequested = false;
+static uint32_t lockHintUntil = 0;
+static lv_obj_t *lockHint = nullptr;
 
 // Note: Dashboard screen and labels are now in UIDashboard module (ui_dashboard.cpp)
 
@@ -142,11 +148,12 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 static uint32_t lastTouchDebug = 0;
 static bool absorbTouchUntilRelease = false;   // absorbe le toucher de réveil jusqu'au relâchement
 static void touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+  uint16_t x, y;
   if (screenLocked) {
+    if (tft.getTouch(&x, &y)) lockHintRequested = true;
     data->state = LV_INDEV_STATE_REL;
     return;
   }
-  uint16_t x, y;
   if (tft.getTouch(&x, &y)) {
     // Reset activity timer on touch
     lastActivityTime = millis();
@@ -220,6 +227,46 @@ void LVGL_UI::open_compose_with_callsign(const String &callsign) {
 }
 
 namespace LVGL_UI {
+  static void hideLockHint() {
+    lockHintUntil = 0;
+    if (lockHint) lv_obj_add_flag(lockHint, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  // Called from loop(), not from the input callbacks: creating LVGL objects
+  // inside an indev read callback would reenter lv_timer_handler().
+  static void updateLockHint() {
+    if (!screenLocked) {
+      lockHintRequested = false;
+      if (lockHintUntil) hideLockHint();
+      return;
+    }
+    const uint32_t now = millis();
+    if (lockHintRequested) {
+      lockHintRequested = false;
+      if (!lockHint) {
+        lockHint = lv_label_create(lv_layer_top());
+        lv_label_set_text(lockHint, LV_SYMBOL_EYE_CLOSE " Screen locked\nPress Q then Space");
+        lv_obj_set_style_text_font(lockHint, &lv_font_montserrat_18, 0);
+        lv_obj_set_style_text_align(lockHint, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(lockHint, lv_color_white(), 0);
+        lv_obj_set_style_bg_color(lockHint, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(lockHint, LV_OPA_80, 0);
+        lv_obj_set_style_border_color(lockHint, lv_color_white(), 0);
+        lv_obj_set_style_border_width(lockHint, 2, 0);
+        lv_obj_set_style_radius(lockHint, 8, 0);
+        lv_obj_set_style_pad_all(lockHint, 12, 0);
+        lv_obj_center(lockHint);
+      }
+      lv_obj_clear_flag(lockHint, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_move_foreground(lockHint);
+      if (!lockHintUntil) displaySetBrightness(screenBrightness);
+      lockHintUntil = now + LOCK_HINT_MS;
+    } else if (lockHintUntil && (int32_t)(now - lockHintUntil) >= 0) {
+      hideLockHint();
+      tft.setBrightness(0);
+    }
+  }
+
   bool handleScreenLockKey(char key) {
     if (!screenLocked) {
       lockQPending = false;
@@ -227,6 +274,7 @@ namespace LVGL_UI {
     }
 
     const uint32_t now = millis();
+    lockHintRequested = true;
     if (key == 'q' || key == 'Q') {
       lockQPending = true;
       lockQTime = now;
@@ -236,6 +284,8 @@ namespace LVGL_UI {
     const bool unlock = key == ' ' && lockQPending && now - lockQTime <= 1000;
     lockQPending = false;
     if (unlock) {
+      lockHintRequested = false;
+      hideLockHint();
       screenLocked = false;
       screenDimmed = false;
       lastActivityTime = now;
@@ -580,6 +630,7 @@ namespace LVGL_UI {
 
     // Handle LVGL tasks
     lv_timer_handler();
+    updateLockHint();
 
     // Check if Web-Conf was requested from Settings (deferred to avoid reentrancy)
     UISettings::checkPendingWebConf();
