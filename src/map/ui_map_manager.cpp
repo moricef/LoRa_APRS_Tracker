@@ -635,8 +635,13 @@ void create_map_screen() {
             lv_draw_label_dsc_init(&label_dsc);
             label_dsc.color = lv_color_hex(0xaaaaaa);
             label_dsc.font = &lv_font_montserrat_14;
-            lv_canvas_draw_text(map_canvas, 40, MAP_SPRITE_SIZE / 2 - 30, 240, &label_dsc,
-                "No offline tiles available.\nDownload OSM tiles and copy to:\nSD:/LoRa_Tracker/Maps/REGION/z/x/y.png");
+            label_dsc.align = LV_TEXT_ALIGN_CENTER;
+            // Canvas coordinates: the visible window starts at MAP_MARGIN_X/Y.
+            lv_canvas_draw_text(map_canvas, MAP_MARGIN_X + 10,
+                MAP_MARGIN_Y + (MAP_VISIBLE_HEIGHT - 88) / 2, SCREEN_WIDTH - 20, &label_dsc,
+                "No offline map on the SD card.\n"
+                "Vector maps:\n/LoRa_Tracker/VectMaps/REGION/\n"
+                "Raster tiles:\n/LoRa_Tracker/Maps/REGION/z/x/y.png");
         }
 
         // Draw GPS traces for mobile stations (on canvas, under station icons)
