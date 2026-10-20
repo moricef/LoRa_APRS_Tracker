@@ -1,177 +1,232 @@
-# CA2RXU LoRa APRS Tracker/Station
+# LoRa APRS Tracker - LVGL UI Edition
 
-> **📱 Note:** This is a fork with **LVGL touchscreen UI** for T-Deck Plus and CrowPanel 3.5", plus classic OLED firmware for T-Beam V1.2. See [README_LVGL.md](README_LVGL.md) for enhanced features (vector maps, WiFi station, BLE eco mode, etc.).
-> Original project: https://github.com/richonguzman/LoRa_APRS_Tracker
+![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
+![Version](https://img.shields.io/badge/version-2.11.3-blue)
+![License](https://img.shields.io/badge/license-GPL-green)
 
-This firmware is for using ESP32 based boards with LoRa Modules and GPS to live in the APRS world.
+**ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus and CrowPanel Advance 3.5", plus classic OLED tracker for T-Beam V1.2**
 
-![Screenshot](https://github.com/richonguzman/LoRa_APRS_Tracker/blob/main/images/OledScreen2.jpeg)
+This is a fork of [CA2RXU's LoRa APRS Tracker](https://github.com/richonguzman/LoRa_APRS_Tracker) (original README kept in [README_CA2RXU.md](README_CA2RXU.md)) featuring a complete LVGL-based touchscreen interface with vector map rendering (NAV format compatible with [IceNav-v3](https://github.com/jgauchia/IceNav-v3)), LovyanGFX graphics library for enhanced performance, advanced APRS messaging, and optimized memory management.
 
-__(NOTE: To use Tx/Rx capabilities of this tracker you should have also an Tx/Rx <a href="https://github.com/richonguzman/LoRa_APRS_iGate" target="_blank">LoRa iGate</a> near you)__
-<br />
+## Support this project
 
-____________________________________________________
+[<img src="https://github.com/richonguzman/LoRa_APRS_Tracker/blob/main/images/github-sponsors.png">](https://github.com/sponsors/moricef)     [<img src="https://github.com/richonguzman/LoRa_APRS_Tracker/blob/main/images/paypalme.png">](https://paypal.me/moricef09)
 
-## You can support this LVGL UI fork to continue to grow:
+This fork is based on the work of [CA2RXU](https://github.com/richonguzman/LoRa_APRS_Tracker). Consider supporting the original project too: [GitHub Sponsors](https://github.com/sponsors/richonguzman) | [PayPal](http://paypal.me/richonguzman)
 
-[<img src="https://github.com/richonguzman/LoRa_APRS_Tracker/blob/main/images/github-sponsors.png">](https://github.com/sponsors/moricef)     [<img src="https://github.com/richonguzman/LoRa_APRS_Tracker/blob/main/images/paypalme.png">](http://paypal.me/moricef)
+## Screenshots
 
-<br />
+|<img src="docs/t-deck_dashboard.png" width="220">|<img src="docs/tdeck_vector_map.png" width="220">|<img src="docs/tdeck_messaging_conversation.png" width="220">|
+|:-:|:-:|:-:|
+| **Dashboard** | **Vector Map** | **Messaging** |
+|<img src="docs/tdeck_messaging_frames.png" width="220">|<img src="docs/tdeck_gnss.png" width="220">|<img src="docs/tdeck_lora_profiles.png" width="220">|
+| **Frames** | **GNSS** | **LoRa Profiles** |
 
-**This fork is based on the excellent work by [CA2RXU](https://github.com/richonguzman/LoRa_APRS_Tracker). Consider supporting the original project too:** [GitHub Sponsors](https://github.com/sponsors/richonguzman) | [PayPal](http://paypal.me/richonguzman)
+> *Screenshots taken on a T-Deck Plus.*
 
-<br />
+---
+## What's New in v2.11.3
+- **Readable "no map" message** - Without maps on the SD card, the map screen drew its message mostly off the left edge of the screen. It is now centred and gives both paths: `/LoRa_Tracker/VectMaps/REGION/` for vector maps and `/LoRa_Tracker/Maps/REGION/z/x/y.png` for raster tiles.
+- **Wiki link** - The web flasher pages now link the user guide.
 
-# WEB FLASHER/INSTALLER is <a href="https://moricef.github.io/LoRa_APRS_Tracker/" target="_blank">here</a>
+## What's New in v2.11.2
+- **Unlock reminder** - On the locked T-Deck, a touch or any key lights the screen for 3 seconds with "Screen locked / Press Q then Space", then turns it off again. Before, the screen stayed black and ignored every input, so the lock looked like a freeze.
 
-____________________________________________________
+## What's New in v2.11.1
+- **Trackball on the locked T-Deck** - Double and multiple trackball clicks no longer turn on the backlight of the locked screen, which left a lit but unresponsive display.
 
-- Tracker with complete MENU !!! (see Wiki to know how to access it)
-    - Read, Write and Delete Messages (with I2C Keyboard or Phone).
-    - Asking Weather Report.
-    - Listening to other Trackers arround.
-    - Changing Display Eco Mode (turn off after 4 seconds) and Screen Brightness.
-- Processor from 240Mhz to 80MHz to save almost 20% power consumption.
-- All GPS beacons/packets are encoded for less time on RF/LoRa Tx.
-- Oled Screen shows Altitude+Speed+Course or BME280 Wx Data or Number of New Messages Received.
-- Oled Screen shows Recent Heard Trackers/Station/iGates Tx.
-- Bluetooth capabilities to connect (Android + APRSDroid) or (iPhone + APRS.fi app) and use it as TNC.
-- Led Notifications for Tx and Messages Received.
-- Sound Notifications with YL44 Buzzer Module.
-- Wx data with BME280 Module showed on Screen and transmited as Wx Telemetry.
-- Winlink Mails through APRSLink.
-- Posibility to change between 3 major Frequencies used by LoRa APRS Worldwide.
-____________________________________________________
+---
+## What's New in v2.11.0
+- **Batch message deletion** - Long press a message in a conversation to enter selection mode, select as many as needed, and the reply button becomes a trash button that deletes them in one pass.
+- **Faster conversation list** - Listing conversations opened every file just to read its name and date. It now reads the directory directly: 7.3 s for 192 conversations before the change, measured on a user's device. Thanks to @n7uv for the logs.
+- **Larger touch targets** - Title bar buttons (back, reply) were 25-28 px high in a 35 px bar, so taps on the last pixels of the bar hit nothing. Their sensitive area is extended without changing their look.
+- **WiFi after switching networks** - Forcing public DNS servers also froze the IP address, so the tracker kept the address of the previous network after switching access points without a reboot. DHCP now stays active.
+- **WiFi status** - The WiFi screen and APRS-IS uploads follow the real link state instead of a flag that stayed true for 30 s after the access point disappeared.
+- **APRS reply-acks** - Outgoing messages use reply-ack numbers (`{MM}AA`), and an acknowledgement carried by an incoming message stops the retries.
+- **BLE TNC2** - TNC2 frames are queued and sent over the standard Nordic UART Service.
+- **Mic-E** - Encoding follows the active beacon profile, and decoded longitude offsets are normalized.
+- **T-Deck SD card** - Accesses to the SD card, which shares its SPI bus with the LoRa radio and the display, are serialized.
+- **T-Deck screen lock** - When ECO Mode turns the screen off, touch and keyboard are ignored until **Q** then **Space** are pressed within one second, so the device cannot wake up by accident in a pocket.
+- **Quieter GPS log** - The "poor signal freeze" message is logged when the state changes, not once per second.
+- **Idle power saving** - With the screen off, WiFi and BLE off and on battery, the main loop slows from about 880 to 16 iterations per second, letting the CPU sleep between ticks. LoRa reception, beacons and GPX recording are unaffected.
+- **Log over HTTP** - `http://<tracker>/log` serves the SD card journal, `?grep=TEXT` filters it.
 
-# WIKI (English / Español)
+**In the devel build only:**
+- **Native LoRa APRS frames** - Reception and optional transmission of the compact native format, selected by `loraConfig.txFormat`.
 
-### FAQ: GPS, Bluetooth, Winlink, BME280 and more --> <a href="https://github.com/richonguzman/LoRa_APRS_Tracker/wiki/00.-FAQ-(frequently-asked-questions)" target="_blank">here</a>
+---
+## What's New in v2.10.2
+- **Much faster message navigation** - Building the conversation list re-read every conversation file in full, just to show the last line of each. With hundreds of correspondents this took close to a minute per screen change. Previews are now cached in PSRAM and validated by file mtime: an unchanged conversation is not read at all, and a changed one only has its last 256 bytes read. Thanks to @n7uv for the report.
 
-### Supported Boards and buying links --> <a href="https://github.com/richonguzman/LoRa_APRS_Tracker/wiki/1000.-Supported-Boards-and-Buying-Links" target="_blank">here</a>
+---
+## What's New in v2.10.1
+- **Raster PNG tiles fixed** - PNG map tiles never rendered and every attempt permanently leaked an SD file descriptor, which eventually broke *all* SD access for the rest of the session (logs, statistics, GPX, station symbols). `renderPNGRaster()` was checking PNGdec's return value with JPEGDEC's convention — the two are opposite (`PNG_SUCCESS` is `0`). The same close-on-failure leak is fixed in the JPEG and symbol paths. Thanks to @cwb for the diagnosis and the fix (#2, #3).
 
-### 1. Installation Guide --> <a href="https://github.com/richonguzman/LoRa_APRS_Tracker/wiki/01.-Installation-Guide-%23-Guia-de-Instalacion" target="_blank">here</a>
+---
+## What's New in v2.10.0
+- **Direct vs digipeated, everywhere** - The dashboard Last RX list is colour-coded again (green = heard directly, orange = via a digipeater), matching the Frames screen. The distinction had been lost when the dashboard moved to its RAM cache.
+- **RF neighbourhood statistics** - Per-station RSSI/SNR averages are now computed from direct receptions only. On a digipeated frame those figures describe the digipeater, not the originating station, so a distant station used to inherit its relay's signal level. Stations never heard directly show `--` instead of a misleading value, and the 20-slot table evicts them before dropping a direct neighbour.
+- **Delete APRS conversations** - Long press on a conversation to delete it.
+- **Tracker WebConf SPA** - Web configuration is now organized as a sidebar/topbar SPA with Tracker-specific fields and visual identity, with a mobile layout so the whole configuration can be done from a phone.
+- **LoRa profiles** - WebConf and LVGL settings share configurable LoRa profiles, including the default EU/WORLD, Poland, and UK profiles.
+- **WiFi STA profiles** - Station WiFi settings support a multi-profile list instead of a single fixed configuration.
+- **Messaging unread state** - APRS and Winlink unread counters are persisted, conversations with new messages are highlighted, and recent conversations move to the top when new traffic arrives.
+- **Frames screen** - Frames and statistics are now opened from a dedicated dashboard button, leaving the Messages tabs focused on APRS, Winlink, and Contacts.
+- **Stable web flasher** - T-Deck Plus 433MHz and CrowPanel Advance 3.5" stable builds are published as v2.10.0.
 
-### 2. Tracker Configuration and Explanation for each setting --> <a href="https://github.com/richonguzman/LoRa_APRS_Tracker/wiki/02.-Tracker-Configuration--%23--Configuracion-del-Tracker" target="_blank">here</a>
+## What's New in v2.9.5
+- **Digipeater fill-in mode** - New `digipeatAlias` setting (default `WIDE1-1`), separate from the beacon path, with a selector in the Repeater screen. The tracker relays stations not yet repeated by any digi, consuming `WIDE1-1` while preserving `WIDE2-1` for the next hop — useful to form a local tracker network when no digi/igate is in range
+- **Digipeat safety guards** - Self-echo protection (never repeat our own beacon sent back by a neighbour) and refusal to repeat when the alias is already consumed (`ALIAS*`), which previously produced malformed `CALL**` paths
+- **MAX17048 fuel gauge on CrowPanel** - Read through the LovyanGFX I2C driver, fixing the conflict with the GT911 touch controller sharing the same bus (battery monitoring was reported as "not found")
+- **Touch wake-up fix** - The touch that wakes the screen from eco mode is now absorbed and no longer triggers the button underneath
+- **Map station tap fix** - Station hit zones are converted to the live canvas position (pan and NAV sub-tile offsets), making taps reliable at any map offset
 
-### 3. Upload Firmware and Filesystem --> <a href="https://github.com/richonguzman/LoRa_APRS_Tracker/wiki/03.-Upload-Firmware-and-Filesystem-%23-Subir-Firmware-y-sistema-de-archivos" target="_blank">here</a>
+## What's New in v2.9.4
+- **Web Flasher Multi-Board** - Single-page web installer with board selector: T-Deck Plus 433, CrowPanel 3.5", T-Beam V1.2
+- **T-Beam V1.2 support** - Classic OLED tracker firmware with GNSS quality filtering and SmartBeacon advanced web config
+- **Strict 3D Fix (PDOP)** - New configurable mode to enforce PDOP filtering for altitude reliability, with a visual indicator on the dashboard.
+- **Persistent Map State** - Map's NAV memory pool and zoom/pan state are preserved across sessions to avoid PSRAM fragmentation and improve user experience.
+- **NeoGPS migration** - Replaced TinyGPS++ (legacy 2013) with NeoGPS: coherent fix merging, HDOP from GGA, configurable sentence parsing
+- **GPS Doppler cross-check filter** - New jitter rejection: when GPS reports low speed (< 8 km/h) but position barely moved (< 25m), the update is rejected. Fixes L76K Doppler noise at rest
+- **HDOP quality indicator** - Satellite count on dashboard shows signal quality: `+` (≤ 2.0), `-` (2-5), `X` (> 5)
+- **Trace z-order fix** - GPS traces now render under station icons
+- **Map module refactoring** - `ui_map_manager.cpp` split into `map_state`, `map_tiles`, `map_render`, `map_input` modules (2247 → 655 lines)
+- **PSRAM cache for GPS traces** - SD trace files are loaded into PSRAM at startup; viewport queries scan RAM instead of SD card, drastically improving map rendering performance
+- **SmartBeacon-like trace compaction** - Replaced recursive Douglas-Peucker algorithm with speed/distance criteria similar to SmartBeacon for more natural trail preservation
+- **mass_copy utility** - Python script for efficient bulk copying of map tiles to SD card (from IceNav-v3)
 
-### 4. Tracker Menu Guide --> <a href="https://github.com/richonguzman/LoRa_APRS_Tracker/wiki/04.-Menu-Guide-%23-Guía-del-menú" target="_blank">here</a>
+## What's New in v2.8.x
+- **IceNav pan model** - Ported IceNav integer tile pan model: smooth inertia, no visual snap during async render, decoupled visual offset from render cycle
+- **Async rendering Core 0** - Map tiles rendered on Core 0, UI runs on Core 1 without blocking. Double-buffered sprites for tear-free display
+- **Fullscreen map** - Double-tap toggles fullscreen mode (hides title/info bars)
+- **MapGPSFilter module** - GPS filtering as standalone KISS module with unit tests (GoogleTest)
+- **Reliable GPS tracking** - HDOP-adaptive smoothing, stable at rest, responsive at speed, no km-scale jumps
+- **Own GPS trace** - 500-point buffer with Douglas-Peucker auto-compaction and zoom-adaptive LOD rendering
+- **SD logger** - GPS wall-clock timestamps, ESP_LOGW/E hook captures crash context automatically
+- **+32KB DRAM recovered** - Removed useless DMA buffer in storage (PSRAM incompatible with SPI DMA on ESP32-S3)
 
-____________________________________________________
-## Timeline (Versions):
+## What's New in v2.7.x
+- **ESP_LOG migration** - Replaced standard Serial.print with native ESP-IDF logging framework with colored terminal output
+- **PSRAM LVGL Allocator** - Redirected UI memory to PSRAM to free up critical DRAM
+- **NPK2 Multi-region support** - Support for "split packs" NPK2 map files with multi-region roaming
+- **Wide Zoom Range** - Map support from Zoom 6 up to 17 with adaptive raster/vector switching
+- **Vector map optimizations** - Increased NPK2 row buffer to 8KB in PSRAM for processing complex tiles
+- **Web-Conf Stability** - Hardened against memory fragmentation and CPU starvation in configuration mode
+- **GPX trace recorder** - Start/Stop button on map, saves tracks to SD card
+- **Delta+ZigZag+VarInt NAV format** - 30-50% smaller tiles, compatible with IceNav-v3
+- **Robust GPS filtering** - Advanced HDOP adaptive jitter filtering to prevent fake beacons and map spikes
+- **NAV raw data cache** - PSRAM cache avoids SD re-reads after pan (30 tiles LRU)
+- **Station traces with TTL** - 60-minute time-to-live for received station positions
+- **Vector map rendering** - NAV format tiles with roads, paths, water bodies, buildings
+- **Dual map modes** - Raster (JPEG/PNG) and Vector (NAV) with adaptive zoom
+- **Statistics persistence** - LinkStats and per-station data saved to SD card
+- **WiFi Station mode** - Connect to existing networks for internet access
+- **APRS-IS Stability** - Extended logresp timeout to 10s with better connection cleanup
+- **Display ECO slider** - Configurable timeout for screen dimming
+- **Memory optimizations** - Fixed leaks, improved PSRAM usage
+- **Stability and UI fixes** - BLE wake crash, SD logger infinite loop, dynamic callsign background width calculation
 
-- 2026.07.24 **v2.10.0 Stable Release**:
-    - Tracker WebConf rebuilt as a SPA configuration UI with Tracker-specific settings.
-    - LoRa profiles are configurable from WebConf and shared with LVGL settings on supported touchscreen boards.
-    - WiFi station profiles can be managed as a multi-profile list.
-    - LVGL messaging adds unread counters, per-conversation unread state, recent conversation ordering, and a separate Frames screen.
-    - Stable web flasher updated for T-Deck Plus 433MHz and CrowPanel Advance 3.5".
-- 2026.03.04 **v2.7.4 Stable Release**:
-    - Robust GPS Jitter filtering to prevent fake beacons.
-    - Cleaned up OwnStation trace logic on vector maps.
-    - Optimized Map Engine with 8KB PSRAM index buffer.
-    - Full migration to `ESP_LOG` with terminal colors.
-- 2025-12-01 APRSPacketLib update.
-- 2025-11-26 Custom Status Selection.
-- 2025-08-11 New improved Battery Monitor for Heltec Boards. Thanks Tilen S54B.
-- 2025-08-10 RPC Electronics 1W LoRa GPS with 1W SX1268 added. APRSPacketLib Library Updated.
-- 2025-08-02 Personal Note for each Beacon Callsign. Thanks Tilen S54B.
-- 2025.03.28 F4GOH DIY board with ESP32 + GPS + 1W LLCC68 added. APRSPacketLib Library Updated.
-- 2025.03.06 F4GOH DIY board with ESP32 + GPS + 1W SX1268 added.
-- 2025.02.09 Now Bluetooth connections lets you decide to use BLE/BT Classic and KISS/TNC.
-- 2025.01.11 Added HELTEC V3.2 board support.
-- 2025.01.07 TROY_LoRa_APRS board added.
-- 2025.01.02 Buttons added for DIY Boards and Boards without buttons.
-- 2024.11.13 Added Heltec Wireless Stick Lite V3 + GPS + Oled Display support for another DIY ESP32 Tracker.
-- 2024.11.13 T-Deck Joystick and Button Pressing Fix for smother operation.
-- 2024.10.24 Added QRP Labs LightTracker Plus1.0 support.
-- 2024.10.11 Added Lilygo TTGO T-Deck Plus support.
-- 2024.10.10 Configuration WiFiAP stops after 1 minute of no-client connected.
-- 2024.10.09 WEB INSTALLER/FLASHER.
-- 2024.10.07 Battery Monitor process added (Voltage Sleep to protect Battery).
-- 2024.09.17 Battery Voltage now as Encoded Telemetry in GPS Beacon.
-- 2024.08.26 New reformating of code ahead of WebInstaller: SmartBeacon change.
-- 2024.08.16 BLE support for Android devices (not APRSDroid yet).
-- 2024.08.12 Added support for EByte E220 400M30S 1Watt LoRa module for DIY ESP32 Tracker (LLCC68 supports spreading factor only in range of 5 - 11!)
-- 2024.08.02 New gpsEcoMode added for Testing.
-- 2024.08.02 ESP32S3 DIY LoRa GPS added.
-- 2024.07.30 HELTEC V3 TNC added.
-- 2024.07.01 All boards with 433MHZ and 915MHz versions now.
-- 2024.06.21 3rd Party Packets decode added following the corrections on iGate Firmware.
-- 2024.06.21 If Tracker Speed > 200km/hr and/or Altitude > 9.000 mts , path ("WIDE1-1") will be omited as its probably a plane.
-- 2024.06.21 Wx Telemetry Tx on Tracker only if standing still > 15min. (On screen Wx Data will be available but won't be sent if moving).
-- 2024.06.07 Dynamic Height Correction of the BME280 Pressure readings.
-- 2024.05.21 WEMOS ESP32 Battery Holder + LoRa SX1278 + GPS Module support added.
-- 2024.05.16 all boards now work with Radiolib (LoRa) library from @jgromes.
-- 2024.05.13 BME modules will be autodetected (I2C Address and if it is BME280/BMP280/BME680).
-- 2024.05.10 PacketBuffer for Rx (25 Seg) and Tx outputPacketBuffer for sending with ACK Request.
-- 2024.05.07 HELTEC V3 and Wireless Tracker Battery Measurements at 30seg to avoid accelerated discharge.
-- 2024.05.06 New Output Buffer for Messages with retry posibilities.
-- 2024.04.25 Added Lilygo TTGO T-Deck (add Neo6Mv2 GPS) support.
-- 2024.04.12 Added HELTEC Wireless Tracker support.
-- 2024.03.22 3 times pressing middle button for T-Beams turns the Tracker off.
-- 2024.03.08 ESP32_C3 DIY LoRa + GPS board added. Thanks Julian OE1JLN.
-- 2024.02.29 Now you can change between (EU,PL,UK) LoRa APRS frequencies used worldwide.
-- 2024.02.24 New Partitions: more memory for new code/firmware (still > 500 Rx messages available)
-- 2024.02.21 Winlink Mails through APRSLink ( https://www.winlink.org/APRSLink/ )
-- 2024.01.26 Added Helmut OE5HWN MeshCom PCB support.
-- 2024.01.18 BME modules have now a single reading per minute.
-- 2024.01.05 Added HELTEC V3 with NEO8M GPS. Thanks Asbjørn LA1HSA.
-- 2024.01.04 Added TTGO Lilygo T-Beam S3 Supreme V3 support. Thanks Johannes OE2JPO.
-- 2023.12.31 PowerManagment Library AXP192/AXP2101 updated.
-- 2023.12.27 Added Led-Flashlight like Baofeng UV5R Led.
-- 2023.12.27 Added LoRa APRS Packet Decoder to Stations Menu.
-- 2023.12.26 Added BME680 (to the already BME/BMP280) support for Wx Telemetry Tx.
-- 2023.12.22 Added APRSThrusday on Messages Menu to parcitipate from this exercise ( https://aprsph.net/aprsthursday/ )
-- 2023.12.19 Added support for T-Beam V1.2 with Neo8M GPS and SX1262 LoRa Modules.
-- 2023.12.18 Added Mic-E encoding and decoding.
-- 2023.12.12 Added BMP280 (to the already BME280) support for Wx Telemetry Tx.
-- 2023.12.11 Added support for EByte 400M30S 1Watt LoRa module for DIY ESP32 Tracker.
-- 2023.12.07 Added TTGO Lilygo LoRa32 v2.1 board as Bluetooth TNC(Android/Apple) and as a Tracker (with external GPS module).
-- 2023.12.07 Added ESP32 as DIY Tracker (with external GPS Module) with LoRa SX1278 module.
-- 2023.12.06 T-Beam V1.2 as default board.
-- 2023.12.05 Updated packets recognition (+Objects + Mic-E).
-- 2023.11.28 Adding BLE connection to use it as TNC with APRS.fi app for iOS.
-- 2023.11.07 Digipeater Mode added in Emergency Menu.
-- 2023.10.23 COMPLETE New Menu for Keyboard add-on.
-- 2023.10.22 Added Keyboard Support over I2C ( CARDKB from https://m5stack.com )
-- 2023.10.07 Screen Brightness control added.
-- 2023.10.01 Added Wx Telemetry Tx with BME280 Module attached to Tracker.
-- 2023.09.28 Added Support for V.1 board with SX1268 LoRa Module.
-- 2023.09.25 Wiki added.
-- 2023.09.16 Adding Led notification for Beacon Tx and for Message Received.
-- 2023.09.14 Adding buzzer sounds for BootUp, BeaconTx, MessageRx and more.
-- 2023.09.11 Saving last used Callsign into internal Memory to remember it at next boot.
-- 2023.09.05 Adding "simplified Tracker Mode": only GPS beacons Tx.
-- 2023.08.27 Adding support to connect BME280 and see Temperature, Humidity, Pressure.
-- 2023.08.12 Adding also support for old V0_7 board. Thanks Béla Török.
-- 2023.08.09 Adding Bluetooth capabilities with Kiss and TNC2, TTGO Lora 32. Thanks Thomas DL9SAU.
-- 2023.08.08 Added Maidenhead info on Screen. Thanks Mathias "mpbraendli".
-- 2023.08.06 Added Bluetooth Support for TNC in Android/APRSDroid. Thanks Valentin F4HVV.
-- 2023.08.05 New Support for SH1106 Oled Screen (0,96" and 1.3")
-- 2023.07.24 New Validation for Callsings, Overlay change and New Icons (Bike, Motorcycle).
-- 2023.07.18 Add Support for triggering PTT to external amplifier.
-- 2023.07.16 New Icons for Oled Screen (Runner, Car, Jeep)
-- 2023.07.01 Added Support for new T-Beam AXP2101 v1.2 Board.
-- 2023.06.26 Weather Report now stays until button pressed, to avoid missing it.
-- 2023.06.25 Sends comment after X count of beacons.
-- 2023.06.24 displayEcoMode=true doesn't turn the screen off at boot.
-- 2023.06.23 Return to from any Menu number to Main Menu (Tracker) after 30 segs.
-- 2023.06.20 Major Code Repacking.
-- 2023.06.01 Adding Turn Slope calculations for Smart Beacon and Display Eco Mode.
-- 2023.05.29 New Config file for adding more new ideas to the Tracker.
-- 2023.05.27 Adding Altitude + Speed or Course + Speed in the encoded GPS info.
-- 2023.05.21 Adding Last-Heard LoRa Stations/Trackers.
-- 2023.05.14 Adding Menu.
-- 2023.05.12 Saving Messages to Internal Memory.
-- 2023.04.16 Sending and Receiving LoRa Packets.
+## Key Features
 
-____________________________________________________
-## This code was based on the work of :
-- https://github.com/aprs434/lora.tracker : Serge - ON4AA on base91 byte-saving/encoding
-- https://github.com/lora-aprs/LoRa_APRS_Tracker : Peter - OE5BPA LoRa Tracker
-- https://github.com/Mane76/LoRa_APRS_Tracker : Manfred - DC2MH (Mane76) mods for multiple Callsigns and processor speed
-- https://github.com/dl9sau/TTGO-T-Beam-LoRa-APRS : Thomas - DL9SAU for the Kiss <> TNC2 lib
-____________________________________________________
+### Interface
+- Full-color touchscreen UI (320x240) with LVGL 8.4
+- **LovyanGFX** graphics library (replaces TFT_eSPI for better performance)
+- Dashboard with real-time GPS, LoRa, WiFi, battery status
+- Interactive map with dual rendering (raster/vector)
+- APRS messaging with conversation view
+- Touch-friendly configuration screens
+- Physical QWERTY keyboard support
 
-# Hope You Enjoy this, 73! CA2RXU, Valparaiso, Chile
+### Map System
+- **Raster mode**: JPEG/PNG tiles (OpenStreetMap format)
+  - Zoom levels: 8, 10, 12, 14, 16, 18 (step 2)
+- **Vector mode**: NAV binary format (IceNav-v3 compatible)
+  - Zoom levels: 8 to 18 (step 1)
+  - Sub-pixel precision rendering
+  - Dynamic background color from tiles
+- APRS station display with symbols (primary/alternate tables)
+- Label rendering with anti-collision detection
+- GPS tracking with auto-follow and manual pan
+
+### APRS & Messaging
+- Full LoRa APRS support (433MHz)
+- Threaded message conversations
+- Contact management (add/edit/delete)
+- Quick reply from map or station list
+- Message history on SD card
+- LinkStats and per-station statistics (max 20 stations)
+
+### Hardware
+- **LVGL Boards (touchscreen)**: Lilygo T-Deck Plus 433MHz (ESP32-S3) · CrowPanel Advance 3.5" (ESP32-S3)
+- **OLED Board (classic)**: Lilygo T-Beam V1.2 433MHz (ESP32)
+- **Display (LVGL boards)**: 320x240 or 480x320 IPS touchscreen with brightness control
+- **LoRa**: SX1262 module
+- **GPS**: Internal GPS module
+- **Storage**: SD card (A1 class recommended for fast tile loading)
+- **Connectivity**: WiFi (AP + Station modes), Bluetooth LE
+
+## Documentation & User Guide
+
+**All instructions for installation, configuration, and usage can be found on the Wiki:**
+
+📖 [**Read the Wiki / User Guide**](https://github.com/moricef/LoRa_APRS_Tracker/wiki)
+
+You will find details about:
+- Installation and first boot (Web Flasher / PlatformIO)
+- SD card preparation and raster/vector map tiles
+- Messaging and UI operation
+- Advanced settings
+
+## Technical Details
+
+**Memory**: ~88KB DRAM free during operation, PSRAM for tile/symbol cache and sprites
+
+**Optimizations**:
+- **PSRAM Asset Management**: UI allocator and tile/symbol cache redirected to PSRAM
+- Synchronous tile rendering (decode + copy + cache)
+- RGB565 byte-swap for correct LVGL colors
+- Persistent viewport sprite (no fragmentation)
+- LRU cache for raster and vector tiles
+- Negative cache to avoid repeated SD scans
+
+**Power Management**:
+- Display: configurable ECO timeout
+- T-Deck screen lock: when ECO Mode turns the screen off, touch and keyboard are ignored until **Q** then **Space** are pressed within one second
+- WiFi: periodic sleep
+- BLE: auto-disable after 5 min
+- GPS: sleep between beacons
+
+## Credits
+
+**Original firmware**: [CA2RXU - Ricardo](https://github.com/richonguzman/LoRa_APRS_Tracker)
+
+**Libraries & inspiration**:
+- [LVGL](https://lvgl.io/) - UI library
+- [LovyanGFX](https://github.com/lovyan03/LovyanGFX) - Graphics library
+- [IceNav-v3](https://github.com/jgauchia/IceNav-v3) - NAV format and vector rendering
+
+**Map data**: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
+
+**LVGL UI development**: F4MLV
+
+## Support This Project
+
+If you find this project useful, please **star ⭐ the repo**!
+
+[PayPal donation](https://paypal.me/moricef09) | [GitHub Sponsors](https://github.com/sponsors/moricef)
+
+**Original project**: Support [CA2RXU](https://github.com/sponsors/richonguzman) too!
+
+## License
+
+Same license as original CA2RXU LoRa APRS Tracker.
+
+## Issues & Support
+
+**LVGL UI issues**: [Open issue on this fork](https://github.com/moricef/LoRa_APRS_Tracker/issues)
+
+**General tracker issues**: See [original project](https://github.com/richonguzman/LoRa_APRS_Tracker)
+
+---
+
+73! F4MLV
