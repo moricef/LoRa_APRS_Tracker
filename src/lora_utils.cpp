@@ -29,6 +29,7 @@
 #include "board_pinout.h"
 #include "lora_utils.h"
 #include "native_aprs.h"
+#include "AprsCompress.h"
 #include "display.h"
 #include "station_utils.h"
 #include "storage_utils.h"
@@ -434,6 +435,19 @@ namespace LoRa_Utils {
             ESP_LOGI(TAG, "Native frame %u bytes", (unsigned)length);
             return String("\x3c\xff\x01") + NATIVE_APRS::toText(tnc2, rxt).c_str();
         }
+        // Experimental APRS-PPM full frame (K6ATV). Primed frames (C1) are
+        // not decoded: their reference check can accept a wrong reference.
+        if (AprsCompress::isCompressedHeader(data, length)) {
+            uint8_t text[AprsCompress::MAX_TEXT + 1];
+            size_t n = AprsCompress::decodeFrame(data, length, text, AprsCompress::MAX_TEXT);
+            if (n == 0 || memchr(text, 0, n) != nullptr) {
+                ESP_LOGW(TAG, "APRS-PPM frame not decodable (%u bytes)", (unsigned)length);
+                return "";
+            }
+            text[n] = 0;
+            ESP_LOGI(TAG, "APRS-PPM frame %u bytes, %u expanded", (unsigned)length, (unsigned)(n + 3));
+            return String("\x3c\xff\x01") + reinterpret_cast<char*>(text);
+        }
         data[length] = 0;
         return String(reinterpret_cast<char*>(data));
     }
@@ -481,12 +495,21 @@ namespace LoRa_Utils {
         loraSpiBegin();
 
         std::vector<uint8_t> native;
-        if (Config.lora.txFormat != 0) {
+        if (Config.lora.txFormat == 1 || Config.lora.txFormat == 2) {
             native = nativeFrame(newPacket);
             if (native.empty()) ESP_LOGW(TAG, "Native: sent as text, packet cannot be encoded");
         }
         int state;
-        if (Config.lora.txFormat == 1 && !native.empty()) {
+        uint8_t ppm[256];
+        size_t ppmLength = 0;
+        if (Config.lora.txFormat == 3 && newPacket.length() <= AprsCompress::MAX_TEXT) {
+            ppmLength = AprsCompress::encodeFrame(reinterpret_cast<const uint8_t*>(newPacket.c_str()),
+                                                  newPacket.length(), ppm, sizeof(ppm));
+        }
+        if (ppmLength > 0) {
+            state = radio.transmit(ppm, ppmLength);
+            ESP_LOGI(TAG, "APRS-PPM Tx %u bytes (text frame %u bytes)", (unsigned)ppmLength, (unsigned)(newPacket.length() + 3));
+        } else if (Config.lora.txFormat == 1 && !native.empty()) {
             state = radio.transmit(native.data(), native.size());
         } else {
             state = radio.transmit("\x3c\xff\x01" + newPacket);

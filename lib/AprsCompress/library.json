@@ -1,0 +1,5 @@
+{
+  "name": "AprsCompress",
+  "version": "0.1.0",
+  "description": "Order-3 context-model + range-coder compression for short APRS packets (experimental)"
+}

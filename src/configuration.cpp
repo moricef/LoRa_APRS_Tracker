@@ -322,7 +322,7 @@ bool Configuration::readFile() {
         lora.digipeatAlias              = data["loraConfig"]["digipeatAlias"] | "WIDE1-1";
         if (!data["loraConfig"].containsKey("txFormat")) needsRewrite = true;
         lora.txFormat                   = data["loraConfig"]["txFormat"] | 0;
-        if (lora.txFormat < 0 || lora.txFormat > 2) lora.txFormat = 0;
+        if (lora.txFormat < 0 || lora.txFormat > 3) lora.txFormat = 0;
 
         if (!data["telemetry"].containsKey("active") ||
             !data["telemetry"].containsKey("sendTelemetry") ||

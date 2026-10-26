@@ -354,7 +354,7 @@ namespace WEB_Utils {
         Config.lora.digipeatAlias.toUpperCase();
         if (Config.lora.digipeatAlias.isEmpty()) Config.lora.digipeatAlias = "WIDE1-1";
         Config.lora.txFormat              = getParamIntSafe("loraConfig.txFormat", Config.lora.txFormat);
-        if (Config.lora.txFormat < 0 || Config.lora.txFormat > 2) Config.lora.txFormat = 0;
+        if (Config.lora.txFormat < 0 || Config.lora.txFormat > 3) Config.lora.txFormat = 0;
 
         //  Battery
         Config.battery.sendVoltage              = request->hasParam("battery.sendVoltage", true);
