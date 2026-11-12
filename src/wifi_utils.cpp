@@ -24,21 +24,12 @@
 #include <esp_task_wdt.h>
 #include <lwip/netdb.h>
 #include <lwip/sockets.h>
-#include <mbedtls/pkcs5.h>
-#include <mbedtls/md.h>
 #include "configuration.h"
 #include "wifi_utils.h"
 #include "web_utils.h"
 #include "aprs_is_utils.h"
 #include "display.h"
 #include "lvgl_ui.h"
-
-// DEBUG AP PMK (temporaire) : fonctions internes d'ESP-IDF, deja liees au firmware
-extern "C" {
-    uint8_t *esp_wifi_ap_get_prof_pmk_internal(void);
-    int esp_fast_psk(const char *password, size_t password_len, const uint8_t *ssid, size_t ssid_len,
-                     size_t iterations, uint8_t *output, size_t output_len);
-}
 
 extern Configuration        Config;
 
@@ -465,54 +456,13 @@ namespace WIFI_Utils {
         }
     }
 
-    // DEBUG AP PMK (temporaire, ne pas committer) : compare la cle WPA2 que le
-    // pilote Wi-Fi utilise pour l'AP a celles recalculees ici.
-    static void hex32(const uint8_t* p, char* out) {
-        static const char d[] = "0123456789abcdef";
-        for (int i = 0; i < 32; i++) { out[2*i] = d[p[i] >> 4]; out[2*i+1] = d[p[i] & 15]; }
-        out[64] = 0;
-    }
-    static void logApPmkDiag(const char* ssid, const char* pass) {
-        char h[65];
-        wifi_config_t conf;
-        memset(&conf, 0, sizeof(conf));
-        esp_err_t err = esp_wifi_get_config(WIFI_IF_AP, &conf);
-        ESP_LOGW(TAG, "[PMK] get_config=%s ssid='%.32s' ssid_len=%u pwd_len=%u auth=%d cipher=%d",
-                 esp_err_to_name(err), conf.ap.ssid, (unsigned)conf.ap.ssid_len,
-                 (unsigned)strnlen((const char*)conf.ap.password, 64),
-                 (int)conf.ap.authmode, (int)conf.ap.pairwise_cipher);
-
-        const uint8_t* drv = esp_wifi_ap_get_prof_pmk_internal();
-        if (drv) { hex32(drv, h); ESP_LOGW(TAG, "[PMK] pilote t0      : %s", h); }
-        else     { ESP_LOGW(TAG, "[PMK] pilote t0      : (null)"); }
-        delay(1500);   // laisse le pilote finir un eventuel calcul differe
-        drv = esp_wifi_ap_get_prof_pmk_internal();
-        if (drv) { hex32(drv, h); ESP_LOGW(TAG, "[PMK] pilote t+1.5s  : %s", h); }
-        else     { ESP_LOGW(TAG, "[PMK] pilote t+1.5s  : (null)"); }
-
-        uint8_t k[32];
-        memset(k, 0, sizeof(k));
-        int rc = esp_fast_psk(pass, strlen(pass), (const uint8_t*)ssid, strlen(ssid), 4096, k, sizeof(k));
-        hex32(k, h); ESP_LOGW(TAG, "[PMK] esp_fast_psk    : %s (rc=%d)", h, rc);
-
-        memset(k, 0, sizeof(k));
-        rc = mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA1, (const unsigned char*)pass, strlen(pass),
-                                           (const unsigned char*)ssid, strlen(ssid), 4096, sizeof(k), k);
-        hex32(k, h); ESP_LOGW(TAG, "[PMK] mbedtls pbkdf2  : %s (rc=%d)", h, rc);
-
-        ESP_LOGW(TAG, "[PMK] attendu (PC)    : 4cf9289e5cabfaba91d3f24a391feb98a7664ff982ab230564c60c7d5189386d"
-                      " (LoRa-Tracker-AP / 1234567890)");
-    }
-
     void startBlockingWebConfig() {
         String apName = "LoRa-Tracker-AP";
 
         displayShow(" LoRa APRS", "    ** WEB-CONF **", "", "WiFiAP: " + apName, "IP    : 192.168.4.1", "", 0);
         ESP_LOGW(TAG, "WebConfiguration Started!");
 
-        if (wifiStartAP(apName.c_str(), Config.wifiAutoAP.password.c_str())) {
-            logApPmkDiag(apName.c_str(), Config.wifiAutoAP.password.c_str());
-        } else {
+        if (!wifiStartAP(apName.c_str(), Config.wifiAutoAP.password.c_str())) {
             ESP_LOGE(TAG, "Failed to start AP");
         }
 
@@ -655,7 +605,6 @@ namespace WIFI_Utils {
 
         bool success = wifiStartAP(apName.c_str(), Config.wifiAutoAP.password.c_str());
         if (success) {
-            logApPmkDiag(apName.c_str(), Config.wifiAutoAP.password.c_str());
             ESP_LOGI(TAG, "AP Started - IP: %s", netifIpString(apNetif).c_str());
             WEB_Utils::setup();
             WiFiConnected = false;

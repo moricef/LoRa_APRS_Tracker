@@ -47,6 +47,8 @@ src/map_touch_controller.cpp
 # Local board experiments
 sdkconfig
 sdkconfig.old
+sdkconfig.*
+!sdkconfig.defaults
 managed_components/
 .pio/
 include/LGFX_Waveshare7.h

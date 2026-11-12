@@ -49,7 +49,6 @@ static const char *TAG = "Main";
 #include <esp_task_wdt.h>
 #include <NMEAGPS.h>
 #include <Arduino.h>
-#include <Arduino.h>
 #include "smartbeacon_utils.h"
 #include "bluetooth_utils.h"
 #include "keyboard_utils.h"

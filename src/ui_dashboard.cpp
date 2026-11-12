@@ -16,7 +16,6 @@ static const char *TAG = "Dashboard";
 #include "lvgl_ui.h"
 
 #include <Arduino.h>
-#include <Arduino.h>
 #include "esp_heap_caps.h"
 #include <lvgl.h>
 

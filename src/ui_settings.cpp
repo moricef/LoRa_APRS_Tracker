@@ -12,7 +12,6 @@
 #include "ui_dashboard.h"
 #include <Arduino.h>
 #include <lvgl.h>
-#include <Arduino.h>
 #include <esp_task_wdt.h>
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>

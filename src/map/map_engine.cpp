@@ -214,16 +214,19 @@ namespace MapEngine {
 
     // Generic file callbacks for raster decoders (POSIX FILE*)
     static void* rasterOpenFile(const char* filename, int32_t* size) {
+        rasterFileOpened = false;
         FILE* f = fopen(filename, "rb");
         if (!f) return nullptr;
         fseek(f, 0, SEEK_END);
         *size = (int32_t)ftell(f);
         fseek(f, 0, SEEK_SET);
+        rasterFileOpened = true;
         return f;
     }
 
     static void rasterCloseFile(void* handle) {
         if (handle) fclose((FILE*)handle);
+        rasterFileOpened = false;
     }
 
     static int32_t rasterReadFile(void* handle, uint8_t* pBuf, int32_t iLen) {

@@ -712,12 +712,12 @@ namespace MSG_Utils {
     }
 
     // Chemin POSIX du dossier des conversations, selon le support monte.
-    // SD.begin() monte sur "/sd", SPIFFS.begin() sur "/spiffs" ; STORAGE_Utils
+    // SD.begin() monte sur "/sd", LittleFS.begin() sur "/littlefs" ; STORAGE_Utils
     // prefixe "/LoRa_Tracker/Messages" aux chemins relatifs sur SD uniquement.
     static const char* conversationsDirPath() {
         return STORAGE_Utils::isSDAvailable()
                  ? "/sd/LoRa_Tracker/Messages/conversations"
-                 : "/spiffs/conversations";
+                 : "/littlefs/conversations";
     }
 
     std::vector<String> getConversationsList(std::vector<time_t>* outMtimes) {
