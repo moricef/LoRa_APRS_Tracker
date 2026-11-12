@@ -10,6 +10,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#if __has_include(<freertos/idf_additions.h>)
+#include <freertos/idf_additions.h>   // pxTaskGetStackStart()
+#endif
+#include <atomic>
 #include <esp_attr.h>   // RTC_NOINIT_ATTR
 #include "shared_spi_guard.h"
 
@@ -89,37 +93,143 @@ namespace SD_Logger {
         *dst = '\0';
     }
 
+    // -----------------------------------------------------------------------
     // vprintf hook: captures ESP_LOGW / ESP_LOGE to SD
+    //
+    // The hook runs on the stack of whichever task emits the log. Writing to
+    // the SD card (formatting, bus lock, FAT open/write/close) is far too deep
+    // for the small system tasks (NimBLE host: 4 KB, system events: 2.3 KB),
+    // so the SD part only runs when the calling task has enough stack left.
+    // -----------------------------------------------------------------------
+    static constexpr size_t SD_WRITE_STACK_UNMEASURED = 4096;  // used until measured at init()
+    static constexpr size_t SD_WRITE_STACK_MARGIN     = 1024;
+    static size_t sdWriteStackNeed = SD_WRITE_STACK_UNMEASURED;
+
+    // W/E lines not persisted because their task had too little stack
+    static std::atomic<uint32_t> skippedSmallStack{0};
+    static portMUX_TYPE skippedMux = portMUX_INITIALIZER_UNLOCKED;
+    static char skippedTaskName[configMAX_TASK_NAME_LEN] = {};
+
+    // Stack left to the calling task right now (not its historical minimum)
+    static inline size_t currentFreeStack() {
+        return (size_t)((uint8_t*)__builtin_frame_address(0) - pxTaskGetStackStart(NULL));
+    }
+
+    // Level letter of an ESP-IDF log line, read from the format string itself:
+    // LOG_FORMAT() puts it right after the optional colour escape sequence.
+    static char formatLevel(const char* format) {
+        const char* p = format;
+        while (*p == '\033' && *(p + 1) == '[') {
+            p += 2;
+            while (*p && *p != 'm') p++;
+            if (*p == 'm') p++;
+        }
+        return *p;
+    }
+
+    // Writes the pending "lines skipped" note. Call with the log file open.
+    static void writeSkippedNote(FILE* f) {
+        const uint32_t skipped = skippedSmallStack.exchange(0);
+        if (skipped == 0) return;
+        char name[configMAX_TASK_NAME_LEN];
+        portENTER_CRITICAL(&skippedMux);
+        memcpy(name, skippedTaskName, sizeof(name));
+        portEXIT_CRITICAL(&skippedMux);
+        name[sizeof(name) - 1] = '\0';
+        char ts[20];
+        formatTimestamp(ts, sizeof(ts));
+        fprintf(f, "%s W SD_Log: %lu warning/error line(s) not saved: task stack too small (last: %s)\n",
+                ts, (unsigned long)skipped, name);
+    }
+
+    // The deep part, kept out of the hook's own stack frame
+    __attribute__((noinline))
+    static void sdLogPersist(const char* format, va_list args) {
+        char buf[300];
+        vsnprintf(buf, sizeof(buf), format, args);
+        stripAnsi(buf);
+
+        inSdHook = true;
+        // Bus first, then logger: same lock order as log() and rotateLogs()
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(50));
+        if (spiGuard.acquired() && sdLogMutex &&
+            xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            FILE* f = fopen(SD_LOG_FILE, "a");
+            if (f) {
+                writeSkippedNote(f);
+                char ts[20];
+                formatTimestamp(ts, sizeof(ts));
+                fprintf(f, "%s %s", ts, buf);
+                fclose(f);
+            }
+            xSemaphoreGive(sdLogMutex);
+        }
+        inSdHook = false;
+    }
+
     static int sdLogVprintf(const char* format, va_list args) {
         va_list args_copy;
         va_copy(args_copy, args);
         int ret = originalVprintf(format, args);  // serial output (consumes args)
 
+        // Only persist W (warn) and E (error) levels — I/D/V are too noisy
         if (initialized && !inSdHook && !xPortInIsrContext()) {
-            char buf[300];
-            vsnprintf(buf, sizeof(buf), format, args_copy);
-            stripAnsi(buf);
-            // Only persist W (warn) and E (error) levels — I/D/V are too noisy
-            if (buf[0] == 'W' || buf[0] == 'E') {
-                inSdHook = true;
-                // Bus first, then logger: same lock order as log() and rotateLogs()
-                SharedSpiGuard spiGuard(pdMS_TO_TICKS(50));
-                if (spiGuard.acquired() && sdLogMutex &&
-                    xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-                    FILE* f = fopen(SD_LOG_FILE, "a");
-                    if (f) {
-                        char ts[20];
-                        formatTimestamp(ts, sizeof(ts));
-                        fprintf(f, "%s %s", ts, buf);
-                        fclose(f);
-                    }
-                    xSemaphoreGive(sdLogMutex);
+            const char level = formatLevel(format);
+            if (level == 'W' || level == 'E') {
+                if (currentFreeStack() >= sdWriteStackNeed) {
+                    sdLogPersist(format, args_copy);
+                } else {
+                    skippedSmallStack.fetch_add(1);
+                    portENTER_CRITICAL(&skippedMux);
+                    strlcpy(skippedTaskName, pcTaskGetName(NULL), sizeof(skippedTaskName));
+                    portEXIT_CRITICAL(&skippedMux);
                 }
-                inSdHook = false;
             }
         }
         va_end(args_copy);
         return ret;
+    }
+
+    // --- One-shot measurement of the stack the SD write path really uses ---
+    static constexpr uint32_t SD_PROBE_STACK = 6144;   // measured need: about 2.1 KB
+    static volatile size_t sdProbeUsed = 0;
+    static SemaphoreHandle_t sdProbeDone = nullptr;
+
+    static void sdProbeWrite(const char* format, ...) {
+        va_list args;
+        va_start(args, format);
+        sdLogPersist(format, args);
+        va_end(args);
+    }
+
+    static void sdProbeTask(void*) {
+        sdProbeWrite("W (%lu) %s: SD log stack probe\n", (unsigned long)millis(), TAG);
+        sdProbeUsed = SD_PROBE_STACK - uxTaskGetStackHighWaterMark(NULL);
+        xSemaphoreGive(sdProbeDone);
+        vTaskDelete(NULL);
+    }
+
+    // Runs the real write path once in a throw-away task and sets the guard
+    static void measureSdWriteStack() {
+        sdProbeUsed = 0;
+        if (!sdProbeDone) sdProbeDone = xSemaphoreCreateBinary();
+        if (!sdProbeDone) return;
+        xSemaphoreTake(sdProbeDone, 0);
+        if (xTaskCreatePinnedToCore(sdProbeTask, "sdlog_probe", SD_PROBE_STACK,
+                                    nullptr, uxTaskPriorityGet(NULL),
+                                    nullptr, xPortGetCoreID()) != pdPASS) {
+            ESP_LOGW(TAG, "Stack probe task not created, guard stays at %u bytes",
+                     (unsigned)sdWriteStackNeed);
+            return;
+        }
+        if (xSemaphoreTake(sdProbeDone, pdMS_TO_TICKS(5000)) != pdTRUE || sdProbeUsed == 0) {
+            ESP_LOGW(TAG, "Stack probe timed out, guard stays at %u bytes",
+                     (unsigned)sdWriteStackNeed);
+            return;
+        }
+        sdWriteStackNeed = sdProbeUsed + SD_WRITE_STACK_MARGIN;
+        ESP_LOGI(TAG, "SD write path uses %u bytes of stack; W/E lines need %u bytes free",
+                 (unsigned)sdProbeUsed, (unsigned)sdWriteStackNeed);
     }
 
     // Get reset reason as string
@@ -182,6 +292,8 @@ namespace SD_Logger {
 
         // Log directory created by STORAGE_Utils::setup()
 
+        measureSdWriteStack();
+
         initialized = true;
         ESP_LOGI(TAG, "Initialized");
     }
@@ -213,6 +325,8 @@ namespace SD_Logger {
             case CRITICAL: levelStr = "CRIT "; break;
             default:       levelStr = "???? "; break;
         }
+
+        writeSkippedNote(logFile);
 
         char ts[20];
         formatTimestamp(ts, sizeof(ts));
