@@ -38,6 +38,7 @@ void ble_store_config_init(void);
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
+#include <freertos/queue.h>
 #include "configuration.h"
 #include "lora_utils.h"
 #include "kiss_utils.h"
@@ -118,6 +119,21 @@ static uint8_t tnc2QueueCount = 0;
 static String kissSerialBuffer;
 static String tnc2SerialBuffer;
 static bool tnc2DiscardUntilDelimiter = false;
+
+// GATT callbacks only copy bytes. Parsing and warnings (which can write to SD)
+// run in loopTask, not on the 4 KB NimBLE host stack.
+struct RxWrite {
+    uint32_t session;
+    uint32_t stream;
+    uint16_t length;
+    uint8_t data[BLE_CHUNK_SIZE];
+};
+static constexpr size_t RX_WRITE_QUEUE_SIZE = 8;
+static QueueHandle_t rxWriteQueue = nullptr;
+static StaticQueue_t rxWriteQueueControl;
+static uint8_t* rxWriteQueueStorage = nullptr;
+static std::atomic<uint32_t> rxStream{0};
+static std::atomic<uint32_t> droppedWrites{0};
 
 static void resetTnc2Input() {
     if (tnc2QueueMutex == nullptr) {
@@ -257,6 +273,38 @@ static void receiveKissBytes(const uint8_t* data, size_t length) {
     }
 }
 
+static void processRxWrites() {
+    static uint32_t parserSession = UINT32_MAX;
+    static uint32_t parserStream = UINT32_MAX;
+    auto syncParser = [&]() {
+        const uint32_t session = bleSession.load();
+        const uint32_t stream = rxStream.load();
+        if (session != parserSession || stream != parserStream) {
+            const bool interrupted = session == parserSession;
+            resetTnc2Input();
+            kissSerialBuffer = "";
+            // A dropped chunk can end inside a line; wait for its delimiter.
+            tnc2DiscardUntilDelimiter = interrupted;
+            parserSession = session;
+            parserStream = stream;
+        }
+    };
+    syncParser();
+    if (!rxWriteQueue) return;
+    RxWrite incoming;
+    for (size_t count = 0; count < RX_WRITE_QUEUE_SIZE &&
+         xQueueReceive(rxWriteQueue, &incoming, 0) == pdTRUE; ++count) {
+        syncParser();
+        if (incoming.session != parserSession || incoming.stream != parserStream) continue;
+        if (bleUseKISS) receiveKissBytes(incoming.data, incoming.length);
+        else receiveTnc2Bytes(incoming.data, incoming.length);
+    }
+    // A disconnect or overflow during parsing invalidates partial/queued frames.
+    syncParser();
+    const uint32_t lost = droppedWrites.exchange(0);
+    if (lost) ESP_LOGW(TAG, "BLE RX overflow: %lu writes dropped; stream reset", (unsigned long)lost);
+}
+
 
 static void clearConnection() {
     bleSession.fetch_add(1);
@@ -325,8 +373,6 @@ static int gapEvent(ble_gap_event* event, void*) {
         }
         case BLE_GAP_EVENT_DISCONNECT:
             clearConnection();
-            resetTnc2Input();
-            kissSerialBuffer = "";
             ESP_LOGI(TAG, "BLE client disconnected (reason %d)", event->disconnect.reason);
             if (!bleStopping.load()) startAdvertising();
             return 0;
@@ -348,14 +394,14 @@ static int gapEvent(ble_gap_event* event, void*) {
 }
 
 static int accessGatt(uint16_t conn, uint16_t attr, ble_gatt_access_ctxt* ctxt, void*) {
+    RxWrite incoming;
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR && attr == txValueHandle) {
-        uint8_t value[BLE_CHUNK_SIZE];
         uint16_t length;
         portENTER_CRITICAL(&stateMux);
         length = txValueLength;
-        memcpy(value, txValue, length);
+        memcpy(incoming.data, txValue, length);
         portEXIT_CRITICAL(&stateMux);
-        return os_mbuf_append(ctxt->om, value, length) == 0
+        return os_mbuf_append(ctxt->om, incoming.data, length) == 0
                    ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
     if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR ||
@@ -363,12 +409,18 @@ static int accessGatt(uint16_t conn, uint16_t attr, ble_gatt_access_ctxt* ctxt, 
 
     const uint16_t length = OS_MBUF_PKTLEN(ctxt->om);
     if (length > BLE_CHUNK_SIZE) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-    uint8_t data[BLE_CHUNK_SIZE];
+    if (!rxWriteQueue) return BLE_ATT_ERR_INSUFFICIENT_RES;
     uint16_t copied = 0;
-    if (ble_hs_mbuf_to_flat(ctxt->om, data, sizeof(data), &copied) != 0)
+    if (ble_hs_mbuf_to_flat(ctxt->om, incoming.data, sizeof(incoming.data), &copied) != 0)
         return BLE_ATT_ERR_UNLIKELY;
-    if (bleUseKISS) receiveKissBytes(data, copied);
-    else receiveTnc2Bytes(data, copied);
+    incoming.session = bleSession.load();
+    incoming.stream = rxStream.load();
+    incoming.length = copied;
+    if (xQueueSend(rxWriteQueue, &incoming, 0) != pdTRUE) {
+        rxStream.fetch_add(1);
+        droppedWrites.fetch_add(1);
+        return BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
     return 0;
 }
 
@@ -399,8 +451,6 @@ static int configureGatt() {
 static void hostReset(int reason) {
     bleSynced.store(false);
     clearConnection();
-    resetTnc2Input();
-    kissSerialBuffer = "";
     ESP_LOGW(TAG, "NimBLE host reset: %d", reason);
 }
 
@@ -443,6 +493,7 @@ static bool stopHost() {
     clearConnection();
     resetTnc2Input();
     kissSerialBuffer = "";
+    if (rxWriteQueue) xQueueReset(rxWriteQueue);
     return true;
 }
 
@@ -465,6 +516,22 @@ namespace BLE_Utils {
             ESP_LOGE(TAG, "Cannot allocate BLE receive queue mutex");
             return;
         }
+        if (!rxWriteQueue) {
+            rxWriteQueueStorage = static_cast<uint8_t*>(heap_caps_malloc(
+                RX_WRITE_QUEUE_SIZE * sizeof(RxWrite), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (rxWriteQueueStorage)
+                rxWriteQueue = xQueueCreateStatic(RX_WRITE_QUEUE_SIZE, sizeof(RxWrite),
+                                                 rxWriteQueueStorage, &rxWriteQueueControl);
+            if (!rxWriteQueue) {
+                heap_caps_free(rxWriteQueueStorage);
+                rxWriteQueueStorage = nullptr;
+                ESP_LOGE(TAG, "Cannot allocate BLE RX byte queue in PSRAM");
+                return;
+            }
+        }
+        xQueueReset(rxWriteQueue);
+        rxStream.store(0);
+        droppedWrites.store(0);
         bleUseKISS = Config.bluetooth.useKISS;
         bleSleeping = false;
         bleStopping.store(false);
@@ -513,6 +580,7 @@ namespace BLE_Utils {
     }
 
     void sendToLoRa() {
+        processRxWrites();
         String frame;
         if (!dequeueTnc2Line(frame)) return;
         ESP_LOGD(TAG, "%s Tx %s", bleUseKISS ? "KISS" : "TNC2", frame.c_str());

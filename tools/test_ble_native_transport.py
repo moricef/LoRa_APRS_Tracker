@@ -19,10 +19,15 @@ a=src.index('static bool stopHost()'); b=src.index('namespace BLE_Utils {',a)
 shutdown=src[a:b]
 a=src.index('static void clearConnection()'); b=src.index('static int gapEvent(',a)
 clear=src[a:b]
+a=src.index('struct RxWrite {'); b=src.index('static void resetTnc2Input()',a)
+rxglobals=src[a:b]
+a=src.index('static int accessGatt('); b=src.index('static int configureGatt()',a)
+access=src[a:b]
 preamble=r'''
 #include <cassert>
 #include <atomic>
 #include <vector>
+#include <deque>
 #include <array>
 #include <algorithm>
 #include <cstring>
@@ -51,7 +56,7 @@ static SemaphoreHandle_t tnc2QueueMutex=0;
 static String tnc2Queue[TNC2_QUEUE_CAPACITY],kissSerialBuffer,tnc2SerialBuffer;
 static uint8_t tnc2QueueHead=0,tnc2QueueTail=0,tnc2QueueCount=0;
 static bool tnc2DiscardUntilDelimiter=false;
-static bool bleInitialized=true,bleHostStarted=true;
+static bool bleInitialized=true,bleHostStarted=true,bleUseKISS=false;
 static std::atomic<bool> bleSynced{true};
 static bool bluetoothConnected=true;
 static char peerAddress[18]={};
@@ -70,7 +75,26 @@ static int stateMux;
 #define portENTER_CRITICAL(x) ((void)0)
 #define portEXIT_CRITICAL(x) ((void)0)
 struct LifecycleLock {};
+using QueueHandle_t=void*;
+struct StaticQueue_t {};
+static bool inGatt=false;
+#undef ESP_LOGW
+#define ESP_LOGW(tag,format,...) do { assert(!inGatt); printf("W %s: " format "\n",tag,##__VA_ARGS__); } while(0)
+#define BLE_GATT_ACCESS_OP_READ_CHR 0
+#define BLE_GATT_ACCESS_OP_WRITE_CHR 1
+#define BLE_ATT_ERR_INSUFFICIENT_RES 17
+#define BLE_ATT_ERR_UNLIKELY 14
+#define BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN 13
 struct os_mbuf { std::vector<uint8_t> data; };
+struct ble_gatt_access_ctxt { int op;os_mbuf* om; };
+static size_t OS_MBUF_PKTLEN(os_mbuf* p) {return p->data.size();}
+static int os_mbuf_append(os_mbuf* p,const void* data,size_t len) {
+ const uint8_t* bytes=(const uint8_t*)data;p->data.insert(p->data.end(),bytes,bytes+len);return 0;
+}
+static int ble_hs_mbuf_to_flat(os_mbuf* p,void* data,size_t len,uint16_t* copied) {
+ if(p->data.size()>len)return 1;
+ *copied=p->data.size();memcpy(data,p->data.data(),*copied);return 0;
+}
 static std::vector<std::vector<uint8_t>> notifications;
 static int buffers=0,notifyError=0;
 static bool dropAfterFirst=false,reconnectAfterFirst=false;
@@ -86,11 +110,28 @@ static void delay(int) {
  if (reconnectAfterFirst && notifications.size()==1) bleSession++;
 }
 '''
+queues=r'''
+static std::deque<RxWrite> rawWrites;
+static int xQueueSend(void*,const void* item,int) {
+ if(rawWrites.size()>=RX_WRITE_QUEUE_SIZE)return 0;
+ rawWrites.push_back(*(const RxWrite*)item);return pdTRUE;
+}
+static int xQueueReceive(void*,void* item,int) {
+ if(rawWrites.empty())return 0;
+ *(RxWrite*)item=rawWrites.front();rawWrites.pop_front();return pdTRUE;
+}
+static void xQueueReset(void*) {rawWrites.clear();}
+'''
 main=r'''
 static void feedT(const String& s) { receiveTnc2Bytes((const uint8_t*)s.c_str(),s.length()); }
 static void feedK(const String& s) { receiveKissBytes((const uint8_t*)s.c_str(),s.length()); }
 static String pop() { String s; assert(dequeueTnc2Line(s));return s; }
 static void empty() { String s; assert(!dequeueTnc2Line(s)); }
+static int writeGatt(const String& data) {
+ os_mbuf mbuf{std::vector<uint8_t>((const uint8_t*)data.c_str(),(const uint8_t*)data.c_str()+data.length())};
+ ble_gatt_access_ctxt ctxt{BLE_GATT_ACCESS_OP_WRITE_CHR,&mbuf};
+ inGatt=true;int rc=accessGatt(bleConnection.load(),19,&ctxt,nullptr);inGatt=false;return rc;
+}
 int main() {
  resetTnc2Input();
  String alpha="F4MLV-GS>APLRG1,WIDE1-1:extended identity";
@@ -110,6 +151,26 @@ int main() {
  feedK(KISS_Utils::encodeKISS(escaped));assert(pop()==escaped);empty();
  String control=wire;control.setCharAt(1,1);feedK(control);empty();
  assert(KISS_Utils::encodeKISS(alpha).isEmpty());
+ // End-to-end callback boundary: no parser or SD warning is allowed in GATT.
+ rxWriteQueue=(void*)3;bleConnection=1;
+ assert(writeGatt(alpha+"\n")==0);empty();processRxWrites();assert(pop()==alpha);empty();
+ String binary;binary+=(char)0xc0;binary+=(char)0xdb;binary+="?\n";
+ assert(writeGatt(binary)==0);empty();processRxWrites();empty();
+ assert(writeGatt(classic+"\n")==0);processRxWrites();assert(pop()==classic);empty();
+ assert(writeGatt(alpha.substring(0,8))==0);processRxWrites();
+ clearConnection();bleConnection=1;
+ assert(writeGatt(classic+"\n")==0);processRxWrites();assert(pop()==classic);empty();
+ assert(writeGatt(alpha+"\n")==0);clearConnection();bleConnection=1;processRxWrites();empty();
+ for(int i=0;i<8;i++)assert(writeGatt(alpha.substring(0,8))==0);
+ assert(writeGatt("dropped")==BLE_ATT_ERR_INSUFFICIENT_RES);processRxWrites();empty();
+ assert(writeGatt("tail\n"+classic+"\n")==0);processRxWrites();assert(pop()==classic);empty();
+ String oversized;for(int i=0;i<513;i++)oversized+='X';
+ assert(writeGatt(oversized)==BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);processRxWrites();empty();
+ bleUseKISS=true;clearConnection();bleConnection=1;
+ assert(writeGatt(wire.substring(0,7))==0);processRxWrites();empty();
+ assert(writeGatt(wire.substring(7))==0);empty();processRxWrites();assert(pop()==classic);empty();
+ bleUseKISS=false;bleSubscribed=true;
+ puts("PASS: GATT defers parsing/warnings, rejects binary TNC2 safely, resumes after bad input, discards stale sessions and resynchronizes queue overflow");
  std::array<uint8_t,600> bytes{};for(size_t i=0;i<bytes.size();i++)bytes[i]=i;
  for(uint16_t testedMtu:{23,256,517}) {
   mtu=testedMtu;notifications.clear();notifyBytes(bytes.data(),bytes.size());
@@ -139,7 +200,7 @@ int main() {
  puts("PASS: TNC2/KISS fragmentation, ordering, escapes, overflow recovery, MTU 23/256/517, unsubscribe, disconnect/reconnect and notification failure");
 }
 '''
-(d/'test.cpp').write_text(preamble+parsers+clear+shutdown+notify+main)
+(d/'test.cpp').write_text(preamble+rxglobals+queues+parsers+clear+shutdown+access+notify+main)
 cmd=['g++','-std=c++17','-DUNIT_TEST','-I'+str(d),'-I'+str(root/'test'),'-I'+str(root/'include'),str(d/'test.cpp'),str(root/'src/kiss_utils.cpp'),'-o',str(d/'test')]
 r=subprocess.run(cmd,capture_output=True,text=True)
 if r.returncode: print(r.stderr[-3500:]);raise SystemExit(r.returncode)
