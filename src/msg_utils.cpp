@@ -48,6 +48,49 @@
 #endif
 
 
+// POSIX VFS adapter for the newer message workflows that still use Stream-style reads.
+class VfsFile {
+public:
+    VfsFile(FILE* file = nullptr) : file_(file) {}
+    ~VfsFile() { close(); }
+    VfsFile(const VfsFile&) = delete;
+    VfsFile& operator=(const VfsFile&) = delete;
+    VfsFile& operator=(FILE* file) { close(); file_ = file; return *this; }
+    explicit operator bool() const { return file_ != nullptr; }
+    bool available() {
+        if (!file_) return false;
+        int ch = fgetc(file_);
+        if (ch == EOF) return false;
+        ungetc(ch, file_);
+        return true;
+    }
+    String readStringUntil(char delimiter) {
+        String result;
+        if (!file_) return result;
+        for (int ch; (ch = fgetc(file_)) != EOF && ch != delimiter;) result += (char)ch;
+        return result;
+    }
+    size_t println(const String& line) {
+        if (!file_) return 0;
+        return fprintf(file_, "%s\n", line.c_str()) > 0 ? line.length() + 1 : 0;
+    }
+    size_t write(const uint8_t* data, size_t size) {
+        return file_ ? fwrite(data, 1, size, file_) : 0;
+    }
+    size_t size() {
+        if (!file_) return 0;
+        long pos = ftell(file_);
+        if (pos < 0 || fseek(file_, 0, SEEK_END) != 0) return 0;
+        long end = ftell(file_);
+        fseek(file_, pos, SEEK_SET);
+        return end > 0 ? (size_t)end : 0;
+    }
+    bool seek(size_t pos) { return file_ && fseek(file_, (long)pos, SEEK_SET) == 0; }
+    void close() { if (file_) { fclose(file_); file_ = nullptr; } }
+private:
+    FILE* file_;
+};
+
 extern Beacon               *currentBeacon;
 extern Configuration        Config;
 
@@ -154,7 +197,7 @@ namespace MSG_Utils {
 
         STORAGE_Utils::removeFile("/unread_aprs.txt");
 
-        File file = STORAGE_Utils::openFile("/unread_aprs.txt", FILE_WRITE);
+        VfsFile file = STORAGE_Utils::openFile("/unread_aprs.txt", FILE_WRITE);
         if (!file) {
             ESP_LOGW(TAG, "Failed to save APRS unread state");
             return;
@@ -178,7 +221,7 @@ namespace MSG_Utils {
             return;
         }
 
-        File file = STORAGE_Utils::openFile("/unread_wlnk.txt", FILE_WRITE);
+        VfsFile file = STORAGE_Utils::openFile("/unread_wlnk.txt", FILE_WRITE);
         if (!file) {
             ESP_LOGW(TAG, "Failed to save Winlink unread state");
             return;
@@ -199,7 +242,7 @@ namespace MSG_Utils {
         unreadAPRSConversations.clear();
         unreadWLNKMessages = 0;
 
-        File aprsFile = STORAGE_Utils::openFile("/unread_aprs.txt", "r");
+        VfsFile aprsFile = STORAGE_Utils::openFile("/unread_aprs.txt", "r");
         if (aprsFile) {
             while (aprsFile.available()) {
                 String line = aprsFile.readStringUntil('\n');
@@ -217,7 +260,7 @@ namespace MSG_Utils {
             aprsFile.close();
         }
 
-        File wlnkFile = STORAGE_Utils::openFile("/unread_wlnk.txt", "r");
+        VfsFile wlnkFile = STORAGE_Utils::openFile("/unread_wlnk.txt", "r");
         if (wlnkFile) {
             String line = wlnkFile.readStringUntil('\n');
             line.trim();
@@ -295,7 +338,7 @@ namespace MSG_Utils {
         std::vector<String> ordered;
         ordered.push_back(callsign);
 
-        File readFile = STORAGE_Utils::openFile("/conversations_order.txt", "r");
+        VfsFile readFile = STORAGE_Utils::openFile("/conversations_order.txt", "r");
         if (readFile) {
             while (readFile.available()) {
                 String line = readFile.readStringUntil('\n');
@@ -308,7 +351,7 @@ namespace MSG_Utils {
         }
 
         STORAGE_Utils::removeFile("/conversations_order.txt");
-        File writeFile = STORAGE_Utils::openFile("/conversations_order.txt", FILE_WRITE);
+        VfsFile writeFile = STORAGE_Utils::openFile("/conversations_order.txt", FILE_WRITE);
         if (!writeFile) {
             ESP_LOGW(TAG, "Failed to save conversation order");
             return;
@@ -329,7 +372,7 @@ namespace MSG_Utils {
             return true;
         }
 
-        File file = STORAGE_Utils::openFile(filename, FILE_WRITE);
+        VfsFile file = STORAGE_Utils::openFile(filename, FILE_WRITE);
         if (!file) {
             ESP_LOGE(TAG, "Failed to rewrite %s", filename.c_str());
             return false;
@@ -489,13 +532,12 @@ namespace MSG_Utils {
 
         // Ensure /conversations directory exists
         if (!STORAGE_Utils::fileExists("/conversations")) {
-            bool created = STORAGE_Utils::mkdir("/conversations");
+            bool created = STORAGE_Utils::sdMkdir("/conversations");
             ESP_LOGI(TAG, "Created /conversations directory: %s", created ? "OK" : "FAILED");
             if (!created) {
                 ESP_LOGE(TAG, "Failed to create /conversations directory");
                 return;
             }
-            // Verify directory was created
             if (!STORAGE_Utils::fileExists("/conversations")) {
                 ESP_LOGE(TAG, "Directory /conversations not found after creation");
                 return;
@@ -509,17 +551,20 @@ namespace MSG_Utils {
         // Deduplication: check if last message is identical (same direction + content)
         // This prevents saving duplicate messages from retransmissions (up to 10 per APRS spec)
         if (STORAGE_Utils::fileExists(filename)) {
-            File readFile = STORAGE_Utils::openFile(filename, "r");
+            FILE* readFile = STORAGE_Utils::openFile(filename, "r");
             if (readFile) {
                 String lastLine = "";
-                while (readFile.available()) {
-                    String line = readFile.readStringUntil('\n');
+                char lineBuf[512];
+                while (fgets(lineBuf, sizeof(lineBuf), readFile)) {
+                    size_t len = strlen(lineBuf);
+                    if (len > 0 && lineBuf[len-1] == '\n') lineBuf[len-1] = '\0';
+                    String line(lineBuf);
                     line.trim();
                     if (line.length() > 0) {
                         lastLine = line;
                     }
                 }
-                readFile.close();
+                fclose(readFile);
 
                 // Parse last line: TIMESTAMP,DIRECTION,MESSAGE
                 if (lastLine.length() > 0) {
@@ -544,15 +589,14 @@ namespace MSG_Utils {
         uint32_t timestamp = millis() / 1000;  // Uptime in seconds
         String line = String(timestamp) + "," + direction + "," + message;
 
-        // Use "a" mode (append) which creates file if it doesn't exist
-        File conversationFile = STORAGE_Utils::openFile(filename, "a");
+        FILE* conversationFile = STORAGE_Utils::openFile(filename, "a");
         if (!conversationFile) {
             ESP_LOGE(TAG, "Failed to open conversation file: %s", filename.c_str());
             return;
         }
 
-        conversationFile.println(line);
-        conversationFile.close();
+        fprintf(conversationFile, "%s\n", line.c_str());
+        fclose(conversationFile);
         touchConversationOrder(callsign);
         ESP_LOGI(TAG, "Saved %s message to %s", direction.c_str(), filename.c_str());
     }
@@ -587,7 +631,7 @@ namespace MSG_Utils {
         SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
         if (!spiGuard.acquired()) return String();
 
-        File f = STORAGE_Utils::openFile(filename, "r");
+        VfsFile f = STORAGE_Utils::openFile(filename, "r");
         if (!f) return String();
 
         size_t sz = f.size();
@@ -681,7 +725,7 @@ namespace MSG_Utils {
         std::vector<String> callsigns;
         if (!spiGuard.acquired()) return callsigns;
 
-        // Enumeration en POSIX et non via l'API File d'Arduino : chaque
+        // Enumeration en POSIX et non via l'API VfsFile d'Arduino : chaque
         // openNextFile() construit un VFSFileImpl qui fait un stat(), un fopen()
         // et un setvbuf() de 4 Ko, puis getLastWrite() refait un stat() complet
         // (vfs_api.cpp:295 et :369 — _getStat() ne teste pas si _stat est deja
@@ -745,7 +789,7 @@ namespace MSG_Utils {
         }
         std::set<String> alreadyListed;
 
-        File orderFile = STORAGE_Utils::openFile("/conversations_order.txt", "r");
+        VfsFile orderFile = STORAGE_Utils::openFile("/conversations_order.txt", "r");
         if (orderFile) {
             while (orderFile.available()) {
                 String callsign = orderFile.readStringUntil('\n');
@@ -792,20 +836,23 @@ namespace MSG_Utils {
             return result;
         }
 
-        File conversationFile = STORAGE_Utils::openFile(filename, "r");
+        FILE* conversationFile = STORAGE_Utils::openFile(filename, "r");
         if (!conversationFile) {
             ESP_LOGW(TAG, "Failed to open conversation file for %s", callsign.c_str());
             return result;
         }
 
-        while (conversationFile.available()) {
-            String line = conversationFile.readStringUntil('\n');
+        char lineBuf[512];
+        while (fgets(lineBuf, sizeof(lineBuf), conversationFile)) {
+            size_t len = strlen(lineBuf);
+            if (len > 0 && lineBuf[len-1] == '\n') lineBuf[len-1] = '\0';
+            String line(lineBuf);
             line.trim();
             if (line.length() > 0) {
                 result.push_back(line);
             }
         }
-        conversationFile.close();
+        fclose(conversationFile);
 
         ESP_LOGD(TAG, "Loaded %d messages for %s", result.size(), callsign.c_str());
         return result;
@@ -815,31 +862,29 @@ namespace MSG_Utils {
         SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
         if (!spiGuard.acquired()) return;
 
-        File fileToReadAPRS = STORAGE_Utils::openFile("/aprsMessages.txt", "r");
+        FILE* fileToReadAPRS = STORAGE_Utils::openFile("/aprsMessages.txt", "r");
         if(!fileToReadAPRS) {
             ESP_LOGD(TAG, "No APRS messages file");
             numAPRSMessages = 0;
         } else {
-            std::vector<String> v1;
-            while (fileToReadAPRS.available()) {
-                v1.push_back(fileToReadAPRS.readStringUntil('\n'));
-            }
-            fileToReadAPRS.close();
-            numAPRSMessages = v1.size();
+            int count = 0;
+            char lineBuf[512];
+            while (fgets(lineBuf, sizeof(lineBuf), fileToReadAPRS)) count++;
+            fclose(fileToReadAPRS);
+            numAPRSMessages = count;
         }
         ESP_LOGD(TAG, "APRS Messages: %d (%s)", numAPRSMessages, STORAGE_Utils::getStorageType().c_str());
 
-        File fileToReadWLNK = STORAGE_Utils::openFile("/winlinkMails.txt", "r");
+        FILE* fileToReadWLNK = STORAGE_Utils::openFile("/winlinkMails.txt", "r");
         if(!fileToReadWLNK) {
             ESP_LOGD(TAG, "No Winlink mails file");
             numWLNKMessages = 0;
         } else {
-            std::vector<String> v2;
-            while (fileToReadWLNK.available()) {
-                v2.push_back(fileToReadWLNK.readStringUntil('\n'));
-            }
-            fileToReadWLNK.close();
-            numWLNKMessages = v2.size();
+            int count = 0;
+            char lineBuf[512];
+            while (fgets(lineBuf, sizeof(lineBuf), fileToReadWLNK)) count++;
+            fclose(fileToReadWLNK);
+            numWLNKMessages = count;
         }
         ESP_LOGD(TAG, "Winlink Mails: %d", numWLNKMessages);
         loadUnreadState();
@@ -849,7 +894,7 @@ namespace MSG_Utils {
         SharedSpiGuard spiGuard(pdMS_TO_TICKS(5000));
         if (!spiGuard.acquired()) return;
 
-        File fileToRead;
+        VfsFile fileToRead;
         if (typeOfMessage == 0) {  // APRS
             noAPRSMsgWarning = false;
             if (numAPRSMessages == 0) {
@@ -916,16 +961,11 @@ namespace MSG_Utils {
             STORAGE_Utils::removeFile("/aprsMessages.txt");
             // Also delete all conversation files
             if (STORAGE_Utils::fileExists("/conversations")) {
-                File dir = STORAGE_Utils::openFile("/conversations", "r");
-                if (dir && dir.isDirectory()) {
-                    File file = dir.openNextFile();
-                    while (file) {
-                        String path = String("/conversations/") + file.name();
-                        file.close();
-                        STORAGE_Utils::removeFile(path.c_str());
-                        file = dir.openNextFile();
-                    }
-                    dir.close();
+                std::vector<String> files = STORAGE_Utils::listFiles(
+                    STORAGE_Utils::sdPath("/LoRa_Tracker/Messages/conversations"));
+                for (const String& name : files) {
+                    String path = "/conversations/" + name;
+                    STORAGE_Utils::removeFile(path.c_str());
                 }
             }
             numAPRSMessages = 0;
@@ -1011,7 +1051,7 @@ namespace MSG_Utils {
 
         std::vector<String> ordered;
         bool orderChanged = false;
-        File readFile = STORAGE_Utils::openFile("/conversations_order.txt", "r");
+        VfsFile readFile = STORAGE_Utils::openFile("/conversations_order.txt", "r");
         if (readFile) {
             while (readFile.available()) {
                 String line = readFile.readStringUntil('\n');
@@ -1031,7 +1071,7 @@ namespace MSG_Utils {
         if (orderChanged) {
             STORAGE_Utils::removeFile("/conversations_order.txt");
             if (!ordered.empty()) {
-                File writeFile = STORAGE_Utils::openFile("/conversations_order.txt", FILE_WRITE);
+                VfsFile writeFile = STORAGE_Utils::openFile("/conversations_order.txt", FILE_WRITE);
                 if (writeFile) {
                     for (const auto& entry : ordered) {
                         writeFile.println(entry);
@@ -1081,7 +1121,6 @@ namespace MSG_Utils {
             return false;
         }
 
-        // Load all messages
         std::vector<String> messages = getMessagesForContact(callsign);
 
         std::vector<uint8_t> removeMask(messages.size(), 0);
@@ -1143,16 +1182,17 @@ namespace MSG_Utils {
 
         if (typeMessage == 0) {   //APRS
             // Save to global messages file (backward compatibility)
-            File fileToAppendAPRS = STORAGE_Utils::openFile("/aprsMessages.txt", FILE_APPEND);
+            FILE* fileToAppendAPRS = STORAGE_Utils::openFile("/aprsMessages.txt", "a");
             if(!fileToAppendAPRS) {
                 ESP_LOGE(TAG, "Failed to open APRS messages file for appending");
                 return;
             }
-            if(!fileToAppendAPRS.println(station + "," + message)) {
+            String aprsLine = station + "," + message;
+            if(fprintf(fileToAppendAPRS, "%s\n", aprsLine.c_str()) < 0) {
                 ESP_LOGE(TAG, "APRS message append failed");
             }
             numAPRSMessages++;
-            fileToAppendAPRS.close();
+            fclose(fileToAppendAPRS);
 
             // Also save to per-contact conversation file
             saveToConversation(station, message, false);  // false = incoming
@@ -1182,16 +1222,17 @@ namespace MSG_Utils {
             }
             #endif
         } else if (typeMessage == 1) {    //WLNK
-            File fileToAppendWLNK = STORAGE_Utils::openFile("/winlinkMails.txt", FILE_APPEND);
+            FILE* fileToAppendWLNK = STORAGE_Utils::openFile("/winlinkMails.txt", "a");
             if(!fileToAppendWLNK) {
                 ESP_LOGE(TAG, "Failed to open Winlink mails file for appending");
                 return;
             }
-            if(!fileToAppendWLNK.println(station + "," + message)) {
+            String wlnkLine = station + "," + message;
+            if(fprintf(fileToAppendWLNK, "%s\n", wlnkLine.c_str()) < 0) {
                 ESP_LOGE(TAG, "Winlink mail append failed");
             }
             numWLNKMessages++;
-            fileToAppendWLNK.close();
+            fclose(fileToAppendWLNK);
             incrementUnreadWLNK();
             ESP_LOGI(TAG, "Winlink mail saved to %s", STORAGE_Utils::getStorageType().c_str());
             if (Config.notification.ledMessage) {

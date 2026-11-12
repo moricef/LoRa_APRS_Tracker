@@ -9,8 +9,8 @@
 // LVGL must be included before PNGdec to avoid the macro expansion clash.
 // Same include order as ui_map_manager.cpp.
 #include <Arduino.h>
-#include <FS.h>
-#include <SD.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #include <LovyanGFX.hpp>
 #include <lvgl.h>           // Must precede PNGdec (lv_meter.h uses 'local' as param name)
 #include "map_state.h"      // Must precede PNGdec (zconf.h leaks a GCC optimize pragma)
@@ -26,6 +26,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <freertos/idf_additions.h>
 #include <esp_log.h>
 
 #include "map_tiles.h"
@@ -62,7 +63,7 @@ static bool symbolCacheInitialized = false;
 // PNG decoder state (file-scope, used only by pngSymbolCallback)
 static bool pngFileOpened = false;
 static uint8_t* symbolCombinedBuffer = nullptr;  // Target buffer for PNG decode
-static PNG symbolPNG;                             // PNG decoder instance
+// Use the shared PSRAM decoder for symbol loading.
 
 // Tile preload task state
 struct TileRequest {
@@ -81,32 +82,25 @@ static bool preloadTaskRunning = false;
 
 static void* pngOpenFile(const char* filename, int32_t* size) {
     pngFileOpened = false;
-    File* file = new File(SD.open(filename, FILE_READ));
-    if (!file || !*file) {
-        delete file;
-        return nullptr;
-    }
-    *size = file->size();
+    FILE* f = fopen(filename, "rb");
+    if (!f) return nullptr;
+    fseek(f, 0, SEEK_END);
+    *size = (int32_t)ftell(f);
+    fseek(f, 0, SEEK_SET);
     pngFileOpened = true;
-    return file;
+    return f;
 }
 
 static void pngCloseFile(void* handle) {
-    File* file = (File*)handle;
-    if (file) {
-        file->close();
-        delete file;
-    }
+    if (handle) fclose((FILE*)handle);
 }
 
 static int32_t pngReadFile(PNGFILE* pFile, uint8_t* pBuf, int32_t iLen) {
-    File* file = (File*)pFile->fHandle;
-    return file->read(pBuf, iLen);
+    return (int32_t)fread(pBuf, 1, iLen, (FILE*)pFile->fHandle);
 }
 
 static int32_t pngSeekFile(PNGFILE* pFile, int32_t iPosition) {
-    File* file = (File*)pFile->fHandle;
-    return file->seek(iPosition);
+    return (fseek((FILE*)pFile->fHandle, iPosition, SEEK_SET) == 0) ? 1 : 0;
 }
 
 static int pngSymbolCallback(PNGDRAW* pDraw) {
@@ -152,9 +146,9 @@ static int pngSymbolCallback(PNGDRAW* pDraw) {
             memset(alphaRow, 255, SYMBOL_SIZE);
         }
 #if LV_COLOR_16_SWAP
-        symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_BIG_ENDIAN, 0x00000000);
+        MapEngine::sharedPNG->getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_BIG_ENDIAN, 0x00000000);
 #else
-        symbolPNG.getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
+        MapEngine::sharedPNG->getLineAsRGB565(pDraw, rgb565Row, PNG_RGB565_LITTLE_ENDIAN, 0x00000000);
 #endif
     }
     return 1;
@@ -183,7 +177,7 @@ static void tilePreloadTaskFunc(void* param) {
     }
 
     ESP_LOGI(TAG, "Tile preload task stopped");
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
 }
 
 // =============================================================================
@@ -212,10 +206,17 @@ namespace MapTiles {
         String tableName = (table == '/') ? "primary" : "alternate";
         char hexCode[3];
         snprintf(hexCode, sizeof(hexCode), "%02X", (uint8_t)symbol);
-        String path = String("/LoRa_Tracker/Symbols/") + tableName + "/" + hexCode + ".png";
+        String path = String(SD_MOUNT_POINT "/LoRa_Tracker/Symbols/") + tableName + "/" + hexCode + ".png";
 
         if (!STORAGE_Utils::isSDAvailable()) {
             ESP_LOGE(TAG, "SD not available for symbol load");
+            return nullptr;
+        }
+
+        // PNG open/decode/close is one SD transaction on the shared SPI bus
+        SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+        if (!spiGuard.acquired()) {
+            ESP_LOGW(TAG, "SPI bus busy, symbol load deferred");
             return nullptr;
         }
 
@@ -232,15 +233,21 @@ namespace MapTiles {
 
         symbolCombinedBuffer = combined;
 
-        int rc = symbolPNG.open(path.c_str(), pngOpenFile, pngCloseFile,
+        MapEngine::initDecoders();
+        if (!MapEngine::sharedPNG) {
+            free(combined);
+            symbolCombinedBuffer = nullptr;
+            return nullptr;
+        }
+        int rc = MapEngine::sharedPNG->open(path.c_str(), pngOpenFile, pngCloseFile,
                                 pngReadFile, pngSeekFile, pngSymbolCallback);
         if (rc == PNG_SUCCESS && pngFileOpened) {
-            symbolPNG.decode(nullptr, 0);
-            symbolPNG.close();
+            MapEngine::sharedPNG->decode(nullptr, 0);
+            MapEngine::sharedPNG->close();
         } else {
             // A failed header parse still leaves pngOpenFile's File open —
             // PNGdec does not call the close callback on that path.
-            if (pngFileOpened) symbolPNG.close();
+            if (pngFileOpened) MapEngine::sharedPNG->close();
             if (rc != PNG_SUCCESS)
                 ESP_LOGE(TAG, "PNG open failed rc=%d for %s", rc, path.c_str());
             free(combined);
@@ -337,6 +344,7 @@ namespace MapTiles {
         // 3. Find tile file on SD
         char path[128], found_path[128] = {0};
         bool found = false;
+        struct stat _pst;
 
         if (map_current_region.isEmpty()) {
             ESP_LOGE(TAG, "loadTileFromSD: region empty, cannot load %d/%d/%d", zoom, tileX, tileY);
@@ -346,13 +354,13 @@ namespace MapTiles {
         if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 const char* region = map_current_region.c_str();
-                snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
+                snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
                          region, zoom, tileX, tileY);
-                if (SD.exists(path)) { strcpy(found_path, path); found = true; }
+                if (stat(path, &_pst) == 0) { strcpy(found_path, path); found = true; }
                 else {
-                    snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg",
+                    snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg",
                              region, zoom, tileX, tileY);
-                    if (SD.exists(path)) { strcpy(found_path, path); found = true; }
+                    if (stat(path, &_pst) == 0) { strcpy(found_path, path); found = true; }
                 }
             }
             xSemaphoreGiveRecursive(spiMutex);
@@ -396,17 +404,18 @@ namespace MapTiles {
 
         char path[128], found_path[128] = {0};
         bool found = false;
+        struct stat _pst;
 
         if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
                 const char* region = map_current_region.c_str();
-                snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
+                snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
                          region, zoom, tileX, tileY);
-                if (SD.exists(path)) { strcpy(found_path, path); found = true; }
+                if (stat(path, &_pst) == 0) { strcpy(found_path, path); found = true; }
                 else {
-                    snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg",
+                    snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg",
                              region, zoom, tileX, tileY);
-                    if (SD.exists(path)) { strcpy(found_path, path); found = true; }
+                    if (stat(path, &_pst) == 0) { strcpy(found_path, path); found = true; }
                 }
             }
             xSemaphoreGiveRecursive(spiMutex);
@@ -440,18 +449,28 @@ namespace MapTiles {
 
     void startTilePreloadTask() {
         if (tilePreloadTask != nullptr) return;
-        if (tilePreloadQueue == nullptr)
-            tilePreloadQueue = xQueueCreate(TILE_PRELOAD_QUEUE_SIZE, sizeof(TileRequest));
+        static uint8_t* preloadQBuf = nullptr;
+        static StaticQueue_t preloadQStruct;
+        if (!preloadQBuf) preloadQBuf = (uint8_t*)heap_caps_malloc(TILE_PRELOAD_QUEUE_SIZE * sizeof(TileRequest), MALLOC_CAP_SPIRAM);
+        if (tilePreloadQueue == nullptr) {
+            if (preloadQBuf) tilePreloadQueue = xQueueCreateStatic(TILE_PRELOAD_QUEUE_SIZE, sizeof(TileRequest), preloadQBuf, &preloadQStruct);
+            else tilePreloadQueue = xQueueCreate(TILE_PRELOAD_QUEUE_SIZE, sizeof(TileRequest));
+        }
         preloadTaskRunning = true;
-        xTaskCreatePinnedToCore(tilePreloadTaskFunc, "TilePreload", 4096,
-                                NULL, 1, &tilePreloadTask, 1);
+        xTaskCreatePinnedToCoreWithCaps(tilePreloadTaskFunc, "TilePreload", 4096,
+                                NULL, 1, &tilePreloadTask, 1,
+                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
 
     void stopTilePreloadTask() {
         if (tilePreloadTask == nullptr) return;
         preloadTaskRunning = false;
-        vTaskDelay(pdMS_TO_TICKS(200));
+        vTaskDelay(pdMS_TO_TICKS(200));  // Wait for task self-delete
         tilePreloadTask = nullptr;
+        if (tilePreloadQueue) {
+            vQueueDelete(tilePreloadQueue);
+            tilePreloadQueue = nullptr;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -463,7 +482,7 @@ namespace MapTiles {
 
         const int zoom = 6;
         char path[128];
-        snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d",
+        snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d",
                  map_current_region.c_str(), zoom);
 
         int xMin = INT_MAX, xMax = INT_MIN;
@@ -472,33 +491,38 @@ namespace MapTiles {
         if (spiMutex != NULL &&
             xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(300)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
-                File zoomDir = SD.open(path);
-                if (zoomDir && zoomDir.isDirectory()) {
-                    File xEntry = zoomDir.openNextFile();
-                    while (xEntry) {
-                        if (xEntry.isDirectory()) {
-                            String xName = String(xEntry.name());
-                            int tx = xName.substring(xName.lastIndexOf('/') + 1).toInt();
+                DIR* zoomDir = opendir(path);
+                if (zoomDir) {
+                    struct dirent* xEntry;
+                    while ((xEntry = readdir(zoomDir)) != nullptr) {
+                        if (xEntry->d_type == DT_DIR) {
+                            int tx = atoi(xEntry->d_name);
                             if (tx < xMin) xMin = tx;
                             if (tx > xMax) xMax = tx;
-                            File yEntry = xEntry.openNextFile();
-                            while (yEntry) {
-                                String yName = String(yEntry.name());
-                                String base = yName.substring(yName.lastIndexOf('/') + 1);
-                                int dotIdx = base.lastIndexOf('.');
-                                if (dotIdx > 0) base = base.substring(0, dotIdx);
-                                int ty = base.toInt();
-                                if (ty < yMin) yMin = ty;
-                                if (ty > yMax) yMax = ty;
-                                yEntry.close();
-                                yEntry = xEntry.openNextFile();
+                            char xPath[160];
+                            snprintf(xPath, sizeof(xPath), "%s/%s", path, xEntry->d_name);
+                            DIR* xDir = opendir(xPath);
+                            if (xDir) {
+                                struct dirent* yEntry;
+                                while ((yEntry = readdir(xDir)) != nullptr) {
+                                    if (yEntry->d_type == DT_REG) {
+                                        // Strip extension to get Y number
+                                        char base[32];
+                                        strncpy(base, yEntry->d_name, sizeof(base) - 1);
+                                        base[sizeof(base) - 1] = '\0';
+                                        char* dot = strrchr(base, '.');
+                                        if (dot) *dot = '\0';
+                                        int ty = atoi(base);
+                                        if (ty < yMin) yMin = ty;
+                                        if (ty > yMax) yMax = ty;
+                                    }
+                                }
+                                closedir(xDir);
                             }
                         }
-                        xEntry.close();
-                        xEntry = zoomDir.openNextFile();
                     }
+                    closedir(zoomDir);
                 }
-                zoomDir.close();
             }
             xSemaphoreGiveRecursive(spiMutex);
         }
@@ -521,25 +545,20 @@ namespace MapTiles {
         if (spiMutex != NULL &&
             xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
-                File mapsDir = SD.open("/LoRa_Tracker/Maps");
-                if (mapsDir && mapsDir.isDirectory()) {
-                    File entry = mapsDir.openNextFile();
-                    while (entry) {
-                        if (entry.isDirectory()) {
-                            String dirName = String(entry.name());
-                            map_current_region = dirName.substring(
-                                dirName.lastIndexOf('/') + 1);
+                DIR* mapsDir = opendir(SD_MOUNT_POINT "/LoRa_Tracker/Maps");
+                if (mapsDir) {
+                    struct dirent* entry;
+                    while ((entry = readdir(mapsDir)) != nullptr) {
+                        if (entry->d_type == DT_DIR && entry->d_name[0] != '.') {
+                            map_current_region = String(entry->d_name);
                             ESP_LOGI(TAG, "Region: %s", map_current_region.c_str());
-                            entry.close();
                             break;
                         }
-                        entry.close();
-                        entry = mapsDir.openNextFile();
                     }
+                    closedir(mapsDir);
                 } else {
                     ESP_LOGE(TAG, "Cannot open /LoRa_Tracker/Maps");
                 }
-                mapsDir.close();
             }
             xSemaphoreGiveRecursive(spiMutex);
         } else {
@@ -555,17 +574,17 @@ namespace MapTiles {
         if (!spiGuard.acquired()) return false;
 
         char path[128];
-        snprintf(path, sizeof(path), "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
-        File f = SD.open(path, FILE_READ);
+        snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
+        FILE* f = fopen(path, "rb");
         if (!f) return false;
 
         UIMapManager::Npk2Header hdr;
-        if (f.read((uint8_t*)&hdr, sizeof(hdr)) != sizeof(hdr) ||
+        if (fread(&hdr, 1, sizeof(hdr), f) != sizeof(hdr) ||
             memcmp(hdr.magic, "NPK2", 4) != 0) {
-            f.close();
+            fclose(f);
             return false;
         }
-        f.close();
+        fclose(f);
 
         uint32_t ty = (uint32_t)tileY;
         return (ty >= hdr.y_min && ty <= hdr.y_max);
@@ -585,14 +604,12 @@ namespace MapTiles {
         if (spiMutex != NULL &&
             xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
             if (STORAGE_Utils::isSDAvailable()) {
-                File vectDir = SD.open("/LoRa_Tracker/VectMaps");
-                if (vectDir && vectDir.isDirectory()) {
-                    File entry = vectDir.openNextFile();
-                    while (entry && navRegionCount < NAV_MAX_REGIONS) {
-                        if (entry.isDirectory()) {
-                            String dirName = String(entry.name());
-                            String regionName = dirName.substring(
-                                dirName.lastIndexOf('/') + 1);
+                DIR* vectDir = opendir(SD_MOUNT_POINT "/LoRa_Tracker/VectMaps");
+                if (vectDir) {
+                    struct dirent* entry;
+                    while ((entry = readdir(vectDir)) != nullptr && navRegionCount < NAV_MAX_REGIONS) {
+                        if (entry->d_type == DT_DIR && entry->d_name[0] != '.') {
+                            String regionName(entry->d_name);
                             navRegions[navRegionCount] = regionName;
 
                             if (gpsMatchIdx < 0 &&
@@ -606,11 +623,9 @@ namespace MapTiles {
                             }
                             navRegionCount++;
                         }
-                        entry.close();
-                        entry = vectDir.openNextFile();
                     }
+                    closedir(vectDir);
                 }
-                vectDir.close();
             }
             xSemaphoreGiveRecursive(spiMutex);
         }

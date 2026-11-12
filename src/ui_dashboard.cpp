@@ -16,7 +16,7 @@ static const char *TAG = "Dashboard";
 #include "lvgl_ui.h"
 
 #include <Arduino.h>
-#include <WiFi.h>
+#include <Arduino.h>
 #include "esp_heap_caps.h"
 #include <lvgl.h>
 
@@ -168,6 +168,12 @@ static void btn_map_clicked(lv_event_t *e) {
                   heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                   heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                   heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    if (bluetoothActive) {
+        ESP_LOGI(TAG, "Pausing BLE for map entry");
+        BLE_Utils::stop();
+        bluetoothActive = false;
+        MapState::blePausedForMap = true;
+    }
     UIPopups::closeAll();
     ESP_LOGD(TAG, "Popups closed");
 

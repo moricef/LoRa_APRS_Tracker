@@ -12,7 +12,7 @@
 #include "ui_dashboard.h"
 #include <Arduino.h>
 #include <lvgl.h>
-#include <WiFi.h>
+#include <Arduino.h>
 #include <esp_task_wdt.h>
 #include <esp_wifi.h>
 #include <esp_heap_caps.h>
@@ -1101,13 +1101,8 @@ static void wifi_switch_changed(lv_event_t *e) {
         WiFiConnected = false;
         WiFiEcoMode = false;
 
-        esp_wifi_disconnect();
-        esp_wifi_stop();
-
-        wifi_mode_t mode;
-        if (esp_wifi_get_mode(&mode) == ESP_OK) {
-            ESP_LOGD(TAG, "WiFi hardware mode: %d (0=OFF)", mode);
-        }
+        // Full stop: APRS-IS, web server, radio and driver
+        WIFI_Utils::stop();
 
         if (wifi_status_label) {
             lv_label_set_text(wifi_status_label, "OFF (disabled)");
@@ -1141,7 +1136,7 @@ static void update_wifi_screen_status() {
     // n'agit qu'apres 30 s et ne remet le drapeau a false qu'apres echec de tous
     // les reseaux. On interroge donc la pile directement, sinon l'ecran affiche
     // la derniere IP et le dernier RSSI connus alors que l'AP est eteint.
-    const bool wifiLinkUp = (WiFi.status() == WL_CONNECTED);
+    const bool wifiLinkUp = WIFI_Utils::isConnected();
 
     if (wifi_status_label) {
         if (WiFiUserDisabled) {
@@ -1163,7 +1158,7 @@ static void update_wifi_screen_status() {
         if (wifiLinkUp && !WiFiUserDisabled) {
             lv_obj_clear_flag(wifi_ip_row, LV_OBJ_FLAG_HIDDEN);
             if (wifi_ip_label) {
-                lv_label_set_text(wifi_ip_label, WiFi.localIP().toString().c_str());
+                lv_label_set_text(wifi_ip_label, WIFI_Utils::getLocalIP().c_str());
             }
         } else {
             lv_obj_add_flag(wifi_ip_row, LV_OBJ_FLAG_HIDDEN);
@@ -1175,7 +1170,7 @@ static void update_wifi_screen_status() {
             lv_obj_clear_flag(wifi_rssi_row, LV_OBJ_FLAG_HIDDEN);
             if (wifi_rssi_label) {
                 char rssi_buf[16];
-                snprintf(rssi_buf, sizeof(rssi_buf), "%d dBm", WiFi.RSSI());
+                snprintf(rssi_buf, sizeof(rssi_buf), "%d dBm", WIFI_Utils::getRSSI());
                 lv_label_set_text(wifi_rssi_label, rssi_buf);
             }
         } else {
@@ -1488,7 +1483,7 @@ void UISettings::createWifiScreen() {
     if (WiFiUserDisabled) {
         lv_label_set_text(wifi_status_label, "OFF (disabled)");
         lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xff6b6b), 0);
-    } else if (WiFi.status() == WL_CONNECTED) {   // etat reel, pas le drapeau
+    } else if (WIFI_Utils::isConnected()) {   // etat reel, pas le drapeau
         lv_label_set_text(wifi_status_label, "Connected");
         lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(UIColors::TEXT_GREEN), 0);
     } else if (WiFiEcoMode) {
@@ -1599,11 +1594,15 @@ static void bluetooth_screen_timer_cb(lv_timer_t *timer) {
 }
 
 // Timer callbacks for deferred BLE operations
+static void ble_setup_phase2_cb(lv_timer_t *timer) {
+    ESP_LOGI(TAG, "BLE init: Free heap: %u bytes", ESP.getFreeHeap());
+    BLE_Utils::setup();
+    ESP_LOGI(TAG, "BLE started. Free heap: %u bytes", ESP.getFreeHeap());
+    lv_timer_del(timer);
+}
+
 static void ble_setup_timer_cb(lv_timer_t *timer) {
-    uint32_t currentFreeHeap = ESP.getFreeHeap();
-    uint32_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-    ESP_LOGI(TAG, "BLE setup timer: Free heap: %u bytes, Largest block: %u bytes",
-             currentFreeHeap, largestBlock);
+    ESP_LOGI(TAG, "BLE setup: Free heap: %u bytes", ESP.getFreeHeap());
 
     if (Config.bluetooth.useBLE) {
         // Stop WiFi — mutually exclusive on ESP32-S3
@@ -1614,8 +1613,7 @@ static void ble_setup_timer_cb(lv_timer_t *timer) {
         }
         WIFI_Utils::stop();
 
-        BLE_Utils::setup();
-        ESP_LOGI(TAG, "BLE started. Free heap: %u bytes", ESP.getFreeHeap());
+        lv_timer_create(ble_setup_phase2_cb, 200, NULL);
     }
     lv_timer_del(timer);
 }

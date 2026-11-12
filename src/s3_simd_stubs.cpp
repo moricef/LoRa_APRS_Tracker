@@ -3,7 +3,10 @@
  * to the assembler in the Arduino Core 3.x build environment.
  * Provides C fallback implementations matching the .S file signatures.
  */
-#ifdef ARDUINO_ESP32S3_DEV
+#include <esp_idf_version.h>
+
+// PNGdec provides this symbol itself with the IDF 5 toolchain.
+#if defined(ARDUINO_ESP32S3_DEV) && ESP_IDF_VERSION_MAJOR < 5
 
 #include <cstdint>
 
@@ -22,4 +25,4 @@ void s3_rgb565(uint8_t *pSrc, uint8_t *pDest, int iCount, bool bBigEndian) {
 
 }  // extern "C"
 
-#endif  // ARDUINO_ESP32S3_DEV
+#endif  // ARDUINO_ESP32S3_DEV && ESP_IDF_VERSION_MAJOR < 5

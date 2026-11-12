@@ -2,8 +2,8 @@
 
 #include "sd_logger.h"
 #include "storage_utils.h"
-#include <SD.h>
 #include <esp_log.h>
+#include <sys/stat.h>
 #include <esp_system.h>
 #include <rom/rtc.h>
 #include <sys/time.h>
@@ -34,7 +34,7 @@ struct CrashContext {
 
 RTC_NOINIT_ATTR static CrashContext _crashCtx;
 
-#define SD_LOG_FILE "/LoRa_Tracker/system.log"
+#define SD_LOG_FILE SD_MOUNT_POINT "/LoRa_Tracker/system.log"
 #define SD_LOG_MAX_SIZE 102400  // 100KB
 #define SD_LOG_MAX_LINES 1000
 
@@ -70,7 +70,7 @@ namespace SD_Logger {
             uint32_t hh  = sec / 3600;
             uint8_t  mm  = (sec / 60) % 60;
             uint8_t  ss  = sec % 60;
-            snprintf(buf, size, "[+%03u:%02u:%02u.%03u]", hh, mm, ss, ms);
+            snprintf(buf, size, "[+%03lu:%02u:%02u.%03lu]", (unsigned long)hh, mm, ss, (unsigned long)ms);
         }
     }
 
@@ -102,17 +102,16 @@ namespace SD_Logger {
             // Only persist W (warn) and E (error) levels — I/D/V are too noisy
             if (buf[0] == 'W' || buf[0] == 'E') {
                 inSdHook = true;
+                // Bus first, then logger: same lock order as log() and rotateLogs()
                 SharedSpiGuard spiGuard(pdMS_TO_TICKS(50));
                 if (spiGuard.acquired() && sdLogMutex &&
                     xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-                    File f = SD.open(SD_LOG_FILE, FILE_APPEND);
+                    FILE* f = fopen(SD_LOG_FILE, "a");
                     if (f) {
                         char ts[20];
                         formatTimestamp(ts, sizeof(ts));
-                        f.print(ts);
-                        f.print(' ');
-                        f.print(buf);
-                        f.close();
+                        fprintf(f, "%s %s", ts, buf);
+                        fclose(f);
                     }
                     xSemaphoreGive(sdLogMutex);
                 }
@@ -181,16 +180,7 @@ namespace SD_Logger {
             sdLogMutex = xSemaphoreCreateMutex();
         }
 
-        SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
-        if (!spiGuard.acquired()) {
-            ESP_LOGW(TAG, "SPI bus busy, logging disabled");
-            return;
-        }
-
-        // Create log directory if needed
-        if (!SD.exists("/LoRa_Tracker")) {
-            SD.mkdir("/LoRa_Tracker");
-        }
+        // Log directory created by STORAGE_Utils::setup()
 
         initialized = true;
         ESP_LOGI(TAG, "Initialized");
@@ -208,14 +198,13 @@ namespace SD_Logger {
             return;
         }
 
-        File logFile = SD.open(SD_LOG_FILE, FILE_APPEND);
+        FILE* logFile = fopen(SD_LOG_FILE, "a");
         if (!logFile) {
             ESP_LOGE(TAG, "Failed to open log file");
             if (sdLogMutex) xSemaphoreGive(sdLogMutex);
             return;
         }
 
-        // Format: [uptime_ms] LEVEL MODULE: message
         const char* levelStr;
         switch (level) {
             case INFO:     levelStr = "INFO "; break;
@@ -227,13 +216,10 @@ namespace SD_Logger {
 
         char ts[20];
         formatTimestamp(ts, sizeof(ts));
-        char logLine[256];
-        snprintf(logLine, sizeof(logLine), "%s %s %s: %s\n",
-                 ts, levelStr, module, message);
 
-        logFile.print(logLine);
-        size_t currentSize = logFile.size();
-        logFile.close();
+        fprintf(logFile, "%s %s %s: %s\n", ts, levelStr, module, message);
+        long currentSize = ftell(logFile);
+        fclose(logFile);
 
         if (sdLogMutex) xSemaphoreGive(sdLogMutex);
 
@@ -305,9 +291,10 @@ namespace SD_Logger {
             return;
         }
 
-        if (SD.exists(SD_LOG_FILE)) {
-            SD.remove("/LoRa_Tracker/system.log.old");
-            SD.rename(SD_LOG_FILE, "/LoRa_Tracker/system.log.old");
+        struct stat st;
+        if (stat(SD_LOG_FILE, &st) == 0) {
+            ::remove(SD_MOUNT_POINT "/LoRa_Tracker/system.log.old");
+            ::rename(SD_LOG_FILE, SD_MOUNT_POINT "/LoRa_Tracker/system.log.old");
         }
 
         if (sdLogMutex) xSemaphoreGive(sdLogMutex);
@@ -326,8 +313,8 @@ namespace SD_Logger {
         if (!spiGuard.acquired()) return;
 
         if (sdLogMutex && xSemaphoreTake(sdLogMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            SD.remove(SD_LOG_FILE);
-            SD.remove("/LoRa_Tracker/system.log.old");
+            ::remove(SD_LOG_FILE);
+            ::remove(SD_MOUNT_POINT "/LoRa_Tracker/system.log.old");
             xSemaphoreGive(sdLogMutex);
             log(INFO, "SD_LOG", "Logs cleared");
         }

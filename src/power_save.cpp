@@ -18,10 +18,11 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
-#include <WiFi.h>
+#include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "power_save.h"
+#include "wifi_utils.h"
 #include "battery_utils.h"
 #include "ble_utils.h"
 
@@ -71,7 +72,7 @@ namespace POWER_Save {
         #endif
         if (BLE_Utils::getConnectedDeviceAddress().length() > 0)
                                                          return BLK_BLE_CLIENT;
-        if (!WiFiUserDisabled || WiFi.status() == WL_CONNECTED)
+        if (!WiFiUserDisabled || WIFI_Utils::isConnected())
                                                          return BLK_WIFI_ON;
         if (bluetoothActive && !BLE_Utils::isSleeping())  return BLK_BLE_ON;
         if (BATTERY_Utils::isExternallyPowered())         return BLK_EXTERNAL_POWER;

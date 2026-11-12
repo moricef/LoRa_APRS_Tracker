@@ -6,7 +6,6 @@
 #include "map_internal.h"
 #include "storage_utils.h"
 #include "OpenSansBold6pt7b.h"
-#include <SD.h>
 #include <algorithm>
 #include <new>
 
@@ -1199,19 +1198,21 @@ namespace MapEngine {
         int maxGlyphH = map.fontHeight() + 2;
         int maxGlyphW = maxGlyphH * 2;  // widest glyph won't exceed 2× height
         if (glyphSprite && (glyphSpriteW < maxGlyphW || glyphSpriteH < maxGlyphH)) {
-            glyphSprite->deleteSprite(); delete glyphSprite;
+            glyphSprite->deleteSprite(); psram_delete(glyphSprite);
             glyphSprite = nullptr;
         }
         if (!glyphSprite) {
-            glyphSprite = new LGFX_Sprite(&map);
-            glyphSprite->setColorDepth(16);
-            glyphSprite->setPsram(true);
-            if (glyphSprite->createSprite(maxGlyphW, maxGlyphH)) {
-                glyphSpriteW = maxGlyphW;
-                glyphSpriteH = maxGlyphH;
-            } else {
-                delete glyphSprite; glyphSprite = nullptr;
-                glyphSpriteW = glyphSpriteH = 0;
+            glyphSprite = psram_new<LGFX_Sprite>(&map);
+            if (glyphSprite) {
+                glyphSprite->setColorDepth(16);
+                glyphSprite->setPsram(true);
+                if (glyphSprite->createSprite(maxGlyphW, maxGlyphH)) {
+                    glyphSpriteW = maxGlyphW;
+                    glyphSpriteH = maxGlyphH;
+                } else {
+                    psram_delete(glyphSprite); glyphSprite = nullptr;
+                    glyphSpriteW = glyphSpriteH = 0;
+                }
             }
         }
 

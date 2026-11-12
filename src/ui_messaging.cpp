@@ -1435,7 +1435,7 @@ static void populate_stats(lv_obj_t *cont) {
                 lv_table_set_cell_value(stats_table, row, 0, s.callsign.c_str());
 
                 // Packets
-                snprintf(buf, sizeof(buf), "%d", s.count);
+                snprintf(buf, sizeof(buf), "%lu", (unsigned long)s.count);
                 lv_table_set_cell_value(stats_table, row, 1, buf);
 
                 // RSSI / SNR averages are computed over DIRECT receptions only: a
@@ -1558,12 +1558,10 @@ static void btn_send_msg_clicked(lv_event_t *e) {
 
         // Save sent message
         if (xSemaphoreTakeRecursive(spiMutex, portMAX_DELAY) == pdTRUE) {
-            File msgFile = STORAGE_Utils::openFile("/aprsMessages.txt", FILE_APPEND);
+            FILE* msgFile = STORAGE_Utils::openFile("/aprsMessages.txt", "a");
             if (msgFile) {
-                char sentMsgBuf[256]; // Use static buffer to avoid String allocations
-                snprintf(sentMsgBuf, sizeof(sentMsgBuf), "%s,>%s", to, msg);
-                msgFile.println(sentMsgBuf);
-                msgFile.close();
+                fprintf(msgFile, "%s,>%s\n", to, msg);
+                fclose(msgFile);
                 MSG_Utils::loadNumMessages();
             }
             xSemaphoreGiveRecursive(spiMutex);

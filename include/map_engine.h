@@ -19,10 +19,16 @@
 #include <vector>
 #include "nav_types.h"
 
+class PNG;
+class JPEGDEC;
+
 // Tile cache size (for raster tiles)
 #define RASTER_TILE_CACHE_SIZE 16
 
 namespace MapEngine {
+    extern PNG* sharedPNG;
+    extern JPEGDEC* sharedJPEG;
+    void initDecoders();
 
     struct CachedTile
     {

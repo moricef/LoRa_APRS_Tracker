@@ -52,8 +52,7 @@ typedef void (*DirectionFunc)();
                 return false;
             }
         }
-
-        void loop() {   // for running process with SPIFFS outside interrupt
+        void loop() {   // for running process with LittleFS outside interrupt
             if (checkMenuDisplayToExitInterrupt(menuDisplay) && exitJoystickInterrupt) BUTTON_Utils::longPress1();
         }
 

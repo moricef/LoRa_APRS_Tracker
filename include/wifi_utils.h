@@ -20,6 +20,7 @@
 #define WIFI_UTILS_H_
 
 #include <Arduino.h>
+#include <IPAddress.h>
 
 
 namespace WIFI_Utils {
@@ -30,7 +31,11 @@ namespace WIFI_Utils {
     void stop();
     void setup();
     bool needsWebConfig();
-    bool isConnected();
+    bool isConnected();                 // station associated with an IP address
+    String getLocalIP();                // station address, "0.0.0.0" when none
+    int getRSSI();                      // station RSSI in dBm, 0 when not associated
+    uint8_t getAPStationCount();        // clients connected to the access point
+    bool resolveHost(const char* host, IPAddress& result);   // blocking DNS lookup (IPv4)
     String getStatusLine();
     bool startAPModeNonBlocking();
     String getAPName();

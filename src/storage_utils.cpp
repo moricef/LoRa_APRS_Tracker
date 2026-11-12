@@ -16,14 +16,19 @@
  * along with LoRa APRS Tracker. If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <SPIFFS.h>
-#include <SD.h>
+#include <LittleFS.h>
+#include <SD.h>          // Only for SD.begin() — all file ops use POSIX C via VFS
 #include <SPI.h>
 #include <vector>
 #include <algorithm>
 #include <ArduinoJson.h>
 #include <TimeLib.h>
 #include <esp_log.h>
+#include <sys/stat.h>
+#include <esp_vfs_fat.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <cerrno>
 #include "board_pinout.h"
 #include "storage_utils.h"
 #include "shared_spi_guard.h"
@@ -36,15 +41,35 @@ static bool sdAvailable = false;
 static std::vector<Contact> contactsCache;
 static bool contactsLoaded = false;
 
-// Root directory for all tracker data on SD card
-static const char* ROOT_DIR = "/LoRa_Tracker";
-static const char* MESSAGES_DIR = "/LoRa_Tracker/Messages";
-static const char* CONTACTS_DIR = "/LoRa_Tracker/Contacts";
-static const char* CONTACTS_FILE = "/LoRa_Tracker/Contacts/contacts.json";
-static const char* MAPS_DIR = "/LoRa_Tracker/Maps";
-static const char* SYMBOLS_DIR = "/LoRa_Tracker/Symbols";
+// Root directory for all tracker data on SD card (VFS paths)
+static const char* ROOT_DIR      = SD_MOUNT_POINT "/LoRa_Tracker";
+static const char* MESSAGES_DIR  = SD_MOUNT_POINT "/LoRa_Tracker/Messages";
+static const char* INBOX_DIR     = SD_MOUNT_POINT "/LoRa_Tracker/Messages/inbox";
+static const char* OUTBOX_DIR    = SD_MOUNT_POINT "/LoRa_Tracker/Messages/outbox";
+static const char* CONTACTS_DIR  = SD_MOUNT_POINT "/LoRa_Tracker/Contacts";
+static const char* CONTACTS_FILE = SD_MOUNT_POINT "/LoRa_Tracker/Contacts/contacts.json";
+static const char* MAPS_DIR      = SD_MOUNT_POINT "/LoRa_Tracker/Maps";
+static const char* SYMBOLS_DIR   = SD_MOUNT_POINT "/LoRa_Tracker/Symbols";
+
+// Helper: check if a VFS path exists
+static bool vfs_exists(const char* path) {
+    struct stat st;
+    return (stat(path, &st) == 0);
+}
+
+// Helper: get file size via stat
+static long vfs_filesize(const char* path) {
+    struct stat st;
+    if (stat(path, &st) == 0) return st.st_size;
+    return -1;
+}
 
 namespace STORAGE_Utils {
+
+    String sdPath(const String& path) {
+        if (path.startsWith(SD_MOUNT_POINT)) return path;
+        return String(SD_MOUNT_POINT) + path;
+    }
 
     void createDirectoryStructure() {
         if (!sdAvailable) return;
@@ -55,43 +80,28 @@ namespace STORAGE_Utils {
             return;
         }
 
-        // Create root directory
-        if (!SD.exists(ROOT_DIR)) {
-            SD.mkdir(ROOT_DIR);
-            ESP_LOGI(TAG, "Created %s", ROOT_DIR);
-        }
-
-        // Create Messages directories
-        if (!SD.exists(MESSAGES_DIR)) {
-            SD.mkdir(MESSAGES_DIR);
-            ESP_LOGI(TAG, "Created %s", MESSAGES_DIR);
-        }
-
-        // Create Contacts directory
-        if (!SD.exists(CONTACTS_DIR)) {
-            SD.mkdir(CONTACTS_DIR);
-            ESP_LOGI(TAG, "Created %s", CONTACTS_DIR);
-        }
-
-        // Create Maps directory for offline tiles
-        if (!SD.exists(MAPS_DIR)) {
-            SD.mkdir(MAPS_DIR);
-            ESP_LOGI(TAG, "Created %s", MAPS_DIR);
-        }
-
-        // Create Symbols directory for APRS symbols
-        if (!SD.exists(SYMBOLS_DIR)) {
-            SD.mkdir(SYMBOLS_DIR);
-            ESP_LOGI(TAG, "Created %s", SYMBOLS_DIR);
+        const char* dirs[] = { ROOT_DIR, MESSAGES_DIR, INBOX_DIR, OUTBOX_DIR,
+                               CONTACTS_DIR, MAPS_DIR, SYMBOLS_DIR };
+        for (const char* d : dirs) {
+            if (!vfs_exists(d)) {
+                ::mkdir(d, 0775);
+                ESP_LOGI(TAG, "Created %s", d);
+            }
         }
     }
 
     void setup() {
-        // Always init SPIFFS as fallback (format on fail for first boot)
-        if (!SPIFFS.begin(true)) {
-            ESP_LOGE(TAG, "SPIFFS mount failed");
+        // Always init LittleFS as fallback (format on fail for first boot)
+        if (!LittleFS.begin(true, "/littlefs", 10, "spiffs")) {
+            ESP_LOGE(TAG, "LittleFS mount failed. Forcing format...");
+            LittleFS.format();
+            if (!LittleFS.begin(true, "/littlefs", 10, "spiffs")) {
+                ESP_LOGE(TAG, "LittleFS format and mount failed permanently");
+            } else {
+                ESP_LOGI(TAG, "LittleFS mounted after format");
+            }
         } else {
-            ESP_LOGI(TAG, "SPIFFS mounted");
+            ESP_LOGI(TAG, "LittleFS mounted");
         }
 
         #ifdef BOARD_SDCARD_CS
@@ -155,15 +165,15 @@ namespace STORAGE_Utils {
 
                     // Load last 20 frames from SD into RAM cache
                     loadFramesFromSD();
-                }
-            } else {
-                ESP_LOGE(TAG, "SD card init failed, using SPIFFS");
-                sdAvailable = false;
-            }
-        #else
-            ESP_LOGW(TAG, "No SD card support, using SPIFFS");
-        #endif
-    }
+                    }
+                    } else {
+                    ESP_LOGE(TAG, "SD card init failed, using LittleFS");
+                    sdAvailable = false;
+                    }
+                    #else
+                    ESP_LOGW(TAG, "No SD card support, using LittleFS");
+                    #endif
+                    }
 
     bool isSDAvailable() {
         return sdAvailable;
@@ -174,80 +184,74 @@ namespace STORAGE_Utils {
         if (sdAvailable) {
             SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
             if (!spiGuard.acquired()) return false;
-            // If path starts with /, use it as-is for SD
-            if (path.startsWith("/LoRa_Tracker")) {
-                return SD.exists(path);
+            if (path.startsWith(SD_MOUNT_POINT)) {
+                return vfs_exists(path.c_str());
             }
-            // Legacy: prepend messages path
-            String sdPath = String(MESSAGES_DIR) + path;
-            return SD.exists(sdPath);
+            if (path.startsWith("/LoRa_Tracker")) {
+                return vfs_exists(sdPath(path).c_str());
+            }
+            String full = String(MESSAGES_DIR) + path;
+            return vfs_exists(full.c_str());
         }
-        return SPIFFS.exists(path);
+        return LittleFS.exists(path);
     }
 
-    File openFile(const String& path, const char* mode) {
+    FILE* openFile(const String& path, const char* mode) {
+        String fullPath;
         if (sdAvailable) {
-            // Callers that keep the File open must hold SharedSpiGuard for the
-            // complete open/read-or-write/close transaction. This inner guard
-            // also makes one-shot opens safe and is recursive for such callers.
-            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
-            if (!spiGuard.acquired()) return File();
-            String sdPath;
-            // If path starts with /, use it as-is for SD
-            if (path.startsWith("/LoRa_Tracker")) {
-                sdPath = path;
+            if (path.startsWith(SD_MOUNT_POINT)) {
+                fullPath = path;
+            } else if (path.startsWith("/LoRa_Tracker")) {
+                fullPath = sdPath(path);
             } else {
-                // Legacy: prepend messages path
-                sdPath = String(MESSAGES_DIR) + path;
+                fullPath = String(MESSAGES_DIR) + path;
             }
-            // For read mode, check if file exists first to avoid ESP32 error spam
-            if (strcmp(mode, "r") == 0 && !SD.exists(sdPath)) {
-                return File();  // Return empty File object
-            }
-            return SD.open(sdPath, mode);
+        } else {
+            fullPath = String("/littlefs") + path;
         }
-        // For SPIFFS read mode, check existence first
-        if (strcmp(mode, "r") == 0 && !SPIFFS.exists(path)) {
-            return File();
+        // Callers that keep the FILE* open must hold SharedSpiGuard for the
+        // complete open/read-or-write/close transaction. This inner guard
+        // also makes one-shot opens safe and is recursive for such callers.
+        SharedSpiGuard spiGuard(sdAvailable ? pdMS_TO_TICKS(1000) : 0);
+        if (sdAvailable && !spiGuard.acquired()) return nullptr;
+        if (strcmp(mode, "r") == 0 && !vfs_exists(fullPath.c_str())) {
+            return nullptr;
         }
-        return SPIFFS.open(path, mode);
-    }
-
-    // Read file data directly into destination buffer.
-    // Returns number of bytes actually read, or 0 on failure.
-    size_t readChunked(File& file, uint8_t* dest, size_t size) {
-        if (!file || !dest || size == 0) return 0;
-        return file.read(dest, size);
+        return fopen(fullPath.c_str(), mode);
     }
 
     bool removeFile(const String& path) {
         if (sdAvailable) {
-            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
-            if (!spiGuard.acquired()) return false;
-            if (path.startsWith("/LoRa_Tracker")) {
-                return SD.remove(path);
-            }
-            String sdPath = String(MESSAGES_DIR) + path;
-            return SD.remove(sdPath);
-        }
-        return SPIFFS.remove(path);
-    }
-
-    bool mkdir(const String& path) {
-        if (sdAvailable) {
-            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
-            if (!spiGuard.acquired()) return false;
-            String sdPath;
-            // If path starts with /LoRa_Tracker, use it as-is
-            if (path.startsWith("/LoRa_Tracker")) {
-                sdPath = path;
+            String fullPath;
+            if (path.startsWith(SD_MOUNT_POINT)) {
+                fullPath = path;
+            } else if (path.startsWith("/LoRa_Tracker")) {
+                fullPath = sdPath(path);
             } else {
-                // Prepend messages path for relative paths
-                sdPath = String(MESSAGES_DIR) + path;
+                fullPath = String(MESSAGES_DIR) + path;
             }
-            return SD.mkdir(sdPath);
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) return false;
+            return (::remove(fullPath.c_str()) == 0);
         }
-        return true;  // SPIFFS doesn't need directories
+            return LittleFS.remove(path);
+            }
+
+    bool sdMkdir(const String& path) {
+        if (sdAvailable) {
+            String fullPath;
+            if (path.startsWith(SD_MOUNT_POINT)) {
+                fullPath = path;
+            } else if (path.startsWith("/LoRa_Tracker")) {
+                fullPath = sdPath(path);
+            } else {
+                fullPath = String(MESSAGES_DIR) + path;
+            }
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) return false;
+            return (::mkdir(fullPath.c_str(), 0775) == 0 || errno == EEXIST);
+        }
+        return true;
     }
 
     // List files in a directory (SD only)
@@ -258,19 +262,16 @@ namespace STORAGE_Utils {
         SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
         if (!spiGuard.acquired()) return files;
 
-        File dir = SD.open(dirPath);
-        if (!dir || !dir.isDirectory()) {
-            return files;
-        }
+        DIR* dir = opendir(dirPath.c_str());
+        if (!dir) return files;
 
-        File file = dir.openNextFile();
-        while (file) {
-            if (!file.isDirectory()) {
-                files.push_back(String(file.name()));
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (entry->d_type == DT_REG) {
+                files.push_back(String(entry->d_name));
             }
-            file = dir.openNextFile();
         }
-        dir.close();
+        closedir(dir);
         return files;
     }
 
@@ -282,42 +283,51 @@ namespace STORAGE_Utils {
         SharedSpiGuard spiGuard(pdMS_TO_TICKS(2000));
         if (!spiGuard.acquired()) return dirs;
 
-        File dir = SD.open(dirPath);
-        if (!dir || !dir.isDirectory()) {
-            return dirs;
-        }
+        DIR* dir = opendir(dirPath.c_str());
+        if (!dir) return dirs;
 
-        File file = dir.openNextFile();
-        while (file) {
-            if (file.isDirectory()) {
-                dirs.push_back(String(file.name()));
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (entry->d_type == DT_DIR) {
+                dirs.push_back(String(entry->d_name));
             }
-            file = dir.openNextFile();
         }
-        dir.close();
+        closedir(dir);
         return dirs;
     }
 
     String getStorageType() {
-        return sdAvailable ? "SD" : "SPIFFS";
+        return sdAvailable ? "SD" : "LittleFS";
     }
 
     uint64_t getUsedBytes() {
         if (sdAvailable) {
             SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
             if (!spiGuard.acquired()) return 0;
-            return SD.usedBytes();
+            FATFS* fs;
+            DWORD fre_clust;
+            if (f_getfree("0:", &fre_clust, &fs) == FR_OK) {
+                uint64_t total = (uint64_t)(fs->n_fatent - 2) * fs->csize * 512;
+                uint64_t free  = (uint64_t)fre_clust * fs->csize * 512;
+                return total - free;
+            }
+            return 0;
         }
-        return SPIFFS.usedBytes();
+        return LittleFS.usedBytes();
     }
 
     uint64_t getTotalBytes() {
         if (sdAvailable) {
             SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
             if (!spiGuard.acquired()) return 0;
-            return SD.totalBytes();
+            FATFS* fs;
+            DWORD fre_clust;
+            if (f_getfree("0:", &fre_clust, &fs) == FR_OK) {
+                return (uint64_t)(fs->n_fatent - 2) * fs->csize * 512;
+            }
+            return 0;
         }
-        return SPIFFS.totalBytes();
+        return LittleFS.totalBytes();
     }
 
     // ========== Contacts Management ==========
@@ -340,17 +350,28 @@ namespace STORAGE_Utils {
             return contactsCache;
         }
 
-        File file = SD.open(CONTACTS_FILE, FILE_READ);
-        if (!file) {
+        long fsize = vfs_filesize(CONTACTS_FILE);
+        if (fsize <= 0) {
             ESP_LOGW(TAG, "No contacts file, starting fresh");
             contactsLoaded = true;
             return contactsCache;
         }
 
-        // Parse JSON
+        FILE* f = fopen(CONTACTS_FILE, "r");
+        if (!f) {
+            contactsLoaded = true;
+            return contactsCache;
+        }
+
+        char* buf = (char*)malloc(fsize + 1);
+        if (!buf) { fclose(f); contactsLoaded = true; return contactsCache; }
+        size_t rd = fread(buf, 1, fsize, f);
+        fclose(f);
+        buf[rd] = '\0';
+
         DynamicJsonDocument doc(4096);
-        DeserializationError error = deserializeJson(doc, file);
-        file.close();
+        DeserializationError error = deserializeJson(doc, buf);
+        free(buf);
 
         if (error) {
             ESP_LOGE(TAG, "JSON parse error: %s", error.c_str());
@@ -358,7 +379,6 @@ namespace STORAGE_Utils {
             return contactsCache;
         }
 
-        // Load contacts from JSON array
         JsonArray array = doc.as<JsonArray>();
         for (JsonObject obj : array) {
             Contact c;
@@ -387,7 +407,6 @@ namespace STORAGE_Utils {
             return false;
         }
 
-        // Build JSON
         DynamicJsonDocument doc(4096);
         JsonArray array = doc.to<JsonArray>();
 
@@ -398,17 +417,17 @@ namespace STORAGE_Utils {
             obj["comment"] = c.comment;
         }
 
-        // Write to file
-        File file = SD.open(CONTACTS_FILE, FILE_WRITE);
-        if (!file) {
+        FILE* f = fopen(CONTACTS_FILE, "w");
+        if (!f) {
             ESP_LOGE(TAG, "Failed to open contacts file for writing");
             return false;
         }
 
-        serializeJsonPretty(doc, file);
-        file.close();
+        char buf[4096];
+        size_t len = serializeJsonPretty(doc, buf, sizeof(buf));
+        fwrite(buf, 1, len, f);
+        fclose(f);
 
-        // Update cache
         contactsCache = contacts;
         contactsLoaded = true;
 
@@ -495,14 +514,14 @@ namespace STORAGE_Utils {
 
     // ========== Stats Persistence ==========
 
-    static const char* STATS_FILE = "/LoRa_Tracker/stats.json";
+    static const char* STATS_FILE = SD_MOUNT_POINT "/LoRa_Tracker/stats.json";
     static bool statsSaveNeeded = false;
     static uint32_t lastStatsSave = 0;
 
     // ========== Raw Frames Logging ==========
 
-    static const char* FRAMES_FILE = "/LoRa_Tracker/frames.log";
-    static const char* FRAMES_OLD_FILE = "/LoRa_Tracker/frames.old";
+    static const char* FRAMES_FILE = SD_MOUNT_POINT "/LoRa_Tracker/frames.log";
+    static const char* FRAMES_OLD_FILE = SD_MOUNT_POINT "/LoRa_Tracker/frames.old";
     static const uint32_t MAX_FRAMES_SIZE = 100 * 1024;  // 100 KB
 
     void checkFramesLogRotation() {
@@ -511,20 +530,15 @@ namespace STORAGE_Utils {
         SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
         if (!spiGuard.acquired()) return;
 
-        File file = SD.open(FRAMES_FILE, FILE_READ);
-        if (!file) return;
+        long fsize = vfs_filesize(FRAMES_FILE);
+        if (fsize < 0) return;
 
-        size_t fileSize = file.size();
-        file.close();
-
-        if (fileSize >= MAX_FRAMES_SIZE) {
-            ESP_LOGI(TAG, "Rotating frames log (%u bytes)...", fileSize);
-            // Remove old backup if exists
-            if (SD.exists(FRAMES_OLD_FILE)) {
-                SD.remove(FRAMES_OLD_FILE);
+        if ((uint32_t)fsize >= MAX_FRAMES_SIZE) {
+            ESP_LOGI(TAG, "Rotating frames log (%ld bytes)...", fsize);
+            if (vfs_exists(FRAMES_OLD_FILE)) {
+                ::remove(FRAMES_OLD_FILE);
             }
-            // Rename current to old
-            SD.rename(FRAMES_FILE, FRAMES_OLD_FILE);
+            ::rename(FRAMES_FILE, FRAMES_OLD_FILE);
             ESP_LOGI(TAG, "Frames log rotated");
         }
     }
@@ -568,10 +582,10 @@ namespace STORAGE_Utils {
                 return false;
             }
             checkFramesLogRotation();
-            File file = SD.open(FRAMES_FILE, FILE_APPEND);
-            if (file) {
-                file.println(logLine);
-                file.close();
+            FILE* f = fopen(FRAMES_FILE, "a");
+            if (f) {
+                fprintf(f, "%s\n", logLine.c_str());
+                fclose(f);
             }
         }
         return true;
@@ -608,29 +622,29 @@ const std::vector<String>& getLastFrames(int count) {
             return;
         }
 
-        File file = SD.open(FRAMES_FILE, FILE_READ);
-        if (!file) {
+        FILE* f = fopen(FRAMES_FILE, "r");
+        if (!f) {
             ESP_LOGW(TAG, "No frames file, starting fresh");
             return;
         }
 
-        // Read all lines into a temporary buffer
         std::vector<String> allLines;
-        allLines.reserve(100); // Reserve space to avoid reallocations
-        while (file.available()) {
-            String line = file.readStringUntil('\n');
-            if (line.length() > 0) {
-                allLines.push_back(line);
+        allLines.reserve(100);
+        char lineBuf[512];
+        while (fgets(lineBuf, sizeof(lineBuf), f)) {
+            // Strip trailing newline
+            size_t len = strlen(lineBuf);
+            if (len > 0 && lineBuf[len - 1] == '\n') lineBuf[len - 1] = '\0';
+            if (strlen(lineBuf) > 0) {
+                allLines.push_back(String(lineBuf));
             }
         }
-        file.close();
+        fclose(f);
 
-        // Keep only the last 20 lines
         int totalLines = allLines.size();
         int startIdx = (totalLines > 20) ? (totalLines - 20) : 0;
         int loadCount = totalLines - startIdx;
 
-        // Load into cache RAM (oldest first, so newest is at head)
         for (int i = 0; i < loadCount; i++) {
             framesCache[framesCacheHead] = allLines[startIdx + i];
             framesCacheHead = (framesCacheHead + 1) % FRAMES_CACHE_SIZE;
@@ -922,15 +936,24 @@ const std::vector<String>& getLastFrames(int count) {
             return;
         }
 
-        File file = SD.open(STATS_FILE, FILE_READ);
-        if (!file) {
+        long fsize = vfs_filesize(STATS_FILE);
+        if (fsize <= 0) {
             ESP_LOGW(TAG, "No stats file, starting fresh");
             return;
         }
 
+        FILE* f = fopen(STATS_FILE, "r");
+        if (!f) return;
+
+        char* buf = (char*)malloc(fsize + 1);
+        if (!buf) { fclose(f); return; }
+        size_t rd = fread(buf, 1, fsize, f);
+        fclose(f);
+        buf[rd] = '\0';
+
         DynamicJsonDocument doc(4096);
-        DeserializationError error = deserializeJson(doc, file);
-        file.close();
+        DeserializationError error = deserializeJson(doc, buf);
+        free(buf);
 
         if (error) {
             ESP_LOGE(TAG, "Stats JSON parse error: %s", error.c_str());
@@ -1026,14 +1049,16 @@ const std::vector<String>& getLastFrames(int count) {
             obj["direct"] = s.lastIsDirect;
         }
 
-        File file = SD.open(STATS_FILE, FILE_WRITE);
-        if (!file) {
+        FILE* f = fopen(STATS_FILE, "w");
+        if (!f) {
             ESP_LOGE(TAG, "Failed to open stats file for writing");
             return false;
         }
 
-        serializeJson(doc, file);
-        file.close();
+        char buf[4096];
+        size_t len = serializeJson(doc, buf, sizeof(buf));
+        fwrite(buf, 1, len, f);
+        fclose(f);
 
         ESP_LOGI(TAG, "Saved stats (%d stations)", stationStats.size());
         return true;

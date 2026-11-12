@@ -13,7 +13,24 @@
 #include <cmath>
 #include <climits>
 #include <esp_task_wdt.h>
-#include <SD.h>
+#include <esp_heap_caps.h>
+#include <cstdio>
+#include <new>
+#include <utility>
+
+template <typename T, typename... Args>
+inline T* psram_new(Args&&... args) {
+    void* mem = heap_caps_malloc(sizeof(T), MALLOC_CAP_SPIRAM);
+    if (!mem) return nullptr;
+    return new (mem) T(std::forward<Args>(args)...);
+}
+
+template <typename T>
+inline void psram_delete(T* ptr) {
+    if (!ptr) return;
+    ptr->~T();
+    heap_caps_free(ptr);
+}
 
 namespace MapEngine {
 
@@ -46,7 +63,7 @@ namespace MapEngine {
 
     // --- NPK slot (needed by renderNavViewport) ---
     struct NpkSlot {
-        File file;
+        FILE* file;
         UIMapManager::Npk2Header header;
         UIMapManager::Npk2YEntry* yTable;
         char region[64];

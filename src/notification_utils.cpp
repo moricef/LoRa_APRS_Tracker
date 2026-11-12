@@ -21,7 +21,10 @@
 #include "board_pinout.h"
 
 #ifdef HAS_I2S
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wcpp"
     #include "driver/i2s.h"
+    #pragma GCC diagnostic pop
     #include <math.h>
 
     #define I2S_SAMPLE_RATE     44100

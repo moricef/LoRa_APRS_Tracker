@@ -22,7 +22,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
 #include <Arduino.h>
-#include <SPIFFS.h>
+#include <LittleFS.h>
 #include <WiFi.h>
 
 namespace WEB_Utils {
@@ -36,6 +36,7 @@ namespace WEB_Utils {
     void handleBootstrapScript(AsyncWebServerRequest *request);
 
     void setup();
+    void stop();
     bool checkPendingRestart(); // Call from loop() — deferred ESP.restart() after web save
 
 }

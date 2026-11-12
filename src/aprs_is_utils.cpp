@@ -56,7 +56,7 @@ namespace APRS_IS_Utils {
         if (!dnsResolved) {
             ESP_LOGI(TAG, "Resolving %s ...",
                        Config.aprs_is.server.c_str());
-            if (WiFi.hostByName(Config.aprs_is.server.c_str(), cachedServerIP)) {
+            if (WIFI_Utils::resolveHost(Config.aprs_is.server.c_str(), cachedServerIP)) {
                 dnsResolved = true;
                 ESP_LOGI(TAG, "Resolved to %s",
                            cachedServerIP.toString().c_str());
@@ -165,6 +165,16 @@ namespace APRS_IS_Utils {
             return;
         }
         ESP_LOGI(TAG, "Uploaded: %s", packet.c_str());
+    }
+
+    void disconnect() {
+        if (aprsIsConnected) {
+            aprsIsClient.stop();
+            aprsIsConnected = false;
+            passcodeValid = false;
+            dnsResolved = false;
+            ESP_LOGI(TAG, "Disconnected (BLE coexistence)");
+        }
     }
 
     bool isConnected() {

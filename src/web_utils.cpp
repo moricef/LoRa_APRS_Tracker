@@ -18,8 +18,11 @@
 
 #include <esp_log.h>
 #include <ArduinoJson.h>
-#include <SD.h>
+#include <sys/stat.h>
+#include <cstdio>
+#include <string>
 #include "sd_logger.h"
+#include "shared_spi_guard.h"
 #include "configuration.h"
 #include "lora_utils.h"
 #include "web_utils.h"
@@ -30,42 +33,43 @@ static const char *TAG = "WebServer";
 
 extern Configuration               Config;
 
-extern const char web_index_html[] asm("_binary_data_embed_index_html_gz_start");
-extern const char web_index_html_end[] asm("_binary_data_embed_index_html_gz_end");
+extern const char web_index_html[] asm("_binary_index_html_gz_start");
+extern const char web_index_html_end[] asm("_binary_index_html_gz_end");
 extern const size_t web_index_html_len = web_index_html_end - web_index_html;
 
-extern const char web_style_css[] asm("_binary_data_embed_style_css_gz_start");
-extern const char web_style_css_end[] asm("_binary_data_embed_style_css_gz_end");
+extern const char web_style_css[] asm("_binary_style_css_gz_start");
+extern const char web_style_css_end[] asm("_binary_style_css_gz_end");
 extern const size_t web_style_css_len = web_style_css_end - web_style_css;
 
-extern const char web_script_js[] asm("_binary_data_embed_script_js_gz_start");
-extern const char web_script_js_end[] asm("_binary_data_embed_script_js_gz_end");
+extern const char web_script_js[] asm("_binary_script_js_gz_start");
+extern const char web_script_js_end[] asm("_binary_script_js_gz_end");
 extern const size_t web_script_js_len = web_script_js_end - web_script_js;
 
-extern const char web_bootstrap_css[] asm("_binary_data_embed_bootstrap_css_gz_start");
-extern const char web_bootstrap_css_end[] asm("_binary_data_embed_bootstrap_css_gz_end");
+extern const char web_bootstrap_css[] asm("_binary_bootstrap_css_gz_start");
+extern const char web_bootstrap_css_end[] asm("_binary_bootstrap_css_gz_end");
 extern const size_t web_bootstrap_css_len = web_bootstrap_css_end - web_bootstrap_css;
 
-extern const char web_bootstrap_js[] asm("_binary_data_embed_bootstrap_js_gz_start");
-extern const char web_bootstrap_js_end[] asm("_binary_data_embed_bootstrap_js_gz_end");
+extern const char web_bootstrap_js[] asm("_binary_bootstrap_js_gz_start");
+extern const char web_bootstrap_js_end[] asm("_binary_bootstrap_js_gz_end");
 extern const size_t web_bootstrap_js_len = web_bootstrap_js_end - web_bootstrap_js;
 
 // Declare external symbols for the embedded image data
-extern const unsigned char favicon_data[] asm("_binary_data_embed_favicon_png_gz_start");
-extern const unsigned char favicon_data_end[] asm("_binary_data_embed_favicon_png_gz_end");
+extern const unsigned char favicon_data[] asm("_binary_favicon_png_gz_start");
+extern const unsigned char favicon_data_end[] asm("_binary_favicon_png_gz_end");
 extern const size_t favicon_data_len = favicon_data_end - favicon_data;
 
-extern const unsigned char github_sponsors_data[] asm("_binary_data_embed_github_sponsors_png_gz_start");
-extern const unsigned char github_sponsors_data_end[] asm("_binary_data_embed_github_sponsors_png_gz_end");
+extern const unsigned char github_sponsors_data[] asm("_binary_github_sponsors_png_gz_start");
+extern const unsigned char github_sponsors_data_end[] asm("_binary_github_sponsors_png_gz_end");
 extern const size_t github_sponsors_data_len = github_sponsors_data_end - github_sponsors_data;
 
-extern const unsigned char paypal_data[] asm("_binary_data_embed_paypalme_png_gz_start");
-extern const unsigned char paypal_data_end[] asm("_binary_data_embed_paypalme_png_gz_end");
+extern const unsigned char paypal_data[] asm("_binary_paypalme_png_gz_start");
+extern const unsigned char paypal_data_end[] asm("_binary_paypalme_png_gz_end");
 extern const size_t paypal_data_len = paypal_data_end - paypal_data;
 
 namespace WEB_Utils {
 
     AsyncWebServer server(80);
+    static bool serverStarted = false;
 
     void handleNotFound(AsyncWebServerRequest *request) {
         AsyncWebServerResponse *response = request->beginResponse(404, "text/plain", "Not found");
@@ -83,44 +87,70 @@ namespace WEB_Utils {
     //   /log?old=1     -> journal precedent (apres rotation)
     //   /log?grep=TAG  -> ne garde que les lignes contenant TAG (ex: PWRSAVE)
     void handleLog(AsyncWebServerRequest *request) {
-        String path = SD_Logger::getLogFilePath();
+        String path = SD_Logger::getLogFilePath();   // VFS path (SD_MOUNT_POINT/...)
         if (request->hasParam("old")) path += ".old";
-
-        if (!SD.exists(path)) {
-            request->send(404, "text/plain", "No log file at " + path);
-            return;
-        }
 
         String filter;
         if (request->hasParam("grep")) filter = request->getParam("grep")->value();
+
+        // The SD shares the SPI bus with the display and LoRa: every access
+        // below is a complete open/read/close transaction under the bus lock.
+        {
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) {
+                request->send(503, "text/plain", "SD busy, retry");
+                return;
+            }
+            struct stat st;
+            if (stat(path.c_str(), &st) != 0) {
+                request->send(404, "text/plain", "No log file at " + path);
+                return;
+            }
+        }
 
         ESP_LOGI(TAG, "GET /log (%s%s) from %s", path.c_str(),
                  filter.length() ? (" grep=" + filter).c_str() : "",
                  request->client()->remoteIP().toString().c_str());
 
         if (filter.length() == 0) {
-            // Envoi en flux : le journal peut peser plusieurs centaines de Ko,
-            // le charger en RAM n'est pas envisageable.
-            request->send(SD, path, "text/plain");
+            // Streamed in chunks (the log can weigh several hundred KB): each
+            // chunk reopens the file at the current offset under the bus lock.
+            std::string filePath(path.c_str());
+            AsyncWebServerResponse *response = request->beginChunkedResponse("text/plain",
+                [filePath](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+                    SharedSpiGuard spiGuard(pdMS_TO_TICKS(100));
+                    if (!spiGuard.acquired()) return RESPONSE_TRY_AGAIN;
+                    FILE* f = fopen(filePath.c_str(), "rb");
+                    if (!f) return 0;
+                    size_t n = 0;
+                    if (fseek(f, (long)index, SEEK_SET) == 0) n = fread(buffer, 1, maxLen, f);
+                    fclose(f);
+                    return n;
+                });
+            request->send(response);
             return;
         }
 
-        // Avec filtre, lire ligne a ligne et n'accumuler que les lignes retenues.
-        File f = SD.open(path, FILE_READ);
-        if (!f) {
-            request->send(500, "text/plain", "Cannot open " + path);
-            return;
-        }
+        // With a filter, read line by line and keep only the matching lines.
         String out;
         out.reserve(8192);
-        while (f.available()) {
-            String line = f.readStringUntil('\n');
-            if (line.indexOf(filter) >= 0) {
-                out += line;
-                out += '\n';
+        {
+            SharedSpiGuard spiGuard(pdMS_TO_TICKS(1000));
+            if (!spiGuard.acquired()) {
+                request->send(503, "text/plain", "SD busy, retry");
+                return;
             }
+            FILE* f = fopen(path.c_str(), "r");
+            if (!f) {
+                request->send(500, "text/plain", "Cannot open " + path);
+                return;
+            }
+            char line[512];
+            while (fgets(line, sizeof(line), f)) {
+                if (strstr(line, filter.c_str())) out += line;
+            }
+            fclose(f);
         }
-        f.close();
         request->send(200, "text/plain", out);
     }
 
@@ -150,7 +180,7 @@ namespace WEB_Utils {
     }
 
     void handleReadConfiguration(AsyncWebServerRequest *request) {
-        File file = SPIFFS.open("/tracker_conf.json");
+        File file = LittleFS.open("/tracker_conf.json");
         if (!file) {
             request->send(404, "text/plain", "Config file not found");
             return;
@@ -467,9 +497,16 @@ namespace WEB_Utils {
         request->send(response);
     }
 
+    void stop() {
+        if (serverStarted) {
+            server.end();
+            serverStarted = false;
+            ESP_LOGI(TAG, "Server stopped");
+        }
+    }
+
     void setup() {
         static bool routesRegistered = false;
-        static bool serverStarted = false;
 
         if (!routesRegistered) {
             server.on("/", HTTP_GET, handleHome);

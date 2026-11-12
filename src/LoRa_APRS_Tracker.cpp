@@ -49,7 +49,7 @@ static const char *TAG = "Main";
 #include <esp_task_wdt.h>
 #include <NMEAGPS.h>
 #include <Arduino.h>
-#include <WiFi.h>
+#include <Arduino.h>
 #include "smartbeacon_utils.h"
 #include "bluetooth_utils.h"
 #include "keyboard_utils.h"
@@ -150,6 +150,10 @@ extern bool gpsIsActive;
 void setup() {
     Serial.begin(115200);
 
+    // Silence GPIO 14 warning spam: Arduino Core 3 warns on every digitalRead()
+    // of an unconfigured pin, and checkFlashlight() reads pin 14 in each loop.
+    pinMode(14, INPUT);
+
     // Boost CPU to 240MHz for fast init
     setCpuFrequencyMhz(240);
     ESP_LOGI(TAG, "CPU frequency: %d MHz", getCpuFrequencyMhz());
@@ -189,8 +193,8 @@ void setup() {
     #ifdef USE_LVGL_UI
         LVGL_UI::updateInitStatus("Storage...");
     #endif
-    STORAGE_Utils::setup();        // Formats SPIFFS on first boot
-    Config.init();                 // Now SPIFFS is ready, load or create config
+    STORAGE_Utils::setup();        // Formats LittleFS on first boot
+    Config.init();                 // Now LittleFS is ready, load or create config
 
     STATION_Utils::loadIndex(0);    // callsign index
     STATION_Utils::loadIndex(1);    // LoRa profile index
@@ -290,10 +294,15 @@ void setup() {
     #endif
     ESP_LOGI(TAG, "Heap: %u KB total, %u KB free", ESP.getHeapSize()/1024, ESP.getFreeHeap()/1024);
 
-    // Initialize watchdog timer (30 seconds timeout)
-    esp_task_wdt_init(30, true);  // 30 seconds, panic on timeout
-    esp_task_wdt_add(NULL);       // Add current task to watchdog
-    ESP_LOGI(TAG, "Watchdog initialized (30s timeout)");
+    // Arduino Core 3 initializes TWDT before setup().
+    esp_task_wdt_config_t wdtConfig = {
+        .timeout_ms = 30000,
+        .idle_core_mask = 0,   // tasks subscribe themselves (loopTask, MapRender)
+        .trigger_panic = true
+    };
+    esp_task_wdt_reconfigure(&wdtConfig);
+    esp_err_t wdtResult = esp_task_wdt_add(NULL);
+    ESP_LOGI(TAG, "Watchdog reconfigured (30s), add=%s", esp_err_to_name(wdtResult));
 
     ESP_LOGI(TAG, "Setup Done!");
 

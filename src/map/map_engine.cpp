@@ -17,8 +17,10 @@
 #include "storage_utils.h"
 #include "shared_spi_guard.h"
 #include "OpenSansBold6pt7b.h"
-#include <SD.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #include <esp_task_wdt.h>
+#include <freertos/idf_additions.h>
 #include <algorithm>
 #include <climits>
 #include <cmath>
@@ -193,8 +195,15 @@ namespace MapEngine {
     }
 
     // --- RASTER DECODING ENGINE ---
-    static PNG png;
-    static JPEGDEC jpeg;
+    PNG* sharedPNG = nullptr;
+    JPEGDEC* sharedJPEG = nullptr;
+
+    void initDecoders() {
+        if (!sharedPNG) sharedPNG = psram_new<PNG>();
+        if (!sharedJPEG) sharedJPEG = psram_new<JPEGDEC>();
+        if (!sharedPNG || !sharedJPEG)
+            ESP_LOGE(TAG, "Image decoder PSRAM allocation failed");
+    }
 
     // Set by rasterOpenFile when it actually handed a File back to the decoder.
     // PNGdec's open() returns 0 both for "open callback failed" and for
@@ -203,32 +212,24 @@ namespace MapEngine {
     // as pngFileOpened in map_tiles.cpp.
     static bool rasterFileOpened = false;
 
-    // Generic file callbacks for raster decoders
+    // Generic file callbacks for raster decoders (POSIX FILE*)
     static void* rasterOpenFile(const char* filename, int32_t* size) {
-        rasterFileOpened = false;
-        File* file = new File(SD.open(filename, FILE_READ));
-        if (!file || !*file) {
-            delete file;
-            return nullptr;
-        }
-        *size = file->size();
-        rasterFileOpened = true;
-        return file;
+        FILE* f = fopen(filename, "rb");
+        if (!f) return nullptr;
+        fseek(f, 0, SEEK_END);
+        *size = (int32_t)ftell(f);
+        fseek(f, 0, SEEK_SET);
+        return f;
     }
 
     static void rasterCloseFile(void* handle) {
-        File* file = (File*)handle;
-        if (file) {
-            file->close();
-            delete file;
-        }
+        if (handle) fclose((FILE*)handle);
     }
 
     static int32_t rasterReadFile(void* handle, uint8_t* pBuf, int32_t iLen) {
-        File* file = (File*)handle;
-        return file->read(pBuf, iLen);
+        return (int32_t)fread(pBuf, 1, iLen, (FILE*)handle);
     }
-    
+
     static int32_t rasterReadFileJPEG(JPEGFILE* pFile, uint8_t* pBuf, int32_t iLen) {
         return rasterReadFile(pFile->fHandle, pBuf, iLen);
     }
@@ -238,8 +239,7 @@ namespace MapEngine {
     }
 
     static int32_t rasterSeekFile(void* handle, int32_t iPosition) {
-        File* file = (File*)handle;
-        return file->seek(iPosition);
+        return (fseek((FILE*)handle, iPosition, SEEK_SET) == 0) ? 1 : 0;
     }
 
     static int32_t rasterSeekFileJPEG(JPEGFILE* pFile, int32_t iPosition) {
@@ -263,25 +263,26 @@ namespace MapEngine {
         uint16_t* pfb = (uint16_t*)targetSprite_->getBuffer();
         if(pfb) {
             uint16_t* pLine = pfb + (pDraw->y * MAP_TILE_SIZE);
-            png.getLineAsRGB565(pDraw, pLine, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
+            sharedPNG->getLineAsRGB565(pDraw, pLine, PNG_RGB565_LITTLE_ENDIAN, 0xffffffff);
         }
         return 1;
     }
 
     // Raster renderers
     static bool renderJPGRaster(const char* path, LGFX_Sprite& map) {
+        if (!sharedJPEG) return false;
         targetSprite_ = &map;
         bool success = false;
         if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
             // JPEGDEC really does use 1 = success (unlike PNGdec), so this
             // comparison is correct. The close-on-failure handling is not:
             // a failed header parse still leaves rasterOpenFile's File open.
-            if (jpeg.open(path, rasterOpenFile, rasterCloseFile, rasterReadFileJPEG, rasterSeekFileJPEG, jpegDrawCallback) == 1) {
-                jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
-                if (jpeg.decode(0, 0, 0) == 1) success = true;
-                jpeg.close();
+            if (sharedJPEG->open(path, rasterOpenFile, rasterCloseFile, rasterReadFileJPEG, rasterSeekFileJPEG, jpegDrawCallback) == 1) {
+                sharedJPEG->setPixelType(RGB565_LITTLE_ENDIAN);
+                if (sharedJPEG->decode(0, 0, 0) == 1) success = true;
+                sharedJPEG->close();
             } else if (rasterFileOpened) {
-                jpeg.close();
+                sharedJPEG->close();
             }
             xSemaphoreGiveRecursive(spiMutex);
         }
@@ -290,6 +291,7 @@ namespace MapEngine {
     }
 
     static bool renderPNGRaster(const char* path, LGFX_Sprite& map) {
+        if (!sharedPNG) return false;
         targetSprite_ = &map;
         bool success = false;
         if (xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
@@ -299,16 +301,16 @@ namespace MapEngine {
             // always rendered empty) and, because png.close() lives inside
             // that branch, leaked the File/descriptor opened by
             // rasterOpenFile on every single tile.
-            int rc = png.open(path, rasterOpenFile, rasterCloseFile,
+            int rc = sharedPNG->open(path, rasterOpenFile, rasterCloseFile,
                               rasterReadFilePNG, rasterSeekFilePNG, pngDrawCallback);
             if (rc == PNG_SUCCESS && rasterFileOpened) {
-                success = (png.decode(nullptr, 0) == PNG_SUCCESS);
-                png.close();
+                success = (sharedPNG->decode(nullptr, 0) == PNG_SUCCESS);
+                sharedPNG->close();
             } else {
                 // open() may have taken a File before failing in the header
                 // parse; it never calls the close callback itself, so close
                 // here or the descriptor is gone for the rest of the session.
-                if (rasterFileOpened) png.close();
+                if (rasterFileOpened) sharedPNG->close();
                 ESP_LOGE(TAG, "PNG open failed rc=%d for %s", rc, path);
             }
             xSemaphoreGiveRecursive(spiMutex);
@@ -322,8 +324,11 @@ namespace MapEngine {
         RenderRequest request;
         NavRenderRequest navReq;
         ESP_LOGI(TAG, "Render task started on Core 0");
+        esp_task_wdt_add(NULL);  // Subscribe this task to WDT (renderers call esp_task_wdt_reset())
 
         while (true) {
+            esp_task_wdt_reset();
+
             // Priority: NAV viewport requests (latest-wins — drain queue)
             if (navRenderQueue && xQueueReceive(navRenderQueue, &navReq, 0) == pdTRUE) {
                 NavRenderRequest latest = navReq;
@@ -398,7 +403,8 @@ namespace MapEngine {
         renderActive_ = false;
 
         if (mapRenderTaskHandle) {
-            vTaskDelete(mapRenderTaskHandle);
+            esp_task_wdt_delete(mapRenderTaskHandle);
+            vTaskDeleteWithCaps(mapRenderTaskHandle);
             mapRenderTaskHandle = nullptr;
         }
         if (mapRenderQueue) {
@@ -418,7 +424,7 @@ namespace MapEngine {
             spriteMutex = nullptr;
         }
         // Free waterway label buffers
-        if (glyphSprite) { glyphSprite->deleteSprite(); delete glyphSprite; glyphSprite = nullptr; }
+        if (glyphSprite) { glyphSprite->deleteSprite(); psram_delete(glyphSprite); glyphSprite = nullptr; }
         glyphSpriteW = glyphSpriteH = 0;
         heap_caps_free(wlScreenX); wlScreenX = nullptr;
         heap_caps_free(wlScreenY); wlScreenY = nullptr;
@@ -439,8 +445,17 @@ namespace MapEngine {
         canvas_to_invalidate_ = canvas_to_invalidate;
         if (!renderLock) renderLock = xSemaphoreCreateMutex();
         spriteMutex = xSemaphoreCreateMutex();
-        mapRenderQueue = xQueueCreate(10, sizeof(RenderRequest));
-        navRenderQueue = xQueueCreate(1, sizeof(NavRenderRequest));
+        static uint8_t* mapRenderQBuf = nullptr;
+        static StaticQueue_t mapRenderQStruct;
+        if (!mapRenderQBuf) mapRenderQBuf = (uint8_t*)heap_caps_malloc(10 * sizeof(RenderRequest), MALLOC_CAP_SPIRAM);
+        if (mapRenderQBuf) mapRenderQueue = xQueueCreateStatic(10, sizeof(RenderRequest), mapRenderQBuf, &mapRenderQStruct);
+        else mapRenderQueue = xQueueCreate(10, sizeof(RenderRequest));
+
+        static uint8_t* navRenderQBuf = nullptr;
+        static StaticQueue_t navRenderQStruct;
+        if (!navRenderQBuf) navRenderQBuf = (uint8_t*)heap_caps_malloc(sizeof(NavRenderRequest), MALLOC_CAP_SPIRAM);
+        if (navRenderQBuf) navRenderQueue = xQueueCreateStatic(1, sizeof(NavRenderRequest), navRenderQBuf, &navRenderQStruct);
+        else navRenderQueue = xQueueCreate(1, sizeof(NavRenderRequest));
         mapEventGroup = xEventGroupCreate();
 
         // Allocate waterway label buffers in PSRAM (freed in stopRenderTask)
@@ -448,14 +463,15 @@ namespace MapEngine {
         if (!wlScreenY) wlScreenY = (int*)heap_caps_malloc(WLABEL_MAX_PTS * sizeof(int), MALLOC_CAP_SPIRAM);
         if (!wlArcLen)  wlArcLen  = (float*)heap_caps_malloc(WLABEL_MAX_PTS * sizeof(float), MALLOC_CAP_SPIRAM);
 
-        xTaskCreatePinnedToCore(
+        xTaskCreatePinnedToCoreWithCaps(
             mapRenderTask,
             "MapRender",
             16384,  // Increased for feature index + sort + AEL
             NULL,
             1, // Low priority
             &mapRenderTaskHandle,
-            0  // Core 0
+            0,  // Core 0
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
         );
     }
 
@@ -480,7 +496,7 @@ namespace MapEngine {
         for (int i = 0; i < RASTER_TILE_CACHE_SIZE; ++i) {
             if (_tileSpritePool[i]) {
                 _tileSpritePool[i]->deleteSprite();
-                delete _tileSpritePool[i];
+                psram_delete(_tileSpritePool[i]);
                 _tileSpritePool[i] = nullptr;
             }
             if (i < (int)_tileCache.size()) {
@@ -557,7 +573,7 @@ namespace MapEngine {
             ESP_LOGI(TAG, "Initializing static raster tile pool (%d sprites)...", RASTER_TILE_CACHE_SIZE);
             for (int i = 0; i < RASTER_TILE_CACHE_SIZE; ++i) {
                 if (_tileSpritePool[i] == nullptr) {
-                    _tileSpritePool[i] = new LGFX_Sprite(_gfx);
+                    _tileSpritePool[i] = psram_new<LGFX_Sprite>(_gfx);
                     if (!_tileSpritePool[i]) {
                         ESP_LOGE(TAG, "Failed to allocate sprite %d in pool", i);
                         continue;
@@ -566,7 +582,7 @@ namespace MapEngine {
                     _tileSpritePool[i]->setColorDepth(16);
                     if (!_tileSpritePool[i]->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE)) {
                         ESP_LOGE(TAG, "Failed to create sprite %d in pool (PSRAM)", i);
-                        delete _tileSpritePool[i];
+                        psram_delete(_tileSpritePool[i]);
                         _tileSpritePool[i] = nullptr;
                     }
                 }
@@ -627,7 +643,7 @@ namespace MapEngine {
             ESP_LOGI(TAG, "Initializing static raster tile pool (%d sprites)...", RASTER_TILE_CACHE_SIZE);
             for (int i = 0; i < RASTER_TILE_CACHE_SIZE; ++i) {
                 if (_tileSpritePool[i] == nullptr) {
-                    _tileSpritePool[i] = new LGFX_Sprite(gfx);
+                    _tileSpritePool[i] = psram_new<LGFX_Sprite>(gfx);
                     if (!_tileSpritePool[i]) {
                         ESP_LOGE(TAG, "Failed to allocate sprite %d in pool", i);
                         return; // Abort
@@ -636,7 +652,7 @@ namespace MapEngine {
                     _tileSpritePool[i]->setColorDepth(16);
                     if (!_tileSpritePool[i]->createSprite(MAP_TILE_SIZE, MAP_TILE_SIZE)) {
                         ESP_LOGE(TAG, "Failed to create sprite %d in pool (PSRAM)", i);
-                        delete _tileSpritePool[i];
+                        psram_delete(_tileSpritePool[i]);
                         _tileSpritePool[i] = nullptr;
                         return; // Abort
                     }
@@ -853,7 +869,8 @@ namespace MapEngine {
         }
         if (s.file) {
             SharedSpiGuard spiGuard;
-            s.file.close();
+            fclose(s.file);
+            s.file = nullptr;
         }
         memset(&s.header, 0, sizeof(s.header));
         s.region[0] = '\0';
@@ -921,7 +938,7 @@ namespace MapEngine {
         }
 
         // All SD I/O within a single spiMutex hold
-        s.file = SD.open(packPath, FILE_READ);
+        s.file = fopen(packPath, "rb");
         if (!s.file) {
             xSemaphoreGiveRecursive(spiMutex);
             markSlot();
@@ -929,10 +946,10 @@ namespace MapEngine {
         }
 
         // Read NPK2 header (25 bytes)
-        if (s.file.read((uint8_t*)&s.header, sizeof(s.header)) != sizeof(s.header) ||
+        if (fread(&s.header, 1, sizeof(s.header), s.file) != sizeof(s.header) ||
             memcmp(s.header.magic, "NPK2", 4) != 0) {
             ESP_LOGE(TAG, "Invalid magic in %s (expected NPK2)", packPath);
-            s.file.close();
+            fclose(s.file); s.file = nullptr;
             xSemaphoreGiveRecursive(spiMutex);
             markSlot();
             return &s;
@@ -941,7 +958,7 @@ namespace MapEngine {
         if (s.header.tile_count == 0 || s.header.y_max < s.header.y_min) {
             ESP_LOGE(TAG, "Invalid header in %s (tiles=%u, y_min=%u, y_max=%u)",
                           packPath, s.header.tile_count, s.header.y_min, s.header.y_max);
-            s.file.close();
+            fclose(s.file); s.file = nullptr;
             xSemaphoreGiveRecursive(spiMutex);
             markSlot();
             return &s;
@@ -953,18 +970,18 @@ namespace MapEngine {
         s.yTable = (UIMapManager::Npk2YEntry*)heap_caps_malloc(ytableSize, MALLOC_CAP_SPIRAM);
         if (!s.yTable) {
             ESP_LOGE(TAG, "Failed to alloc Y-table (%u bytes)", (unsigned)ytableSize);
-            s.file.close();
+            fclose(s.file); s.file = nullptr;
             xSemaphoreGiveRecursive(spiMutex);
             markSlot();
             return &s;
         }
 
-        s.file.seek(s.header.ytable_offset);
-        if (s.file.read((uint8_t*)s.yTable, ytableSize) != ytableSize) {
+        fseek(s.file, s.header.ytable_offset, SEEK_SET);
+        if (fread(s.yTable, 1, ytableSize, s.file) != ytableSize) {
             ESP_LOGE(TAG, "Failed to read Y-table from %s", packPath);
             heap_caps_free(s.yTable);
             s.yTable = nullptr;
-            s.file.close();
+            fclose(s.file); s.file = nullptr;
             xSemaphoreGiveRecursive(spiMutex);
             markSlot();
             return &s;
@@ -998,11 +1015,12 @@ namespace MapEngine {
 
         // 3. Try single file first: Z{z}.nav
         char packPath[128];
-        snprintf(packPath, sizeof(packPath), "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
+        struct stat _st;
+        snprintf(packPath, sizeof(packPath), SD_MOUNT_POINT "/LoRa_Tracker/VectMaps/%s/Z%d.nav", region, zoom);
 
         bool singleExists = false;
         if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            singleExists = SD.exists(packPath);
+            singleExists = (stat(packPath, &_st) == 0);
             xSemaphoreGiveRecursive(spiMutex);
         }
 
@@ -1012,11 +1030,11 @@ namespace MapEngine {
 
         // 4. Single file absent → scan splits: Z{z}_0.nav, Z{z}_1.nav, ...
         for (uint8_t si = 0; si < 16; si++) {
-            snprintf(packPath, sizeof(packPath), "/LoRa_Tracker/VectMaps/%s/Z%d_%d.nav", region, zoom, si);
+            snprintf(packPath, sizeof(packPath), SD_MOUNT_POINT "/LoRa_Tracker/VectMaps/%s/Z%d_%d.nav", region, zoom, si);
 
             bool splitExists = false;
             if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                splitExists = SD.exists(packPath);
+                splitExists = (stat(packPath, &_st) == 0);
                 xSemaphoreGiveRecursive(spiMutex);
             }
 
@@ -1026,11 +1044,11 @@ namespace MapEngine {
             UIMapManager::Npk2Header splitHeader;
             bool headerOk = false;
             if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                File f = SD.open(packPath, FILE_READ);
+                FILE* f = fopen(packPath, "rb");
                 if (f) {
-                    headerOk = (f.read((uint8_t*)&splitHeader, sizeof(splitHeader)) == sizeof(splitHeader) &&
+                    headerOk = (fread(&splitHeader, 1, sizeof(splitHeader), f) == sizeof(splitHeader) &&
                                 memcmp(splitHeader.magic, "NPK2", 4) == 0);
-                    f.close();
+                    fclose(f);
                 }
                 xSemaphoreGiveRecursive(spiMutex);
             }
@@ -1132,9 +1150,8 @@ namespace MapEngine {
             size_t readSize = row.idx_count * sizeof(UIMapManager::Npk2IndexEntry);
             bool readOk = false;
             if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-                slot->file.seek(baseOff);
-                // Use DMA-chunked read to reduce SPI transaction overhead
-                readOk = (STORAGE_Utils::readChunked(slot->file, (uint8_t*)npkRowBuf, readSize) == readSize);
+                fseek(slot->file, baseOff, SEEK_SET);
+                readOk = (fread(npkRowBuf, 1, readSize, slot->file) == readSize);
                 xSemaphoreGiveRecursive(spiMutex);
             }
             if (!readOk) return false;
@@ -1173,8 +1190,8 @@ namespace MapEngine {
                 UIMapManager::Npk2IndexEntry e;
                 while (lo <= hi) {
                     int mid = (lo + hi) / 2;
-                    slot->file.seek(baseOff + mid * sizeof(UIMapManager::Npk2IndexEntry));
-                    if (slot->file.read((uint8_t*)&e, sizeof(e)) != sizeof(e)) break;
+                    fseek(slot->file, baseOff + mid * sizeof(UIMapManager::Npk2IndexEntry), SEEK_SET);
+                    if (fread(&e, 1, sizeof(e), slot->file) != sizeof(e)) break;
                     if (e.x < x) lo = mid + 1;
                     else if (e.x > x) hi = mid - 1;
                     else { *result = e; found = true; break; }
@@ -1206,9 +1223,8 @@ namespace MapEngine {
 
         bool ok = false;
         if (spiMutex != NULL && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            slot->file.seek(entry->offset);
-            // Use DMA-chunked read to reduce SPI transaction overhead for large tile data
-            ok = (STORAGE_Utils::readChunked(slot->file, *outData, entry->size) == entry->size);
+            fseek(slot->file, entry->offset, SEEK_SET);
+            ok = (fread(*outData, 1, entry->size, slot->file) == entry->size);
             xSemaphoreGiveRecursive(spiMutex);
         }
 
@@ -1235,32 +1251,36 @@ namespace MapEngine {
             return false;
         }
 
-        // Try 16pt first (better readability on 480×320), fallback to 12pt
-        const char* fontPath = "/LoRa_Tracker/fonts/OpenSans-Bold-14.vlw";
-        if (!SD.exists(fontPath)) {
-            fontPath = "/LoRa_Tracker/fonts/OpenSans-Bold-12.vlw";
+        // Try 14pt first (better readability on 480×320), fallback to 12pt
+        char fontFullPath[128];
+        const char* fontRel = "/LoRa_Tracker/fonts/OpenSans-Bold-14.vlw";
+        snprintf(fontFullPath, sizeof(fontFullPath), SD_MOUNT_POINT "%s", fontRel);
+        struct stat fontSt;
+        if (stat(fontFullPath, &fontSt) != 0) {
+            fontRel = "/LoRa_Tracker/fonts/OpenSans-Bold-12.vlw";
+            snprintf(fontFullPath, sizeof(fontFullPath), SD_MOUNT_POINT "%s", fontRel);
         }
-        if (!SD.exists(fontPath)) {
-            ESP_LOGW(TAG, "VLW font not found: %s (will use fallback GFX font)", fontPath);
+        if (stat(fontFullPath, &fontSt) != 0) {
+            ESP_LOGW(TAG, "VLW font not found: %s (will use fallback GFX font)", fontRel);
             return false;
         }
 
-        File file = SD.open(fontPath, FILE_READ);
+        FILE* file = fopen(fontFullPath, "rb");
         if (!file) {
-            ESP_LOGE(TAG, "Failed to open VLW font: %s", fontPath);
+            ESP_LOGE(TAG, "Failed to open VLW font: %s", fontFullPath);
             return false;
         }
 
-        size_t fileSize = file.size();
+        size_t fileSize = (size_t)fontSt.st_size;
         vlwFontData = (uint8_t*)heap_caps_malloc(fileSize, MALLOC_CAP_SPIRAM);
         if (!vlwFontData) {
             ESP_LOGE(TAG, "Failed to allocate %d bytes in PSRAM for VLW font", fileSize);
-            file.close();
+            fclose(file);
             return false;
         }
 
-        size_t bytesRead = file.read(vlwFontData, fileSize);
-        file.close();
+        size_t bytesRead = fread(vlwFontData, 1, fileSize, file);
+        fclose(file);
 
         if (bytesRead != fileSize) {
             ESP_LOGE(TAG, "Failed to read VLW font: read %d/%d bytes", bytesRead, fileSize);
@@ -1272,7 +1292,7 @@ namespace MapEngine {
         vlwFontWrapper.set(vlwFontData, fileSize);
         if (vlwFont.loadFont(&vlwFontWrapper)) {
             vlwFontLoaded = true;
-            ESP_LOGI(TAG, "Loaded VLW font: %s (%d bytes in PSRAM)", fontPath, fileSize);
+            ESP_LOGI(TAG, "Loaded VLW font: %s (%d bytes in PSRAM)", fontFullPath, fileSize);
             return true;
         }
 
@@ -1491,13 +1511,14 @@ namespace MapEngine {
 
                 if (spiMutex && xSemaphoreTakeRecursive(spiMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
                     if (STORAGE_Utils::isSDAvailable()) {
-                        snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
+                        struct stat _pst;
+                        snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.png",
                                  region, zoom, tileX, tileY);
-                        if (SD.exists(path)) { found = true; }
+                        if (stat(path, &_pst) == 0) { found = true; }
                         else {
-                            snprintf(path, sizeof(path), "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg",
+                            snprintf(path, sizeof(path), SD_MOUNT_POINT "/LoRa_Tracker/Maps/%s/%d/%d/%d.jpg",
                                      region, zoom, tileX, tileY);
-                            if (SD.exists(path)) { found = true; }
+                            if (stat(path, &_pst) == 0) { found = true; }
                         }
                     }
                     xSemaphoreGiveRecursive(spiMutex);

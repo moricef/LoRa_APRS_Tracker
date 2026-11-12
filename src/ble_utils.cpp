@@ -75,6 +75,9 @@ NimBLEAddress bleConnectedPeerAddr;  // Peer address for client connection
 
 // BLE state flags
 bool        bleSleeping         = false;    // BLE is currently stopped (for WiFi coexistence)
+// Set while BLE_Utils::stop() tears the stack down: the disconnect callback
+// must not restart advertising on a host that is being disabled.
+static volatile bool bleStopping = false;
 bool        bleWakeRequested    = false;    // Deferred wake flag (set from LVGL, processed in main loop)
 
 // BLE callbacks run in the NimBLE host task while sendToLoRa() runs in the
@@ -174,14 +177,9 @@ static void receiveTnc2Bytes(const std::string& receivedData) {
 }
 
 class MyServerCallbacks : public NimBLEServerCallbacks {
-    // NimBLE 1.4 invokes both overloads. Handle the descriptor overload only
-    // so connection state is not processed twice.
-    void onConnect(NimBLEServer*) override {}
-
-    void onConnect(NimBLEServer*, ble_gap_conn_desc* desc) override {
+    void onConnect(NimBLEServer*, NimBLEConnInfo& connInfo) override {
         bluetoothConnected = true;
-        // Get connected device MAC address from connection descriptor
-        bleConnectedPeerAddr = NimBLEAddress(desc->peer_ota_addr);
+        bleConnectedPeerAddr = connInfo.getAddress();
         bleConnectedDeviceAddr = bleConnectedPeerAddr.toString().c_str();
         bleConnectedDeviceName = "";  // Will be read later
         bleNeedToReadName = true;  // Signal to read name in loop
@@ -189,9 +187,7 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
         ESP_LOGI(TAG, "BLE Client Connected: %s", bleConnectedDeviceAddr.c_str());
     }
 
-    void onDisconnect(NimBLEServer* pServer) override {}
-
-    void onDisconnect(NimBLEServer* pServer, ble_gap_conn_desc* desc) override {
+    void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo&, int) override {
         bluetoothConnected = false;
         bleConnectedDeviceAddr = "";
         bleConnectedDeviceName = "";
@@ -199,12 +195,12 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
         resetTnc2Input();
         kissSerialBuffer = "";
         ESP_LOGI(TAG, "BLE client disconnected");
-        pServer->startAdvertising();
+        if (!bleStopping) pServer->startAdvertising();
     }
 };
 
 class MyCallbacks : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic *pCharacteristic) override {
+    void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo&) override {
         if (Config.bluetooth.useKISS) {   // KISS (AX.25)
             std::string receivedData = pCharacteristic->getValue();
 
@@ -259,8 +255,6 @@ class MyCallbacks : public NimBLECharacteristicCallbacks {
         }
     }
 
-    // NimBLE 1.4 invokes this after the one-argument overload above.
-    void onWrite(NimBLECharacteristic*, ble_gap_conn_desc*) override {}
 };
 
 static MyCallbacks rxCallbacks;
@@ -268,7 +262,8 @@ static MyCallbacks rxCallbacks;
 namespace BLE_Utils {
 
     void stop() {
-        if (BLEDevice::getInitialized()) {
+        bleStopping = true;
+        if (NimBLEDevice::isInitialized()) {
             // clearAll is required: otherwise setup() adds duplicate services
             // and the client can subscribe to an old characteristic while the
             // firmware notifies through the newly-created one.
@@ -285,6 +280,7 @@ namespace BLE_Utils {
     }
 
     void setup() {
+        bleStopping = false;
         bleSleeping = false;
         resetTnc2Input();
 
@@ -304,14 +300,22 @@ namespace BLE_Utils {
 
         if (pService != nullptr) {
             pCharacteristicRx->setCallbacks(&rxCallbacks);
-            pService->start();
+            // NimBLE 2.x starts the services with the server (first advertising start)
 
             BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
-            pAdvertising->addServiceUUID(useKISS ? SERVICE_UUID_0 : SERVICE_UUID_1);
+            pAdvertising->reset();          // Clear stale state from previous init cycle
 
-            pServer->getAdvertising()->setScanResponse(true);
-            pServer->getAdvertising()->setMinPreferred(0x06);
-            pServer->getAdvertising()->setMaxPreferred(0x0C);
+            // Split advertising payload to avoid "Data length exceeded":
+            // long UUID in the primary payload, name in the scan response
+            NimBLEAdvertisementData advData;
+            advData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+            advData.setCompleteServices(NimBLEUUID(useKISS ? SERVICE_UUID_0 : SERVICE_UUID_1));
+            pAdvertising->setAdvertisementData(advData);
+
+            NimBLEAdvertisementData scanResponseData;
+            scanResponseData.setName(BLEid.c_str());
+            pAdvertising->setScanResponseData(scanResponseData);
+
             pAdvertising->start();
             ESP_LOGI(TAG, "BLE %s service ready; waiting for central",
                      useKISS ? "KISS" : "TNC2/NUS");

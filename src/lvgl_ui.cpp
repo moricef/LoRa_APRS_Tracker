@@ -17,7 +17,7 @@ static const char *TAG = "LVGL";
 #endif
 #include <NMEAGPS.h>
 #include "gps_utils.h"
-#include <WiFi.h>
+#include <Arduino.h>
 #include <esp_wifi.h>
 #include <lvgl.h>
 #define TOUCH_MODULES_GT911
@@ -697,7 +697,7 @@ namespace LVGL_UI {
       }
 
       // Update WiFi status
-      UIDashboard::updateWiFi(WiFiConnected, WiFiConnected ? WiFi.RSSI() : 0);
+      UIDashboard::updateWiFi(WiFiConnected, WiFiConnected ? WIFI_Utils::getRSSI() : 0);
 
       // Update Bluetooth status
       UIDashboard::updateBluetooth();
