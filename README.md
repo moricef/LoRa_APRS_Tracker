@@ -1,7 +1,7 @@
 # LoRa APRS Tracker - LVGL UI Edition
 
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-ready-orange)
-![Version](https://img.shields.io/badge/version-2.11.3-blue)
+![Version](https://img.shields.io/badge/version-2.12.0-blue)
 ![License](https://img.shields.io/badge/license-GPL-green)
 
 **ESP32-S3 LoRa APRS tracker with modern touchscreen interface for Lilygo T-Deck Plus and CrowPanel Advance 3.5", plus classic OLED tracker for T-Beam V1.2**
@@ -25,6 +25,10 @@ This fork is based on the work of [CA2RXU](https://github.com/richonguzman/LoRa_
 > *Screenshots taken on a T-Deck Plus.*
 
 ---
+## What's New in v2.12.0
+- **Native LoRa APRS frames** - The tracker now decodes native (binary) LoRa APRS frames alongside the usual text frames. Transmission stays in text by default; the new *Tx frame format* setting in the web configuration (LoRa section) selects text, native or both. Native frames are ignored by other firmware, and a packet that cannot be encoded is sent as text.
+- **Screenshot over Wi-Fi** - On the T-Deck Plus and the CrowPanel, `http://<tracker-ip>/screenshot` returns a BMP image of the screen currently displayed.
+
 ## What's New in v2.11.3
 - **Readable "no map" message** - Without maps on the SD card, the map screen drew its message mostly off the left edge of the screen. It is now centred and gives both paths: `/LoRa_Tracker/VectMaps/REGION/` for vector maps and `/LoRa_Tracker/Maps/REGION/z/x/y.png` for raster tiles.
 - **Wiki link** - The web flasher pages now link the user guide.
