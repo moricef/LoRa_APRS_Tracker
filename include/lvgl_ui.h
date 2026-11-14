@@ -39,6 +39,10 @@ namespace LVGL_UI {
     void showWiFiEcoMode();  // Display WiFi eco mode popup
     void handleComposeKeyboard(char key);  // Handle physical keyboard for compose screen
     bool handleScreenLockKey(char key);  // Q then Space unlocks after eco timeout
+    // Renders the active screen as a 16-bit BMP. Called from another task (web
+    // server): waits up to timeoutMs for loop() to take the snapshot. The buffer
+    // is reused by the next capture.
+    bool takeScreenshot(const uint8_t** data, size_t* size, uint32_t timeoutMs);
     void showCapsLockPopup(bool active);  // Display Caps Lock status popup
     void showBootWebConfig();  // Show web-conf screen at boot (blocking, LVGL-based)
     void showAddContactPrompt(const char* callsign);  // Prompt to add unknown sender as contact

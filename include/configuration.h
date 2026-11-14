@@ -130,6 +130,7 @@ public:
     bool    sendInfo;
     bool    repeaterMode;
     String  digipeatAlias;      // alias matched when repeating (fill-in = WIDE1-1)
+    int     txFormat;           // 0 text, 1 native, 2 both (text then native)
 };
 
 class PTT {
