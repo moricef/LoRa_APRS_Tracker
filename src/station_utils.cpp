@@ -436,7 +436,7 @@ namespace STATION_Utils {
         if (miceActive) {
             packet = APRSPacketLib::generateMiceGPSBeaconPacket(currentBeacon->micE, currentBeacon->callsign, currentBeacon->symbol, currentBeacon->overlay, path, gpsFix.latitude(), gpsFix.longitude(), gpsFix.heading(), gpsSpeedKnots(), gpsFix.alt.whole);
         } else {
-            packet = APRSPacketLib::generateBase91GPSBeaconPacket(currentBeacon->callsign, "APLRT1", path, currentBeacon->overlay, APRSPacketLib::encodeGPSIntoBase91(gpsFix.latitude(), gpsFix.longitude(), gpsFix.heading(), gpsSpeedKnots(), currentBeacon->symbol, Config.sendAltitude, gpsAltFeet(), sendStandingUpdate));
+            packet = APRSPacketLib::generateBase91GPSBeaconPacket(currentBeacon->callsign, "APLVGL", path, currentBeacon->overlay, APRSPacketLib::encodeGPSIntoBase91(gpsFix.latitude(), gpsFix.longitude(), gpsFix.heading(), gpsSpeedKnots(), currentBeacon->symbol, Config.sendAltitude, gpsAltFeet(), sendStandingUpdate));
         }
 
         String batteryVoltage = BATTERY_Utils::getBatteryInfoVoltage();
