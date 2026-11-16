@@ -91,21 +91,21 @@ namespace TELEMETRY_Utils {
 
     void sendEquationCoefficients() {
         String equationPacket = "EQNS." + joinWithCommas(getEquationCoefficients());
-        String tempPacket = APRSPacketLib::generateMessagePacket(currentBeacon->callsign, "APLRT1", Config.path, currentBeacon->callsign, equationPacket);
+        String tempPacket = APRSPacketLib::generateMessagePacket(currentBeacon->callsign, "APLVGL", Config.path, currentBeacon->callsign, equationPacket);
         displayShow("<<< TX >>>", "Telemetry Packet:", "Equation Coefficients", 100);
         LoRa_Utils::sendNewPacket(tempPacket);
     }
 
     void sendUnitLabels() {
         String unitPacket = "UNIT." + joinWithCommas(getUnitLabels());
-        String tempPacket = APRSPacketLib::generateMessagePacket(currentBeacon->callsign, "APLRT1", Config.path, currentBeacon->callsign, unitPacket);
+        String tempPacket = APRSPacketLib::generateMessagePacket(currentBeacon->callsign, "APLVGL", Config.path, currentBeacon->callsign, unitPacket);
         displayShow("<<< TX >>>", "Telemetry Packet:", "Unit/Label", 100);
         LoRa_Utils::sendNewPacket(tempPacket);
     }
 
     void sendParameterNames() {
         String parameterPacket = "PARM." + joinWithCommas(getParameterNames());
-        String tempPacket = APRSPacketLib::generateMessagePacket(currentBeacon->callsign, "APLRT1", Config.path, currentBeacon->callsign, parameterPacket);
+        String tempPacket = APRSPacketLib::generateMessagePacket(currentBeacon->callsign, "APLVGL", Config.path, currentBeacon->callsign, parameterPacket);
         displayShow("<<< TX >>>", "Telemetry Packet:", "Parameter Name",100);
         LoRa_Utils::sendNewPacket(tempPacket);
     }

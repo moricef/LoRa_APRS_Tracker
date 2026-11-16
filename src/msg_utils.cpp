@@ -1203,7 +1203,7 @@ namespace MSG_Utils {
     void sendMessage(const String& station, const String& textMessage, const String& wireSuffix) {
         // wireSuffix ("}AA" reply-ack) is on air only; the conversation keeps
         // textMessage so retries with a changed AA stay one saved message.
-        String newPacket = APRSPacketLib::generateMessagePacket(currentBeacon->callsign, "APLRT1", Config.path, station, textMessage + wireSuffix);
+        String newPacket = APRSPacketLib::generateMessagePacket(currentBeacon->callsign, "APLVGL", Config.path, station, textMessage + wireSuffix);
         if (textMessage.indexOf("ack") == 0 && station != "WLNK-1") {  // don't show Winlink ACK
             displayShow("<<ACK Tx>>", "", "", 500);
         } else if (station.indexOf("CA2RXU-15") == 0 && textMessage.indexOf("wrl") == 0) {

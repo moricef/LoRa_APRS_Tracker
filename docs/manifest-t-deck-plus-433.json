@@ -1,14 +1,23 @@
 {
   "name": "LoRa APRS Tracker - T-Deck Plus 433MHz (Stable)",
-  "version": "2.12.0 (2026-11-14)",
+  "version": "2.12.1 (2026-11-16)",
   "new_install_prompt_erase": true,
   "builds": [
     {
       "chipFamily": "ESP32-S3",
       "parts": [
-        { "path": "firmware/stable/ttgo_t_deck_plus_433/bootloader.bin", "offset": 0 },
-        { "path": "firmware/stable/ttgo_t_deck_plus_433/partitions.bin", "offset": 32768 },
-        { "path": "firmware/stable/ttgo_t_deck_plus_433/firmware.bin", "offset": 65536 }
+        {
+          "path": "firmware/stable/ttgo_t_deck_plus_433/bootloader.bin",
+          "offset": 0
+        },
+        {
+          "path": "firmware/stable/ttgo_t_deck_plus_433/partitions.bin",
+          "offset": 32768
+        },
+        {
+          "path": "firmware/stable/ttgo_t_deck_plus_433/firmware.bin",
+          "offset": 65536
+        }
       ]
     }
   ]
