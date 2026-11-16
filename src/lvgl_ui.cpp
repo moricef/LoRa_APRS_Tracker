@@ -514,11 +514,9 @@ namespace LVGL_UI {
     lv_obj_align(freq_label, LV_ALIGN_CENTER, 0, 40);
 #endif
 
-    // Original author and version
-    char verBuf[48];
-    snprintf(verBuf, sizeof(verBuf), "CA2RXU  %s", version);
+    // Firmware version
     lv_obj_t *ver_label = lv_label_create(screen_splash);
-    lv_label_set_text(ver_label, verBuf);
+    lv_label_set_text(ver_label, "v" UI_VERSION);
     lv_obj_set_style_text_color(ver_label, lv_color_hex(0xcc0000),
                                 0); // Red to match APRS logo
 #if defined(CROWPANEL_ADVANCE_35)
@@ -527,7 +525,7 @@ namespace LVGL_UI {
     lv_obj_align(ver_label, LV_ALIGN_BOTTOM_MID, 0, -50);
 #endif
 
-    // UI fork credit
+    // Project maintainer
     lv_obj_t *ui_label = lv_label_create(screen_splash);
     lv_label_set_text(ui_label, "F4MLV LVGL UI Edition");
     lv_obj_set_style_text_color(ui_label, lv_color_hex(0x0066cc), 0); // Blue
