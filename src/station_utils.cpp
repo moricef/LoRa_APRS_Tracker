@@ -435,8 +435,12 @@ namespace STATION_Utils {
         // Decide from the active profile at the point of transmission. Keeping
         // this as cached global state made a profile with an empty Mic-E field
         // inherit the previous profile's mode and transmit 000 (Emergency).
-        if (APRSPacketLib::validateMicE(currentBeacon->micE)) {
+        const bool useMicE = APRSPacketLib::validateMicE(currentBeacon->micE);
+        if (useMicE) {
             packet = APRSPacketLib::generateMiceGPSBeaconPacket(currentBeacon->micE, currentBeacon->callsign, currentBeacon->symbol, currentBeacon->overlay, path, gpsFix.latitude(), gpsFix.longitude(), gpsFix.heading(), gpsSpeedKnots(), gpsFix.alt.whole);
+            // Mic-E text type: messaging capable, before the encoded altitude.
+            const int textOffset = packet.indexOf(':') + 10;
+            packet = packet.substring(0, textOffset) + "`" + packet.substring(textOffset);
         } else {
             packet = APRSPacketLib::generateBase91GPSBeaconPacket(currentBeacon->callsign, "APLVGL", path, currentBeacon->overlay, APRSPacketLib::encodeGPSIntoBase91(gpsFix.latitude(), gpsFix.longitude(), gpsFix.heading(), gpsSpeedKnots(), currentBeacon->symbol, Config.sendAltitude, gpsAltFeet(), sendStandingUpdate));
         }
@@ -497,6 +501,9 @@ namespace STATION_Utils {
         } else {
             packet += "**LowVoltagePowerOff**";
         }
+
+        // Assigned Mic-E device ID must follow all comment and telemetry bytes.
+        if (useMicE) packet += "^L";
 
         #ifdef USE_LVGL_UI
             LVGL_UI::showTxPacket(packet.c_str());
