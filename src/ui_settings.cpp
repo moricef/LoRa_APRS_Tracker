@@ -2124,21 +2124,9 @@ void UISettings::createAboutScreen() {
     lv_obj_set_style_text_color(lbl_project, lv_color_hex(UIColors::TEXT_PURPLE), 0);
     lv_obj_set_style_text_font(lbl_project, &lv_font_montserrat_18, 0);
 
-    // CA2RXU Firmware version
-    lv_obj_t *lbl_fw_title = lv_label_create(content);
-    lv_label_set_text(lbl_fw_title, "Firmware (CA2RXU)");
-    lv_obj_set_style_text_color(lbl_fw_title, lv_color_hex(UIColors::TEXT_CYAN), 0);
-    lv_obj_set_style_text_font(lbl_fw_title, &lv_font_montserrat_14, 0);
-
-    lv_obj_t *lbl_fw_version = lv_label_create(content);
-    String fwVersion = "Version: " + versionNumber + "\nDate: " + versionDate;
-    lv_label_set_text(lbl_fw_version, fwVersion.c_str());
-    lv_obj_set_style_text_color(lbl_fw_version, lv_color_hex(UIColors::TEXT_WHITE), 0);
-    lv_obj_set_style_text_font(lbl_fw_version, &lv_font_montserrat_14, 0);
-
     // LVGL UI version
     lv_obj_t *lbl_ui_title = lv_label_create(content);
-    lv_label_set_text(lbl_ui_title, "LVGL UI (T-Deck Plus)");
+    lv_label_set_text(lbl_ui_title, "Firmware LVGL (F4MLV)");
     lv_obj_set_style_text_color(lbl_ui_title, lv_color_hex(UIColors::TEXT_CYAN), 0);
     lv_obj_set_style_text_font(lbl_ui_title, &lv_font_montserrat_14, 0);
 
@@ -2164,7 +2152,7 @@ void UISettings::createAboutScreen() {
 
     // Author info
     lv_obj_t *lbl_author = lv_label_create(content);
-    lv_label_set_text(lbl_author, "github.com/richonguzman/LoRa_APRS_Tracker");
+    lv_label_set_text(lbl_author, "github.com/moricef/LoRa_APRS_Tracker");
     lv_obj_set_style_text_color(lbl_author, lv_color_hex(UIColors::TEXT_GRAY), 0);
     lv_obj_set_style_text_font(lbl_author, &lv_font_montserrat_12, 0);
 

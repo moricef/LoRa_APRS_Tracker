@@ -835,7 +835,7 @@ namespace KEYBOARD_Utils {
             } else if (key == 13 && messageText.length() > 0) {
                 messageText.trim();
                 if (messageText.length() > 67) messageText = messageText.substring(0, 67);
-                String packet = APRSPacketLib::generateBase91GPSBeaconPacket(currentBeacon->callsign, "APLRT1", Config.path, currentBeacon->overlay, APRSPacketLib::encodeGPSIntoBase91(gpsFix.latitude(), gpsFix.longitude(), gpsFix.heading(), gpsSpeedKnots(), currentBeacon->symbol, Config.sendAltitude, gpsAltFeet(), sendStandingUpdate));
+                String packet = APRSPacketLib::generateBase91GPSBeaconPacket(currentBeacon->callsign, "APLVGL", Config.path, currentBeacon->overlay, APRSPacketLib::encodeGPSIntoBase91(gpsFix.latitude(), gpsFix.longitude(), gpsFix.heading(), gpsSpeedKnots(), currentBeacon->symbol, Config.sendAltitude, gpsAltFeet(), sendStandingUpdate));
                 packet += messageText;
                 displayShow("<<< TX >>>", "", packet,100);
                 LoRa_Utils::sendNewPacket(packet);       
