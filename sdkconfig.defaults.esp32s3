@@ -1,0 +1,9 @@
+# ESP32-S3 N16R8 boards (T-Deck Plus, CrowPanel Advance 3.5).
+# Applied by ESP-IDF on top of sdkconfig.defaults when the target is esp32s3.
+
+# SPIRAM (PSRAM) - OPI mode
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Flash size 16MB
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y

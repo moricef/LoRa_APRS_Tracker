@@ -1,0 +1,8 @@
+# ESP32 boards (T-Beam v1.2).
+# Applied by ESP-IDF on top of sdkconfig.defaults when the target is esp32.
+
+# Flash size 4MB
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# Quad PSRAM (default mode and speed). Boot anyway if the chip is absent.
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y

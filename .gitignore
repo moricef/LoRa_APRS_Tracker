@@ -49,6 +49,8 @@ sdkconfig
 sdkconfig.old
 sdkconfig.*
 !sdkconfig.defaults
+!sdkconfig.defaults.esp32
+!sdkconfig.defaults.esp32s3
 managed_components/
 .pio/
 include/LGFX_Waveshare7.h
