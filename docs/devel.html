@@ -71,7 +71,7 @@
 </head>
 <body>
   <h1>LoRa APRS Tracker - Development ⚠️</h1>
-  <p style="text-align:center" class="version">T-Deck Plus 433 MHz - LVGL UI Edition - LovyanGFX library- Vector Tiles Map<br>Firmware version: <strong>2026-11-14</strong> (2.12.0+dev) (Development Branch)</p>
+  <p style="text-align:center" class="version">T-Deck Plus 433 MHz / CrowPanel Advance 3.5&quot; - LVGL UI Edition - LovyanGFX library- Vector Tiles Map<br>Firmware version: <strong>2026-11-16</strong> (2.12.1+dev) (Development Branch)</p>
 
   <div class="warning">
     <strong>⚠️ Development Build Warning:</strong>
@@ -85,10 +85,17 @@
 
   <div class="container">
     <h2>Firmware Installation</h2>
-    <p>Connect your T-Deck Plus via USB and click the button:</p>
+    <p>Connect your board via USB and select its firmware:</p>
+    <h3>T-Deck Plus 433 MHz</h3>
 
     <esp-web-install-button class="install-btn" manifest="manifest-devel.json">
       <button slot="activate">Install Firmware</button>
+      <span slot="unsupported">Browser not supported. Use Chrome, Edge, or Chromium.</span>
+      <span slot="not-allowed">USB access not authorized.</span>
+    </esp-web-install-button>
+    <h3>CrowPanel Advance 3.5&quot;</h3>
+    <esp-web-install-button class="install-btn" manifest="manifest-devel-crowpanel-advance-35.json">
+      <button slot="activate">Install CrowPanel Firmware</button>
       <span slot="unsupported">Browser not supported. Use Chrome, Edge, or Chromium.</span>
       <span slot="not-allowed">USB access not authorized.</span>
     </esp-web-install-button>
