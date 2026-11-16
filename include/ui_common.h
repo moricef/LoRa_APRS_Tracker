@@ -13,8 +13,8 @@
 // Version Info
 // =============================================================================
 
-#define UI_VERSION "2.11.3-NATIVE1+ppm"
-#define UI_VERSION_DATE "2026-10-25"
+#define UI_VERSION "2.11.4-NATIVE1+ppm"
+#define UI_VERSION_DATE "2026-11-16"
 
 // =============================================================================
 // Display Constants
